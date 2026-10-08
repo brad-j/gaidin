@@ -1,35 +1,43 @@
-// Usage: node src/cli.ts <request-id> "<prompt>"
-// Rerunning with the same request id after a crash reattaches to the same submission.
-import { AssistantEntry, watchEvents } from "@earendil-works/pi-durable";
-import { context, openHost } from "./host.ts";
+// Usage:
+//   node src/cli.ts "<prompt>"                    ask, and print the run until it settles
+//   node src/cli.ts --id <request-id> "<prompt>"  rerunning with the same id reattaches instead of asking twice
+//   node src/cli.ts --watch                       print everything the agent does until Ctrl+C
+import { randomUUID } from "node:crypto";
+import { connect } from "node:net";
+import { resolve } from "node:path";
+import { createInterface } from "node:readline";
+import { parseArgs } from "node:util";
+import { dataDir } from "./host.ts";
 
-const [requestId, prompt] = process.argv.slice(2);
-if (!requestId || !prompt) {
-	console.error('usage: node src/cli.ts <request-id> "<prompt>"');
+const { values, positionals } = parseArgs({
+	options: { id: { type: "string" }, watch: { type: "boolean" } },
+	allowPositionals: true,
+});
+const prompt = positionals.join(" ");
+if (!values.watch && !prompt) {
+	console.error('usage: gaidin [--id <request-id>] "<prompt>" | gaidin --watch');
 	process.exit(2);
 }
 
-const { harness, root } = await openHost();
-const events = await watchEvents(harness, root.id, context);
-events.start(async (batch) => {
-	for (const event of batch) {
-		if (event.type === "tool_execution_start") console.log(`[tool] ${event.toolName} ${JSON.stringify(event.args)}`);
-		if (event.type === "tool_execution_end") console.log(`[tool] ${event.toolName} done`);
-		if (event.type === "task_failed") console.log(`[task failed] ${event.kind}: ${event.message}`);
-	}
+const socket = connect(resolve(dataDir(), "gaidin.sock"));
+socket.once("error", (error) => {
+	console.error(`can't reach the gaidin server (${error.message}). Start it with: pnpm serve`);
+	process.exit(1);
+});
+socket.once("connect", () => {
+	const request = values.watch ? { type: "watch" } : { type: "ask", content: prompt, requestId: values.id ?? randomUUID() };
+	if (!values.watch && !values.id) console.error(`request ${request.requestId}`);
+	socket.write(`${JSON.stringify(request)}\n`);
 });
 
-const submission = await root.submit({ type: "input", content: prompt, requestId }, context);
-const settled = await submission.wait(context);
-if (settled.status === "done" && settled.type === "input") {
-	const entry = await root.commit((tx) => tx.entry(AssistantEntry, settled.answer), context);
-	const message = entry?.model?.[0];
-	const text = message?.role === "assistant"
-		? message.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("")
-		: "";
-	console.log(`[answer] ${text}`);
-} else {
-	console.log(`[unanswered] ${JSON.stringify(settled)}`);
+let status: string | undefined;
+for await (const line of createInterface({ input: socket })) {
+	const message = JSON.parse(line) as { type: "line"; text: string } | { type: "done"; status: string };
+	if (message.type === "line") console.log(message.text);
+	else status = message.status;
 }
-await events.stop();
-await harness.close(context);
+if (status === undefined && !values.watch) {
+	console.error("lost the server before the answer. The run is stored; rerun with the same --id to reattach.");
+	process.exit(1);
+}
+process.exit(status === undefined || status === "done" ? 0 : 1);

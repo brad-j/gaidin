@@ -4,16 +4,31 @@ A personal agent built on [Pi Durable](https://earendil.com/posts/pi-durable/). 
 
 ## Status
 
-Phase 0 spike. `src/host.ts` opens a harness over SQLite with the coding tools in a sandbox directory; `src/cli.ts` submits one prompt and prints tool events and the answer.
+Phase 1, running on egwene. One server process owns the SQLite file and the agent; clients attach over a Unix socket in the data directory. The agent has the coding tools in a sandbox directory and durable reminders that push to ntfy.
 
 ```sh
 pnpm install
-GAIDIN_MODEL=faux pnpm ask job-1 "anything"      # scripted model, no key or network
-pnpm ask job-2 "what's in this directory?"         # Claude, key from .env
-pnpm check                                        # tsc
+pnpm serve                                  # the agent; key and ntfy settings from .env
+pnpm ask "remind me in 10 minutes to check the oven"
+pnpm ask --id oven-1 "..."                  # rerunning the same id reattaches instead of asking twice
+pnpm watch                                  # print everything the agent does, from any client
+pnpm check                                  # tsc and tests
 ```
 
-`pnpm ask` loads `ANTHROPIC_API_KEY` from a gitignored `.env` in this directory, if one exists.
+`pnpm serve` loads a gitignored `.env` in this directory, if one exists:
+
+- `ANTHROPIC_API_KEY`: required unless `GAIDIN_MODEL=faux`.
+- `NTFY_URL`: the full topic URL, e.g. `https://ntfy.sh/<topic>`. The topic name is a credential. Without it, reminders print to the server's stderr.
+- `NTFY_TOKEN`: optional ntfy access token.
+- `GAIDIN_TZ`: time zone for message timestamps and reminder times; defaults to the system's.
+
+`deploy/gaidin.service` is a systemd user unit for egwene; install steps are in the file. User units stop at logout unless lingering is enabled.
+
+## Reminders
+
+`src/reminders.ts` gives the model `remind`, `list_reminders` and `cancel_reminder`. Each reminder is a background task owned by the root conversation: it sleeps until its time, then pushes. The fire time is in the task's input, so after a restart it sleeps until the same moment, and a reminder that came due while the server was down fires when it starts. A session document holds the open list. Cancelling removes the reminder from it, and the task checks the list when it wakes. A failed push is retried up to five times with backoff. Delivery is at least once: a crash between the push and its commit sends it again.
+
+The server prefixes each message with the local time rather than putting the time in the system prompt, which keeps the prompt cache valid.
 
 ## API key
 
@@ -27,7 +42,7 @@ Credits don't roll over. With no purchased credits or auto-reload, requests stop
 
 `GAIDIN_DATA` sets the data directory (default `data/`, gitignored). `GAIDIN_MODEL_ID` overrides the Claude model (default `claude-haiku-5-5`). Reusing a request id returns the stored submission instead of asking again.
 
-Verified on 2026-10-08 with the faux model: `kill -9` during a `bash` call, then rerunning the same request id, resumed the run. `bash` is not replay-safe, so it was not rerun; the model was told it "was interrupted and may have partially run" and answered. A third run returned the stored answer without doing any work.
+Verified on 2026-10-08 with the faux model: `kill -9` of the server during a `bash` call, then restarting it and rerunning the same request id, returned the answer. `bash` is not replay-safe, so it was not rerun; the model was told it "was interrupted and may have partially run" and answered. `test/reminders.test.ts` covers the remind tool end to end, a reminder sleeping across a restart, cancellation and a retried push.
 
 Pinned to `@earendil-works/pi-durable` 1.1.0. The API is experimental and changes without notice, so upgrade deliberately.
 
@@ -41,7 +56,7 @@ Pinned to `@earendil-works/pi-durable` 1.1.0. The API is experimental and change
 
 ## Plan
 
-1. Host on the VM: one long-lived process, SQLite storage, one root conversation. Slack bot in its own Tar Valon channel, with each thread a fork of the channel conversation. Reminders as durable timer tasks that push to ntfy.
+1. One long-lived process, SQLite storage, one root conversation, reminders through ntfy (done on egwene). Next: move it to the VM, then a Slack bot in its own Tar Valon channel, with each thread a fork of the channel conversation.
 2. A second surface on the same conversation: a small web view over Tailscale. This is the part Hermes can't do.
 3. Approval hook (stored in a memo so a restart doesn't ask twice), read-only homelab tools (Kuma, Beszel, backup snapshot, Dozzle), Hindsight recall and retention, and a remote execution environment on egwene.
 4. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.

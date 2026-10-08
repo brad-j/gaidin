@@ -1,22 +1,26 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createModels } from "@earendil-works/pi-ai/models";
+import { createModels, type Models } from "@earendil-works/pi-ai/models";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { createRegistry, Harness } from "@earendil-works/pi-durable";
+import { createRegistry, defineExtension, Harness, type ModelRef, section } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { ntfyNotifier } from "./ntfy.ts";
+import { createReminders, type Notify } from "./reminders.ts";
+import { timeZone } from "./time.ts";
 
 export const context = BACKGROUND_CONTEXT;
 
-const dataDir = resolve(process.env.GAIDIN_DATA ?? "data");
-const sandbox = resolve(dataDir, "sandbox");
+export function dataDir(): string {
+	return resolve(process.env.GAIDIN_DATA ?? "data");
+}
 
 // GAIDIN_MODEL=faux runs a scripted model with no network or key: it calls bash once
 // (`sleep`, so there is time to kill the process), then answers with the tool output.
-function chooseModel() {
+function modelFromEnv(): { models: Models; model: ModelRef } {
 	const models = createModels();
 	if (process.env.GAIDIN_MODEL === "faux") {
 		const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
@@ -39,17 +43,52 @@ function chooseModel() {
 	return { models, model: { provider: "anthropic", modelId: process.env.GAIDIN_MODEL_ID ?? "claude-haiku-5-5" } };
 }
 
-export async function openHost() {
+const Persona = defineExtension({
+	name: "persona",
+	sections: [
+		section(
+			"preamble",
+			() =>
+				"You are gaidin, Brad's personal agent. Be brief and direct. " +
+				`Each of Brad's messages starts with the local time in brackets; his time zone is ${timeZone}. ` +
+				"Use the reminder tools for anything he wants to be reminded of, and read back the time the tool reports.",
+			{ tag: false },
+		),
+	],
+});
+
+export type HostOptions = {
+	dataDir?: string;
+	models?: Models;
+	model?: ModelRef;
+	notify?: Notify;
+};
+
+export async function openHost(options: HostOptions = {}) {
+	const dir = options.dataDir ?? dataDir();
+	const sandbox = resolve(dir, "sandbox");
+	// Transcripts and tool output live here.
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	mkdirSync(sandbox, { recursive: true });
-	const { models, model } = chooseModel();
+	const { models, model } = options.models && options.model
+		? { models: options.models, model: options.model }
+		: modelFromEnv();
+	const reminders = createReminders(options.notify ?? ntfyNotifier());
 	const registry = createRegistry();
+	registry.install(Persona);
 	registry.install(CodingTools);
+	registry.install(reminders.extension);
 	const harness = await Harness.open(
-		await openNodeSqliteStorage(resolve(dataDir, "gaidin.sqlite")),
-		{ models, registry, env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? sandbox }) },
+		await openNodeSqliteStorage(resolve(dir, "gaidin.sqlite")),
+		{
+			models,
+			registry,
+			env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? sandbox }),
+			onReport: (error) => console.error("[report]", error),
+		},
 		context,
 	);
 	const root = await harness.root(context, { agent: { model, cwd: sandbox } });
 	harness.resume();
-	return { harness, root };
+	return { harness, root, reminders };
 }
