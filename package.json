@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Personal agent on Pi Durable",
   "scripts": {
-    "ask": "node --no-warnings src/cli.ts",
+    "ask": "node --no-warnings --env-file-if-exists=.env src/cli.ts",
     "check": "tsc"
   },
   "devEngines": {

@@ -9,9 +9,21 @@ Phase 0 spike. `src/host.ts` opens a harness over SQLite with the coding tools i
 ```sh
 pnpm install
 GAIDIN_MODEL=faux pnpm ask job-1 "anything"      # scripted model, no key or network
-ANTHROPIC_API_KEY=... pnpm ask job-2 "what's in this directory?"
+pnpm ask job-2 "what's in this directory?"         # Claude, key from .env
 pnpm check                                        # tsc
 ```
+
+`pnpm ask` loads `ANTHROPIC_API_KEY` from a gitignored `.env` in this directory, if one exists.
+
+## API key
+
+The Max plan includes monthly API credits for a linked Claude Console organization.
+
+1. On claude.ai, open Settings > Billing and claim the API credit. Link or create a Console organization, signed in with the same email.
+2. In the Console (platform.claude.com), create a workspace for gaidin, set a spend limit on it, and create an API key there.
+3. Put the key in `.env` here as `ANTHROPIC_API_KEY=...`, mode 600.
+
+Credits don't roll over. With no purchased credits or auto-reload, requests stop when the month's credit runs out instead of charging anything, so leave auto-reload off.
 
 `GAIDIN_DATA` sets the data directory (default `data/`, gitignored). `GAIDIN_MODEL_ID` overrides the Claude model (default `claude-haiku-5-5`). Reusing a request id returns the stored submission instead of asking again.
 
