@@ -56,7 +56,7 @@ Pinned to `@earendil-works/pi-durable` 1.1.0. The API is experimental and change
 
 ## Plan
 
-1. One long-lived process, SQLite storage, one root conversation, reminders through ntfy (done on egwene). Next: move it to the VM, then a Slack bot in its own Tar Valon channel, with each thread a fork of the channel conversation.
+1. One long-lived process, SQLite storage, one root conversation, reminders through ntfy (done). VM 104 on `think-1` is set up by `deploy/vm/setup.sh`, operator notes in the homelab repo's `docs/gaidin.md`. Next: a Slack bot in its own Tar Valon channel, with each thread a fork of the channel conversation.
 2. A second surface on the same conversation: a small web view over Tailscale. This is the part Hermes can't do.
 3. Approval hook (stored in a memo so a restart doesn't ask twice), read-only homelab tools (Kuma, Beszel, backup snapshot, Dozzle), Hindsight recall and retention, and a remote execution environment on egwene.
 4. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
