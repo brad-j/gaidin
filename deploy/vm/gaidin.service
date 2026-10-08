@@ -1,0 +1,32 @@
+# System unit for the gaidin VM. Installed by deploy/vm/setup.sh.
+[Unit]
+Description=gaidin personal agent
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/gaidin/env
+
+[Service]
+User=gaidin
+Group=gaidin
+WorkingDirectory=/var/lib/gaidin/app
+EnvironmentFile=/etc/gaidin/env
+Environment=GAIDIN_DATA=/var/lib/gaidin/data
+ExecStart=/usr/local/bin/node --no-warnings src/server.ts
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+# The agent's bash tool runs as this user: keep it to its own directory.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/gaidin
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
