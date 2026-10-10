@@ -12,6 +12,7 @@ import { type Config, configFor, secretsOf } from "./config.ts";
 import { createHomelab, type HomelabOptions } from "./extensions/homelab/index.ts";
 import { createFetch, type FetchOptions } from "./fetch.ts";
 import { createJobs, type Deliver } from "./jobs.ts";
+import { createMemory } from "./memory.ts";
 import { ntfyNotifier, ntfyReporter } from "./ntfy.ts";
 import { type Redactor, redactionExtension, redactorFor } from "./redact.ts";
 import { createReminders, type Notify } from "./reminders.ts";
@@ -118,6 +119,7 @@ export async function openHost(options: HostOptions = {}) {
 	registry.install(persona(owner));
 	registry.install(CodingTools);
 	registry.install(reminders.extension);
+	registry.install(createMemory(owner));
 	let deliver: Deliver = options.deliver ?? ntfyReporter(config.ntfy);
 	const jobs = createJobs({ deliver: () => deliver, owner });
 	registry.install(jobs.extension);

@@ -14,6 +14,7 @@ type Usage = { cost: { total: number } };
 type UsageState = { models: Record<string, Usage>; tools: Record<string, Usage> };
 type Slot = { callId: string; name: string; output: string };
 type Reminder = { taskId: number; text: string; at: number };
+type Note = { id: number; text: string; by: string; updatedAt: number };
 type Job = { taskId: number; title: string; when: string; mode: string; nextAt?: number; lastAt?: number; lastResult?: string };
 type Approval = { id: string; summary: string; tool: string; expiresAt: number; always?: { kind: string; value: string; label: string } };
 type Settings = { model: string; models: string[]; thinkingLevel: string; instructions: string; tools: { name: string; enabled: boolean }[] };
@@ -62,6 +63,7 @@ function apply(event: AgentEvent) {
 			void loadSpend();
 			void loadReminders();
 			void loadJobs();
+			void loadMemory();
 			break;
 		case "message_start":
 			if (event.message.role === "assistant") state.partial = structuredClone(event.message);
@@ -379,6 +381,48 @@ async function loadReminders() {
 	}
 }
 
+async function loadMemory() {
+	try {
+		const notes = await load<Note[]>("/api/memory");
+		const list = $("memory");
+		list.replaceChildren(
+			...notes.map((note) => {
+				const item = el("li");
+				const body = el("div");
+				body.append(el("span", undefined, note.text), el("span", "by", `${note.by === "owner" ? "added by you" : "kept by gaidin"}, ${when.format(note.updatedAt)}`));
+				const forget = el("button", "danger", "Delete");
+				forget.addEventListener("click", async () => {
+					forget.disabled = true;
+					try {
+						await post("/api/memory/forget", { id: note.id });
+					} catch (error) {
+						notice(String(error));
+					}
+					await loadMemory();
+				});
+				item.append(body, forget);
+				return item;
+			}),
+		);
+		if (notes.length === 0) list.append(el("li", "note", "Nothing yet."));
+	} catch (error) {
+		notice(String(error));
+	}
+}
+
+$("memory-add").addEventListener("submit", async (event) => {
+	event.preventDefault();
+	const box = $("memory-text") as HTMLTextAreaElement;
+	if (box.value.trim() === "") return;
+	try {
+		await post("/api/memory/add", { text: box.value });
+		box.value = "";
+	} catch (error) {
+		notice(String(error));
+	}
+	await loadMemory();
+});
+
 async function loadJobs() {
 	try {
 		const jobs = await load<Job[]>("/api/jobs");
@@ -530,6 +574,7 @@ $("settings").addEventListener("submit", async (event) => {
 connect();
 void loadReminders();
 void loadJobs();
+void loadMemory();
 void loadSettings();
 void loadSpend();
 setInterval(() => {

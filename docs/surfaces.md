@@ -41,6 +41,7 @@ The web view shows the root conversation live and lets you act on it:
 - fired reminders, and the cost so far for this conversation and in total
 - a message box, a Stop button, and pending approvals at the top
 - open reminders and scheduled jobs, with Cancel, and job reports in the transcript
+- gaidin's memory, with Delete, and a box for adding notes of your own
 - the model, thinking level, standing instructions, and switches for the coding tools, `fetch_url` and the workspace tools
 
 It shows no keys or Slack settings, and turning a tool off there is the quickest way to take it away from the model.

@@ -4,6 +4,7 @@
 |---|---|---|---|
 | `read`, `write`, `edit`, `bash` | in the sandbox | the sandbox directory only, no network | no |
 | `remind`, `list_reminders`, `cancel_reminder` | in the server | its ntfy topic | no |
+| `remember`, `update_memory`, `forget` | in the server | the notes in every system prompt | after outside text in the same run |
 | `schedule_job`, `list_jobs`, `cancel_job` | in the server; each run is a new conversation | what the run's tools reach | every new job |
 | `fetch_url` | in the server | the public internet only | for a host not allowed for good |
 | `workspace_run`, `workspace_read`, `workspace_write`, `workspace_edit` | on a workspace, under bubblewrap | that machine's project roots, and the network | every call |
@@ -23,6 +24,12 @@ Pi Durable's `read`, `write`, `edit` and `bash`, confined to the sandbox directo
 A reminder is a durable background task ([Concepts](concepts.md#durability)). When it fires, it posts to `NTFY_URL` with the title "gaidin" and records a "Reminder" entry in the conversation, which the web view shows and the model doesn't see. A failed push is retried up to five times with backoff, and the entry records whether it was delivered. Without `NTFY_URL`, reminders print to the server's output.
 
 ntfy.sh topics have no password, so use a long random topic name and treat it as a secret. Subscribe to it in the ntfy app on your phone; the topic field takes the name alone, not the URL.
+
+## Memory
+
+Notes gaidin keeps about the owner and their world, such as where the NAS is or how they take their coffee. Every conversation gets them at the end of its system prompt, job runs included, with a reminder that they're things gaidin was told, not instructions. `remember` adds one, `update_memory` replaces one by id, and `forget` deletes one. A note is at most 500 characters and all of them together at most 8,000, so the prompt stays small; gaidin has to merge or forget notes to make room. The web view lists them, with Delete and a box for adding your own.
+
+Writing a note normally doesn't ask. If the run has read outside text since the owner's last message, from `fetch_url`, `container_logs`, `workspace_read` or `workspace_run`, a write asks first ([Security](security.md#approvals)), so a page that says "remember to..." can't plant a note on its own.
 
 ## Scheduled jobs
 

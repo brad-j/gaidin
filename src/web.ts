@@ -12,6 +12,7 @@ import { type Conversation, type Harness, type ModelRef, type ToolRegistration, 
 import type { ApprovalService, Decision } from "./approvals.ts";
 import { context } from "./host.ts";
 import { describeSchedule, Jobs, removeJob } from "./jobs.ts";
+import { addNote, forgetNote, Memory } from "./memory.ts";
 import { Reminders, removeReminder } from "./reminders.ts";
 import { stamp } from "./time.ts";
 
@@ -114,6 +115,7 @@ export function createWebServer(options: {
 			const items = (await harness.snapshot(Jobs, context))?.items ?? [];
 			return json(response, items.map((job) => ({ ...job, when: describeSchedule(job.schedule) })).sort((a, b) => (a.nextAt ?? 0) - (b.nextAt ?? 0)));
 		}
+		if (get && url.pathname === "/api/memory") return json(response, (await harness.snapshot(Memory, context))?.notes ?? []);
 		if (get && url.pathname === "/api/usage") return json(response, await harness.usage(context));
 		if (get && url.pathname === "/api/approvals") return json(response, await approvals.pending());
 		if (request.method !== "POST") throw new HttpError(404, "Not found");
@@ -132,6 +134,18 @@ export function createWebServer(options: {
 				return json(response, { ok: true });
 			case "/api/reminders/cancel": {
 				const removed = await root.commit((tx) => removeReminder(tx, Number(body.id)), context);
+				return json(response, { ok: removed !== undefined });
+			}
+			case "/api/memory/add": {
+				try {
+					const note = await root.commit((tx) => addNote(tx, String(body.text ?? ""), "owner"), context);
+					return json(response, note);
+				} catch (error) {
+					throw new HttpError(400, error instanceof Error ? error.message : String(error));
+				}
+			}
+			case "/api/memory/forget": {
+				const removed = await root.commit((tx) => forgetNote(tx, Number(body.id)), context);
 				return json(response, { ok: removed !== undefined });
 			}
 			case "/api/jobs/cancel": {

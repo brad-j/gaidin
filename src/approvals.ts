@@ -10,8 +10,8 @@
 import { randomUUID } from "node:crypto";
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
-import type { ToolCall } from "@earendil-works/pi-ai";
-import { defineDoc, defineExtension, type Harness, hook, type TaskId, ToolTask } from "@earendil-works/pi-durable";
+import type { Message, ToolCall } from "@earendil-works/pi-ai";
+import { type ConversationId, defineDoc, defineExtension, type Harness, hook, type TaskId, ToolTask } from "@earendil-works/pi-durable";
 import { describeSchedule, parseSchedule } from "./jobs.ts";
 
 export type Decision = "once" | "always" | "deny";
@@ -51,12 +51,27 @@ export const Approvals = defineDoc<{ requests: Record<string, ApprovalRequest>; 
 type ApprovalState = { requests: Record<string, ApprovalRequest>; fetchHosts: string[]; grants?: Grant[] };
 
 /** What a call needs approval for, or nothing. */
-export type Policy = (call: ToolCall, state: ApprovalState, conversationId: number) => Pick<ApprovalRequest, "summary" | "always"> | undefined;
+type Ask = Pick<ApprovalRequest, "summary" | "always"> | undefined;
+/**
+ * What a call needs approval for, or nothing. `untrusted` lists the tools whose outside text the run has
+ * read since the owner's last message; it reads the transcript, so call it only when it matters.
+ */
+export type Policy = (call: ToolCall, state: ApprovalState, conversationId: number, untrusted: () => Promise<string[]>) => Ask | Promise<Ask>;
+
+/** Tools whose results are text from outside: web pages, other programs' logs, files and output on a workspace. */
+export const UNTRUSTED_TOOLS = new Set(["fetch_url", "container_logs", "workspace_read", "workspace_run"]);
 
 const WORKSPACE_GRANT_MS = 60 * 60_000;
 const clip = (text: string, max = 1500) => (text.length > max ? `${text.slice(0, max)}… (${text.length} characters)` : text);
 
-export const defaultPolicy: Policy = (call, state, conversationId) => {
+export const defaultPolicy: Policy = async (call, state, conversationId, untrusted) => {
+	// Notes reach every future run, so writing one right after reading outside text asks first.
+	if (call.name === "remember" || call.name === "update_memory") {
+		const read = await untrusted();
+		if (read.length === 0) return undefined;
+		const text = String(call.arguments.text ?? "");
+		return { summary: `${call.name === "remember" ? "remember" : `change note ${String(call.arguments.id)} to`} "${clip(text, 500)}", after reading outside text (${read.join(", ")})` };
+	}
 	// Every workspace tool asks, unless the owner allowed that workspace for an hour in this conversation.
 	if (call.name.startsWith("workspace_")) {
 		const workspace = String(call.arguments.workspace);
@@ -269,6 +284,23 @@ export class ApprovalService {
 }
 
 /** The hook. `service` is read lazily, because the Harness that the service needs is opened after the registry. */
+/**
+ * The untrusted tools whose results are in the conversation since its last user message. The hook's api is
+ * the tool task's runtime, which can read the conversation's context.
+ */
+export async function untrustedSince(api: unknown, context: Context): Promise<string[]> {
+	const runtime = api as { conversationId: ConversationId; context?: (id: ConversationId, context: Context) => Promise<{ messages: readonly Message[] }> };
+	if (runtime.context === undefined) return [];
+	const { messages } = await runtime.context(runtime.conversationId, context);
+	const found = new Set<string>();
+	for (let i = messages.length - 1; i >= 0; i -= 1) {
+		const message = messages[i]!;
+		if (message.role === "user") break;
+		if (message.role === "toolResult" && UNTRUSTED_TOOLS.has(message.toolName)) found.add(message.toolName);
+	}
+	return [...found];
+}
+
 export function approvalExtension(service: () => ApprovalService, owner: string, policy: Policy = defaultPolicy) {
 	return defineExtension({
 		name: "approvals",
@@ -276,7 +308,7 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 			hook(ToolTask, {
 				beforeTool: async (call, api, context: Context) => {
 					const approvals = service();
-					const ask = policy(call, await approvals.state(), api.conversationId as number);
+					const ask = await policy(call, await approvals.state(), api.conversationId as number, () => untrustedSince(api, context));
 					if (ask === undefined) return undefined;
 					// The same id for every run of this call's phase, so a restart doesn't ask twice.
 					const id = await api.memo<string>("gaidin.approval", randomUUID(), context);

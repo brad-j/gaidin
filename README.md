@@ -8,6 +8,7 @@ It can:
 
 - set reminders that push to your phone through ntfy, days ahead, across restarts
 - run scheduled jobs: a morning briefing, a check every few hours, a watch that only speaks up when something's wrong, or a follow-up it promised
+- remember what you tell it across conversations, in notes you can see and edit
 - read public web pages and APIs, asking you before it contacts a new host
 - run commands and edit files in a sandbox on its own machine
 - work on projects on your other machines (workspaces), asking before each action
