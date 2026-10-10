@@ -1,6 +1,6 @@
 // Owns the SQLite file and runs the agent. Clients talk to it over a Unix socket in the data
 // directory, one JSON object per line. With Slack settings in the environment it also runs the
-// Slack surface (src/slack.ts).
+// Slack surface (src/slack.ts), and with GAIDIN_WEB_USER the web view (src/web.ts).
 //
 // client → server: {"type":"ask","content":"...","requestId":"..."} or {"type":"watch"}
 // server → client: {"type":"line","text":"..."} and, after an ask settles, {"type":"done","status":"..."}
@@ -14,6 +14,7 @@ import { assistantText, context, dataDir, openHost } from "./host.ts";
 import { ReminderFired } from "./reminders.ts";
 import { createSlackSurface, slackPoster, socketMode } from "./slack.ts";
 import { stamp } from "./time.ts";
+import { createWebServer } from "./web.ts";
 
 const socketPath = resolve(dataDir(), "gaidin.sock");
 
@@ -43,6 +44,13 @@ if (slackSet.length > 0) {
 	void surface.recover();
 	slack = socketMode(process.env.SLACK_APP_TOKEN!, surface.receive);
 	console.error(`gaidin on Slack in ${process.env.SLACK_CHANNEL_ID}`);
+}
+
+const web = process.env.GAIDIN_WEB_USER ? createWebServer({ harness, root, user: process.env.GAIDIN_WEB_USER }) : undefined;
+if (web !== undefined) {
+	const port = Number(process.env.GAIDIN_WEB_PORT ?? 8410);
+	// Loopback only: tailscale serve is the way in, and it vouches for who's asking.
+	web.listen(port, "127.0.0.1", () => console.error(`gaidin web view on 127.0.0.1:${port}`));
 }
 
 function describe(event: AgentEvent): string | undefined {
@@ -116,6 +124,8 @@ server.listen(socketPath, () => {
 
 async function shutdown() {
 	slack?.stop();
+	web?.closeAllConnections();
+	web?.close();
 	server.close();
 	await harness.close(context);
 	process.exit(0);

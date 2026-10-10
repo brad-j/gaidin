@@ -1,5 +1,5 @@
 import { Type } from "@earendil-works/pi-ai";
-import { defineDoc, defineEntry, defineExtension, defineTask, defineTool, type TaskId } from "@earendil-works/pi-durable";
+import { defineDoc, defineEntry, defineExtension, defineTask, defineTool, type TaskId, type Tx } from "@earendil-works/pi-durable";
 import { formatTime } from "./time.ts";
 
 export type Reminder = { taskId: number; text: string; at: number };
@@ -15,6 +15,17 @@ export const Reminders = defineDoc<{ items: Reminder[] }>({
 
 /** Transcript record of a fired reminder. It carries no model messages, so the model doesn't see it. */
 export const ReminderFired = defineEntry<{ text: string; at: number; delivered: boolean; error?: string }>("gaidin.reminder-fired");
+
+/**
+ * Takes a reminder off the open list. Its task finds itself gone when it wakes, and finishes without
+ * notifying. Returns the reminder, or nothing if it wasn't open.
+ */
+export async function removeReminder(tx: Tx, id: number): Promise<Reminder | undefined> {
+	const doc = await tx.doc(Reminders);
+	const found = doc.items.find((r) => r.taskId === id);
+	doc.items = doc.items.filter((r) => r.taskId !== id);
+	return found === undefined ? undefined : { ...found };
+}
 
 const MAX_ATTEMPTS = 5;
 
@@ -124,13 +135,7 @@ export function createReminders(notify: Notify) {
 		parameters: Type.Object({ id: Type.Number() }),
 		replay: "safe",
 		execute: async (args, api, context) => {
-			// The sleeping task finds itself gone from the list when it wakes, and finishes without notifying.
-			const removed = await api.commit(async (tx) => {
-				const doc = await tx.doc(Reminders);
-				const found = doc.items.find((r) => r.taskId === args.id);
-				doc.items = doc.items.filter((r) => r.taskId !== args.id);
-				return found;
-			}, context);
+			const removed = await api.commit((tx) => removeReminder(tx, args.id), context);
 			const text = removed ? `Cancelled ${args.id}: ${removed.text}` : `No open reminder ${args.id}.`;
 			return { content: [{ type: "text", text }] };
 		},

@@ -45,3 +45,12 @@ if [ -f /etc/gaidin/env ]; then
 else
 	echo "Not started: put ANTHROPIC_API_KEY and NTFY_URL in /etc/gaidin/env (root, 600), then: systemctl start gaidin"
 fi
+
+# The web view: HTTPS on the tailnet name, proxied to the loopback port the server listens on when
+# GAIDIN_WEB_USER is set. tailscale serve adds the Tailscale-User-Login header the server checks, and
+# keeps this setting across restarts.
+if tailscale status >/dev/null 2>&1; then
+	tailscale serve --bg --yes 8410 >/dev/null
+else
+	echo "Web view not served: log in to Tailscale, then rerun"
+fi

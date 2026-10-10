@@ -4,7 +4,7 @@ A personal agent built on [Pi Durable](https://earendil.com/posts/pi-durable/). 
 
 ## Status
 
-Phase 1, running on VM 104 on `think-1`. One server process owns the SQLite file and the agent; clients attach over a Unix socket in the data directory, and a Slack channel talks to the same conversation. The agent has the coding tools in a sandbox directory and durable reminders that push to ntfy.
+Phase 2, running on VM 104 on `think-1`. One server process owns the SQLite file and the agent; clients attach over a Unix socket in the data directory, and a Slack channel and a web view talk to the same conversation. The agent has the coding tools in a sandbox directory and durable reminders that push to ntfy.
 
 ```sh
 pnpm install
@@ -22,6 +22,7 @@ pnpm check                                  # tsc and tests
 - `NTFY_TOKEN`: optional ntfy access token.
 - `GAIDIN_TZ`: time zone for message timestamps and reminder times; defaults to the system's.
 - `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_CHANNEL_ID`, `SLACK_USER_ID`: all four or none. See [Slack](#slack).
+- `GAIDIN_WEB_USER`: the Tailscale login let into the web view; without it there's no web view. `GAIDIN_WEB_PORT` sets its loopback port (default 8410). See [Web view](#web-view).
 
 `deploy/gaidin.service` is a systemd user unit for egwene; install steps are in the file. User units stop at logout unless lingering is enabled.
 
@@ -46,6 +47,16 @@ Setup:
 5. Basic Information > Display Information: upload `assets/logo-1024.png` as the app icon. The manifest can't set it.
 
 `test/slack.test.ts` covers forking, redelivery, ignored events and an answer owed across a restart, with a fake Slack. The Socket Mode client is only exercised against the real thing.
+
+## Web view
+
+`src/web.ts` serves `web/index.html` and `web/app.ts` (types stripped by Node as it's served, so there's no build step) on `127.0.0.1:GAIDIN_WEB_PORT`. On the VM, `tailscale serve` puts it at `https://gaidin.aardvark-dory.ts.net`. Serve strips any identity headers a client sends and adds `Tailscale-User-Login` for a person's device; the server answers only `GAIDIN_WEB_USER`, so tagged and shared devices get a 403. POSTs need a JSON body and a same-origin `Origin`, so another site open in the browser can't drive it.
+
+The page shows the root conversation live from the same event stream as `pnpm watch`: messages from any surface, tool calls with their output, fired reminders, and spend. It sends messages, stops a run, lists and cancels reminders, and sets the model, thinking level, standing instructions and coding tools. Settings are stored in the conversation, apply from the next request and survive restarts; Slack threads started afterwards inherit them. Credentials and Slack settings aren't on the page.
+
+Anything on the VM running as `gaidin`, including the agent's own bash tool, can reach the loopback port and send any header, the same as it can reach the Unix socket. The sandbox in phase 3 is what separates them.
+
+`test/web.test.ts` covers the login check, cross-site posts, a message answered over the event stream, settings and reminders. The page itself has no browser tests.
 
 ## API key
 
@@ -74,7 +85,7 @@ Pinned to `@earendil-works/pi-durable` 1.1.0. The API is experimental and change
 ## Plan
 
 1. One long-lived process, SQLite storage, one root conversation, reminders through ntfy (done). VM 104 on `think-1` is set up by `deploy/vm/setup.sh`, operator notes in the homelab repo's `docs/gaidin.md`. A Slack bot in its own Tar Valon channel, with each thread a fork of the channel conversation (live in `#warder` since 2026-10-10).
-2. A second surface on the same conversation: a small web view over Tailscale. This is the part Hermes can't do.
+2. A second surface on the same conversation: a small web view over Tailscale (written 2026-10-10). This is the part Hermes can't do.
 3. Approval hook (stored in a memo so a restart doesn't ask twice), read-only homelab tools (Kuma, Beszel, backup snapshot, Dozzle), Hindsight recall and retention, and a remote execution environment on egwene.
 4. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
 

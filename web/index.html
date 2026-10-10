@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gaidin</title>
+<style>
+:root {
+	--bg: #0e1116;
+	--panel: #151a21;
+	--raised: #1b2129;
+	--line: #262d37;
+	--text: #d6dbe2;
+	--muted: #8b94a1;
+	--accent: #7fa6cc;
+	--ok: #79b494;
+	--warn: #d2a85e;
+	--bad: #d27474;
+	color-scheme: dark;
+	font-family: Seravek, "Gill Sans Nova", Ubuntu, Calibri, "DejaVu Sans", source-sans-pro, sans-serif;
+	font-size: 15px;
+	line-height: 1.45;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+button, select, textarea, input { font: inherit; color: inherit; }
+button {
+	background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px; cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: default; }
+button.danger:not(:disabled) { color: var(--bad); }
+select, textarea {
+	background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%;
+}
+textarea { resize: vertical; }
+textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+pre, code { font-family: ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", monospace; font-size: 13px; }
+pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+header {
+	display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--line);
+	position: sticky; top: 0; background: var(--bg); z-index: 1;
+}
+header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+#status { color: var(--muted); font-size: 13px; }
+#status.running { color: var(--accent); }
+#status.problem { color: var(--warn); }
+#spend { margin-left: auto; color: var(--muted); font-size: 13px; }
+
+#layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; padding: 16px; max-width: 1280px; margin: 0 auto; }
+@media (max-width: 860px) { #layout { grid-template-columns: minmax(0, 1fr); } }
+
+#composer { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 8px; }
+#composer textarea { min-height: 44px; }
+#notice { color: var(--bad); font-size: 13px; min-height: 0; margin-bottom: 8px; }
+#notice:empty { display: none; }
+
+.exchange { border-top: 1px solid var(--line); padding: 12px 0; display: flex; flex-direction: column; gap: 8px; }
+.meta { color: var(--muted); font-size: 12px; }
+.user .text { color: var(--text); font-weight: 600; }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.note { color: var(--muted); font-size: 13px; }
+.note.bad { color: var(--bad); }
+.fired { color: var(--warn); }
+
+details { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+details summary { cursor: pointer; padding: 4px 8px; display: flex; gap: 8px; align-items: baseline; list-style: none; }
+details summary::-webkit-details-marker { display: none; }
+details summary::before { content: "▸"; color: var(--muted); }
+details[open] summary::before { content: "▾"; }
+details pre { padding: 6px 8px 8px; border-top: 1px solid var(--line); max-height: 420px; overflow: auto; }
+.tool .name { color: var(--accent); }
+.tool .args { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.tool .state { font-size: 12px; color: var(--muted); }
+.tool .state.running { color: var(--accent); }
+.tool.error .state { color: var(--bad); }
+.thinking summary { color: var(--muted); font-size: 13px; }
+
+aside section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+aside h2 { font-size: 14px; margin: 0 0 8px; font-weight: 600; }
+#reminders { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+#reminders li { display: flex; gap: 8px; align-items: baseline; }
+#reminders li div { flex: 1; min-width: 0; }
+#reminders .when { color: var(--muted); font-size: 12px; display: block; }
+label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+label.check { display: flex; gap: 6px; align-items: center; color: var(--text); margin: 4px 0; }
+#settings-tools { display: flex; flex-wrap: wrap; gap: 0 14px; }
+#settings-actions { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
+#settings-state { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+	<h1>gaidin</h1>
+	<span id="status">connecting</span>
+	<span id="spend"></span>
+	<button id="stop" class="danger" disabled>Stop</button>
+</header>
+<div id="layout">
+	<main>
+		<form id="composer">
+			<textarea id="message" rows="2" placeholder="Message gaidin (Enter sends, Shift+Enter for a new line)"></textarea>
+			<button id="send" type="submit">Send</button>
+		</form>
+		<div id="notice"></div>
+		<div id="transcript"></div>
+	</main>
+	<aside>
+		<section>
+			<h2>Reminders</h2>
+			<ul id="reminders"></ul>
+		</section>
+		<section>
+			<h2>Settings</h2>
+			<form id="settings">
+				<label for="settings-model">Model</label>
+				<select id="settings-model"></select>
+				<label for="settings-thinking">Thinking</label>
+				<select id="settings-thinking">
+					<option>off</option><option>low</option><option>medium</option><option>high</option>
+				</select>
+				<label for="settings-instructions">Standing instructions</label>
+				<textarea id="settings-instructions" rows="4"></textarea>
+				<label>Tools</label>
+				<div id="settings-tools"></div>
+				<div id="settings-actions">
+					<button type="submit">Save</button>
+					<span id="settings-state">Applies from the next request.</span>
+				</div>
+			</form>
+		</section>
+	</aside>
+</div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
