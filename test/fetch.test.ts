@@ -116,6 +116,8 @@ test("the agent can call fetch_url, and an error status is an error result", asy
 	models.setProvider(faux.provider);
 	const host = await openHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, fetch: options, notify: async () => {} });
 	t.after(() => host.harness.close(context));
+	// New hosts need approval (test/approvals.test.ts); say yes to each.
+	host.approvals.onChange((r) => void (r.status === "pending" && host.approvals.decide(r.id, "once", "test")));
 	assert.equal((await (await host.root.submit({ type: "input", content: "read the recipe" }, context)).wait(context)).status, "done");
 	const results = (await host.root.context(context)).messages.filter((m) => m.role === "toolResult");
 	assert.match(JSON.stringify(results[0]), /Batter - light/);

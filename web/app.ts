@@ -14,6 +14,7 @@ type Usage = { cost: { total: number } };
 type UsageState = { models: Record<string, Usage>; tools: Record<string, Usage> };
 type Slot = { callId: string; name: string; output: string };
 type Reminder = { taskId: number; text: string; at: number };
+type Approval = { id: string; summary: string; tool: string; expiresAt: number; always?: { kind: string; value: string } };
 type Settings = { model: string; models: string[]; thinkingLevel: string; instructions: string; tools: { name: string; enabled: boolean }[] };
 // The event stream's shapes are pi-durable's AgentEvent; only the fields used here are read.
 type AgentEvent = { type: string; [field: string]: any };
@@ -40,6 +41,8 @@ const opened = new Set<string>();
 function apply(event: AgentEvent) {
 	switch (event.type) {
 		case "snapshot":
+			// A (re)connection may have missed changes.
+			void loadApprovals();
 			state.entries = new Map(event.entries.map((e: Entry) => [e.id, e]));
 			state.partial = event.generation?.message ? structuredClone(event.generation.message) : undefined;
 			state.slots = new Map(
@@ -97,6 +100,9 @@ function apply(event: AgentEvent) {
 			break;
 		case "auto_retry_end":
 			state.retry = undefined;
+			break;
+		case "approvals_changed":
+			void loadApprovals();
 			break;
 		case "task_failed":
 			notice(`${event.kind} failed: ${event.message}`);
@@ -359,6 +365,42 @@ async function loadReminders() {
 			}),
 		);
 		if (reminders.length === 0) list.append(el("li", "note", "None open."));
+	} catch (error) {
+		notice(String(error));
+	}
+}
+
+async function loadApprovals() {
+	try {
+		const pending = await load<Approval[]>("/api/approvals");
+		$("approvals").replaceChildren(
+			...pending.map((request) => {
+				const card = el("section", "approval");
+				card.append(
+					el("div", "meta", `gaidin wants to use ${request.tool}. Waits until ${when.format(request.expiresAt)}.`),
+					el("div", "what", request.summary),
+				);
+				const buttons = el("div", "buttons");
+				const choices: [string, string, string?][] = [["once", "Allow once"]];
+				if (request.always?.kind === "fetch-host") choices.push(["always", `Always allow ${request.always.value}`]);
+				choices.push(["deny", "Deny", "danger"]);
+				for (const [decision, label, className] of choices) {
+					const button = el("button", className, label);
+					button.addEventListener("click", async () => {
+						for (const b of buttons.querySelectorAll("button")) b.disabled = true;
+						try {
+							await post("/api/approvals/decide", { id: request.id, decision });
+						} catch (error) {
+							notice(String(error));
+						}
+						await loadApprovals();
+					});
+					buttons.append(button);
+				}
+				card.append(buttons);
+				return card;
+			}),
+		);
 	} catch (error) {
 		notice(String(error));
 	}

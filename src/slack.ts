@@ -157,20 +157,31 @@ export function createSlackSurface(options: {
 	return { receive, recover };
 }
 
+/** Calls a Slack Web API method with the bot token; throws unless Slack answers ok. */
+export type SlackApi = (method: string, body: Record<string, unknown>) => Promise<{ ts?: string; [field: string]: unknown }>;
+
+export function slackApi(botToken: string): SlackApi {
+	return async (method, body) => {
+		const response = await fetch(`https://slack.com/api/${method}`, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json; charset=utf-8" },
+			body: JSON.stringify(body),
+			signal: AbortSignal.timeout(15_000),
+		});
+		const answer = (await response.json()) as { ok: boolean; error?: string; ts?: string };
+		if (!answer.ok) throw new Error(`${method}: ${answer.error ?? response.status}`);
+		return answer;
+	};
+}
+
 /** chat.postMessage with Slack rendering the markdown. Longer answers go out in several messages. */
-export function slackPoster(botToken: string): SlackPost {
+export function slackPoster(api: SlackApi): SlackPost {
 	return async (channel, markdown, threadTs) => {
 		const posted: string[] = [];
 		for (const chunk of chunks(markdown, 12_000)) {
-			const response = await fetch("https://slack.com/api/chat.postMessage", {
-				method: "POST",
-				headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json; charset=utf-8" },
-				body: JSON.stringify({ channel, markdown_text: chunk, ...(threadTs === undefined ? {} : { thread_ts: threadTs }) }),
-				signal: AbortSignal.timeout(15_000),
-			});
-			const body = (await response.json()) as { ok: boolean; ts?: string; error?: string };
-			if (!body.ok || body.ts === undefined) throw new Error(`chat.postMessage: ${body.error ?? response.status}`);
-			posted.push(body.ts);
+			const { ts } = await api("chat.postMessage", { channel, markdown_text: chunk, ...(threadTs === undefined ? {} : { thread_ts: threadTs }) });
+			if (ts === undefined) throw new Error("chat.postMessage: no ts");
+			posted.push(ts);
 		}
 		return posted;
 	};
@@ -189,12 +200,20 @@ function chunks(text: string, size: number): string[] {
 	return out;
 }
 
+/** The fields of a Slack block_actions payload (a button press) this uses. */
+export type SlackAction = {
+	type: string;
+	user?: { id: string };
+	channel?: { id: string };
+	actions?: { action_id: string; value?: string }[];
+};
+
 /**
- * Keeps a Socket Mode connection open and hands each event to `onEvent`, acking once it resolves. A new
- * connection opens before the old one closes: on Slack's disconnect notices, and hourly in case a connection
- * dies without either side noticing.
+ * Keeps a Socket Mode connection open and hands each message event to `event` and each button press to
+ * `action`, acking once they resolve. A new connection opens before the old one closes: on Slack's
+ * disconnect notices, and hourly in case a connection dies without either side noticing.
  */
-export function socketMode(appToken: string, onEvent: (event: SlackMessage) => Promise<void>) {
+export function socketMode(appToken: string, handlers: { event: (event: SlackMessage) => Promise<void>; action?: (action: SlackAction) => Promise<void> }) {
 	let stopped = false;
 	let failures = 0;
 	const sockets = new Set<WebSocket>();
@@ -232,7 +251,7 @@ export function socketMode(appToken: string, onEvent: (event: SlackMessage) => P
 				type: string;
 				envelope_id?: string;
 				reason?: string;
-				payload?: { event?: SlackMessage };
+				payload?: { event?: SlackMessage } & SlackAction;
 			};
 			if (data.type === "hello") {
 				failures = 0;
@@ -246,10 +265,15 @@ export function socketMode(appToken: string, onEvent: (event: SlackMessage) => P
 			const ack = () => {
 				if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ envelope_id: data.envelope_id }));
 			};
+			if (data.type === "interactive" && data.payload?.type === "block_actions" && handlers.action !== undefined) {
+				// Slack doesn't resend a button press, and wants its ack within 3 seconds either way.
+				handlers.action(data.payload).catch((error) => console.error("[slack] action failed:", error)).finally(ack);
+				return;
+			}
 			const event = data.type === "events_api" ? data.payload?.event : undefined;
 			if (event === undefined) return ack();
 			// Not acked on failure, so Slack sends it again.
-			onEvent(event).then(ack, (error) => console.error("[slack] event failed:", error));
+			handlers.event(event).then(ack, (error) => console.error("[slack] event failed:", error));
 		});
 		socket.addEventListener("close", () => {
 			clearTimeout(refresh);

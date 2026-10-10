@@ -53,6 +53,11 @@ header h1 { font-size: 16px; margin: 0; font-weight: 600; }
 
 #composer { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 8px; }
 #composer textarea { min-height: 44px; }
+#approvals { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+#approvals:empty { display: none; }
+.approval { border: 1px solid var(--warn); border-radius: 8px; padding: 10px 12px; background: var(--panel); }
+.approval .what { overflow-wrap: anywhere; margin: 2px 0 8px; }
+.approval .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 #notice { color: var(--bad); font-size: 13px; min-height: 0; margin-bottom: 8px; }
 #notice:empty { display: none; }
 
@@ -99,6 +104,7 @@ label.check { display: flex; gap: 6px; align-items: center; color: var(--text); 
 </header>
 <div id="layout">
 	<main>
+		<div id="approvals"></div>
 		<form id="composer">
 			<textarea id="message" rows="2" placeholder="Message gaidin (Enter sends, Shift+Enter for a new line)"></textarea>
 			<button id="send" type="submit">Send</button>

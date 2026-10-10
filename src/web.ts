@@ -9,6 +9,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { stripTypeScriptTypes } from "node:module";
 import { resolve } from "node:path";
 import { type Conversation, type Harness, type ModelRef, type ToolRegistration, watchEvents } from "@earendil-works/pi-durable";
+import type { ApprovalService, Decision } from "./approvals.ts";
 import { context } from "./host.ts";
 import { Reminders, removeReminder } from "./reminders.ts";
 import { stamp } from "./time.ts";
@@ -31,8 +32,14 @@ export function createWebServer(options: {
 	user: string;
 	/** Tools the page can switch off. The reminder and homelab tools stay on. */
 	switchable: readonly ToolRegistration[];
+	approvals: ApprovalService;
 }) {
-	const { harness, root, user, switchable } = options;
+	const { harness, root, user, switchable, approvals } = options;
+	// Each open page's event stream, told when a request for approval opens or closes.
+	const streams = new Set<(event: unknown) => void>();
+	approvals.onChange(() => {
+		for (const send of streams) send({ type: "approvals_changed" });
+	});
 	const page = readFileSync(resolve(WEB_DIR, "index.html"));
 	const script = stripTypeScriptTypes(readFileSync(resolve(WEB_DIR, "app.ts"), "utf8"));
 
@@ -75,6 +82,7 @@ export function createWebServer(options: {
 			"X-Accel-Buffering": "no",
 		});
 		const send = (event: unknown) => response.write(`data: ${JSON.stringify(event)}\n\n`);
+		streams.add(send);
 		const stream = await watchEvents(harness, root.id, context);
 		send(stream.snapshot);
 		stream.start(async (batch) => {
@@ -82,6 +90,7 @@ export function createWebServer(options: {
 		});
 		const ping = setInterval(() => response.write(": ping\n\n"), 25_000);
 		response.once("close", () => {
+			streams.delete(send);
 			clearInterval(ping);
 			void stream.stop();
 		});
@@ -99,6 +108,7 @@ export function createWebServer(options: {
 			return json(response, [...items].sort((a, b) => a.at - b.at));
 		}
 		if (get && url.pathname === "/api/usage") return json(response, await harness.usage(context));
+		if (get && url.pathname === "/api/approvals") return json(response, await approvals.pending());
 		if (request.method !== "POST") throw new HttpError(404, "Not found");
 
 		const body = await readJson(request);
@@ -116,6 +126,12 @@ export function createWebServer(options: {
 			case "/api/reminders/cancel": {
 				const removed = await root.commit((tx) => removeReminder(tx, Number(body.id)), context);
 				return json(response, { ok: removed !== undefined });
+			}
+			case "/api/approvals/decide": {
+				const decision = String(body.decision);
+				if (!["once", "always", "deny"].includes(decision)) throw new HttpError(400, `Unknown decision ${decision}`);
+				const decided = await approvals.decide(String(body.id), decision as Decision, "web");
+				return json(response, { ok: decided !== undefined });
 			}
 			case "/api/settings":
 				await configure(body);

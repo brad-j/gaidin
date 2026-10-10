@@ -12,7 +12,8 @@ import { createInterface } from "node:readline";
 import { type AgentEvent, type EntryId, watchEvents } from "@earendil-works/pi-durable";
 import { assistantText, context, dataDir, openHost } from "./host.ts";
 import { ReminderFired } from "./reminders.ts";
-import { createSlackSurface, slackPoster, socketMode } from "./slack.ts";
+import { createSlackSurface, slackApi, slackPoster, socketMode } from "./slack.ts";
+import { createSlackApprovals } from "./slack-approvals.ts";
 import { stamp } from "./time.ts";
 import { createWebServer } from "./web.ts";
 
@@ -30,23 +31,22 @@ if (slackSet.length > 0 && slackSet.length < slackSettings.length) {
 	process.exit(1);
 }
 
-const { harness, root, switchable } = await openHost();
+const { harness, root, switchable, approvals } = await openHost();
 
 let slack: { stop(): void } | undefined;
 if (slackSet.length > 0) {
-	const surface = createSlackSurface({
-		harness,
-		root,
-		post: slackPoster(process.env.SLACK_BOT_TOKEN!),
-		channel: process.env.SLACK_CHANNEL_ID!,
-		user: process.env.SLACK_USER_ID!,
-	});
+	const api = slackApi(process.env.SLACK_BOT_TOKEN!);
+	const channel = process.env.SLACK_CHANNEL_ID!;
+	const user = process.env.SLACK_USER_ID!;
+	const surface = createSlackSurface({ harness, root, post: slackPoster(api), channel, user });
+	const approvalButtons = createSlackApprovals({ harness, approvals, api, channel, user });
 	void surface.recover();
-	slack = socketMode(process.env.SLACK_APP_TOKEN!, surface.receive);
+	approvalButtons.recover().catch((error) => console.error("[slack] approvals:", error));
+	slack = socketMode(process.env.SLACK_APP_TOKEN!, { event: surface.receive, action: approvalButtons.action });
 	console.error(`gaidin on Slack in ${process.env.SLACK_CHANNEL_ID}`);
 }
 
-const web = process.env.GAIDIN_WEB_USER ? createWebServer({ harness, root, user: process.env.GAIDIN_WEB_USER, switchable }) : undefined;
+const web = process.env.GAIDIN_WEB_USER ? createWebServer({ harness, root, user: process.env.GAIDIN_WEB_USER, switchable, approvals }) : undefined;
 if (web !== undefined) {
 	const port = Number(process.env.GAIDIN_WEB_PORT ?? 8410);
 	// Loopback only: tailscale serve is the way in, and it vouches for who's asking.
