@@ -6,7 +6,7 @@ import test from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { context, openHost } from "../src/host.ts";
-import { type RunRemote, scrubSecrets } from "../src/logs.ts";
+import { type RunRemote, scrubSecrets, stripAnsi } from "../src/logs.ts";
 
 const LOGS = [
 	"2026-10-10T20:00:00Z GET /bookmarks 200",
@@ -51,6 +51,10 @@ test("secrets in log lines are scrubbed, and the rest is kept", () => {
 	assert.match(scrubbed, /GET \/bookmarks 200/);
 	assert.match(scrubbed, /password=\[scrubbed\] user=brad/);
 	assert.match(scrubbed, /postgres:\/\/linkding:\[scrubbed\]@db:5432/);
+});
+
+test("terminal color codes are removed", () => {
+	assert.equal(stripAnsi("\x1b[36m2026-10-10\x1b[0m [\x1b[38;5;208mAUTH\x1b[0m] ok"), "2026-10-10 [AUTH] ok");
 });
 
 test("without a container it lists every host's containers, and says which host it couldn't reach", async () => {
