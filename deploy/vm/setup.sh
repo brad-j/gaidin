@@ -37,6 +37,11 @@ fi
 sudo -u gaidin git -C "$app" pull -q --ff-only
 (cd "$app" && sudo -u gaidin env HOME="$home" pnpm install -s --frozen-lockfile --prod)
 
+# The tools' sandbox (src/sandbox.ts). The server won't start without bwrap.
+command -v bwrap >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bubblewrap >/dev/null
+install -m 644 "$app/deploy/vm/bwrap.apparmor" /etc/apparmor.d/bwrap
+apparmor_parser -r /etc/apparmor.d/bwrap
+
 install -m 644 "$app/deploy/vm/gaidin.service" /etc/systemd/system/gaidin.service
 systemctl daemon-reload
 systemctl enable gaidin.service

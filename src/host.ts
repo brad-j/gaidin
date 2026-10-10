@@ -9,7 +9,8 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { createHomelab, type FetchJson } from "./homelab.ts";
 import { ntfyNotifier } from "./ntfy.ts";
-import { RedactingEnv, type Redactor, redactionExtension, redactorFromEnv } from "./redact.ts";
+import { type Redactor, redactionExtension, redactorFromEnv } from "./redact.ts";
+import { findBwrap, SandboxEnv } from "./sandbox.ts";
 import { createReminders, type Notify } from "./reminders.ts";
 import { timeZone } from "./time.ts";
 
@@ -75,6 +76,8 @@ export type HostOptions = {
 	redactor?: Redactor;
 	/** How the homelab tool fetches its feeds; tests replace it. */
 	homelabFetch?: FetchJson;
+	/** "none" runs shell commands without bubblewrap. Defaults to GAIDIN_SANDBOX, then "bwrap". */
+	sandbox?: "bwrap" | "none";
 };
 
 export async function openHost(options: HostOptions = {}) {
@@ -88,6 +91,10 @@ export async function openHost(options: HostOptions = {}) {
 		: modelFromEnv();
 	const reminders = createReminders(options.notify ?? ntfyNotifier());
 	const redactor = options.redactor ?? redactorFromEnv();
+	const mode = options.sandbox ?? (process.env.GAIDIN_SANDBOX === "none" ? "none" : "bwrap");
+	const bwrap = mode === "bwrap" ? findBwrap() : undefined;
+	// Fail closed: without bubblewrap, shell commands would reach everything the server can.
+	if (mode === "bwrap" && bwrap === undefined) throw new Error("bwrap isn't on PATH. Install bubblewrap, or set GAIDIN_SANDBOX=none to run tools unconfined.");
 	const registry = createRegistry();
 	registry.install(Persona);
 	registry.install(CodingTools);
@@ -100,7 +107,7 @@ export async function openHost(options: HostOptions = {}) {
 		{
 			models,
 			registry,
-			env: ({ cwd }) => new RedactingEnv({ cwd: cwd ?? sandbox, redactor }),
+			env: ({ cwd }) => new SandboxEnv({ root: sandbox, cwd: cwd ?? sandbox, redactor, bwrap }),
 			onReport: (error) => console.error("[report]", error),
 		},
 		context,

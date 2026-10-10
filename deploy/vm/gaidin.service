@@ -16,14 +16,17 @@ Restart=on-failure
 RestartSec=5
 UMask=0077
 
-# The agent's bash tool runs as this user: keep it to its own directory.
+# Tools run in a bubblewrap sandbox (src/sandbox.ts); this limits the server itself. It can't change
+# its own code or read the deploy key. ProtectKernelTunables is left off: it stops bubblewrap from
+# mounting a fresh /proc, and the server isn't root, so it can't write /proc/sys anyway.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/gaidin
+ReadOnlyPaths=/var/lib/gaidin/app
+InaccessiblePaths=/var/lib/gaidin/deploy
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes

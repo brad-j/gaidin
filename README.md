@@ -4,7 +4,7 @@ A personal agent built on [Pi Durable](https://earendil.com/posts/pi-durable/). 
 
 ## Status
 
-Phase 2, running on VM 104 on `think-1`. One server process owns the SQLite file and the agent; clients attach over a Unix socket in the data directory, and a Slack channel and a web view talk to the same conversation. The agent has the coding tools in a sandbox directory and durable reminders that push to ntfy.
+Phase 2, running on VM 104 on `think-1`. One server process owns the SQLite file and the agent; clients attach over a Unix socket in the data directory, and a Slack channel and a web view talk to the same conversation. The agent has the coding tools, confined to a sandbox (see [Sandbox](#sandbox)), durable reminders that push to ntfy, and a read-only homelab status tool.
 
 ```sh
 pnpm install
@@ -23,6 +23,7 @@ pnpm check                                  # tsc and tests
 - `GAIDIN_TZ`: time zone for message timestamps and reminder times; defaults to the system's.
 - `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_CHANNEL_ID`, `SLACK_USER_ID`: all four or none. See [Slack](#slack).
 - `GAIDIN_WEB_USER`: the Tailscale login let into the web view; without it there's no web view. `GAIDIN_WEB_PORT` sets its loopback port (default 8410). See [Web view](#web-view).
+- `GAIDIN_SANDBOX=none`: run tools without bubblewrap. Otherwise the server won't start without `bwrap` on PATH.
 
 `deploy/gaidin.service` is a systemd user unit for egwene; install steps are in the file. User units stop at logout unless lingering is enabled.
 
@@ -52,13 +53,21 @@ Setup:
 
 `src/homelab.ts` gives the model `homelab_status`, which reads the feeds behind infra.half.black: Uptime Kuma's public `homelab` status page and the Beszel, Docker and backup snapshots on infra-01 (`http://192.168.3.177:8080/data`). None needs a credential, and the tool only reads. It lists what needs attention first, using the thresholds in the dashboard's `src/attention.ts`; keep the two in step. The dashboard's coverage checks are left out, because they need the homelab repo's inventory. A feed that's down is reported as such, and the others are still read. `details: true` adds every monitor, host, container and backup. `GAIDIN_HOMELAB_DATA` and `GAIDIN_KUMA_URL` override the sources.
 
+## Sandbox
+
+`src/sandbox.ts` confines the tools to the sandbox directory (`data/sandbox`). Shell commands run under bubblewrap: the sandbox is the only writable place, `/usr`, `/etc` and `/opt` are read-only, and nothing else is mounted, so the data directory, the Unix socket and the app's code aren't there. They get their own process tree (the server's `/proc/<pid>/environ` is out of reach), no network, and background processes end with the command. The file tools run in the server process, so each path is resolved through symlinks and refused outside the sandbox; temp files, such as a long command's full output, go in the sandbox's `.tmp`.
+
+No network means the agent can't `curl` anything; the homelab tool fetches from the server side. A command in one conversation could still swap a directory for a symlink between a file tool's check and its open in another; the unit's `ReadOnlyPaths` for the app and `InaccessiblePaths` for the deploy key cover the worst of that.
+
+On the VM, `setup.sh` installs bubblewrap and `deploy/vm/bwrap.apparmor`, which lets bwrap create user namespaces under Ubuntu's restriction. `test/sandbox.test.ts` runs the real thing where `bwrap` is installed and skips otherwise.
+
 ## Web view
 
 `src/web.ts` serves `web/index.html` and `web/app.ts` (types stripped by Node as it's served, so there's no build step) on `127.0.0.1:GAIDIN_WEB_PORT`. On the VM, `tailscale serve` puts it at `https://gaidin.aardvark-dory.ts.net`. Serve strips any identity headers a client sends and adds `Tailscale-User-Login` for a person's device; the server answers only `GAIDIN_WEB_USER`, so tagged and shared devices get a 403. POSTs need a JSON body and a same-origin `Origin`, so another site open in the browser can't drive it.
 
 The page shows the root conversation live from the same event stream as `pnpm watch`: messages from any surface, tool calls with their output, fired reminders, and spend. It sends messages, stops a run, lists and cancels reminders, and sets the model, thinking level, standing instructions and coding tools. Settings are stored in the conversation, apply from the next request and survive restarts; Slack threads started afterwards inherit them. Credentials and Slack settings aren't on the page.
 
-Anything on the VM running as `gaidin`, including the agent's own bash tool, can reach the loopback port and send any header, the same as it can reach the Unix socket. The sandbox in phase 3 is what separates them.
+Anything else on the VM running as `gaidin` can reach the loopback port and send any header, the same as it can reach the Unix socket. The agent's shell can't: it has no network and doesn't see the data directory.
 
 `test/web.test.ts` covers the login check, cross-site posts, a message answered over the event stream, settings and reminders. The page itself has no browser tests.
 
@@ -90,11 +99,11 @@ Pinned to `@earendil-works/pi-durable` 1.1.0. The API is experimental and change
 
 1. One long-lived process, SQLite storage, one root conversation, reminders through ntfy (done). VM 104 on `think-1` is set up by `deploy/vm/setup.sh`, operator notes in the homelab repo's `docs/gaidin.md`. A Slack bot in its own Tar Valon channel, with each thread a fork of the channel conversation (live in `#warder` since 2026-10-10).
 2. A second surface on the same conversation: a small web view over Tailscale (written 2026-10-10). This is the part Hermes can't do.
-3. Approval hook (stored in a memo so a restart doesn't ask twice), read-only homelab tools (Kuma, Beszel, Docker and backup snapshots done 2026-10-10; container logs wait for the sandbox, since they're text from anywhere), and a remote execution environment on egwene. Hindsight (retired 2026-09-30) and Dozzle (retired 2026-10-10) are no longer part of the plan.
+3. Approval hook (stored in a memo so a restart doesn't ask twice), read-only homelab tools (Kuma, Beszel, Docker and backup snapshots done 2026-10-10; container logs, which are text from anywhere, can come now that the sandbox is in), a sandbox for the tools (done 2026-10-10), and a remote execution environment on egwene. Hindsight (retired 2026-09-30) and Dozzle (retired 2026-10-10) are no longer part of the plan.
 4. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
 
 ## Rules from the start
 
-- Transcripts and tool output are kept forever, compaction included. The July Pi audit found secrets in retained session files, so `src/redact.ts` keeps the credentials in `SECRET_NAMES` out of them: bash children don't inherit them, shell output is redacted as it streams, and an `afterTool` hook redacts every tool's result. It matches the values as they are, so a command that encodes them or sends them somewhere gets past it. Tools run as the server's user; they get a sandbox before any of them reads untrusted input. Add a new credential's variable to `SECRET_NAMES`.
+- Transcripts and tool output are kept forever, compaction included. The July Pi audit found secrets in retained session files, so `src/redact.ts` keeps the credentials in `SECRET_NAMES` out of them: bash children don't inherit them, shell output is redacted as it streams, and an `afterTool` hook redacts every tool's result. It matches the values as they are, so a command that encodes them or sends them somewhere gets past it. The sandbox keeps the shell away from the server's environment and the network, so encoding a value doesn't get it out either. Add a new credential's variable to `SECRET_NAMES`.
 - Homelab tools stay read-only until the approval hook exists.
 - Mark a tool `replay: "safe"` only when rerunning it after a crash is harmless.
