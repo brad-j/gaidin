@@ -9,8 +9,10 @@
 //   and refused if it lands outside the sandbox. Temp files, such as a long command's full output,
 //   go in the sandbox's .tmp so the model can still read them.
 //
-// It doesn't defend against a race: a shell command in another conversation swapping a directory for a
-// symlink between a file tool's check and its open. Redaction (redact.ts) still applies on top.
+// A shell command could swap a directory for a symlink between a file tool's check and its use. Shell
+// commands share one lock and file operations take it alone, and nothing in the sandbox outlives its
+// command, so nothing can change the sandbox in that gap. Redaction (redact.ts) still applies on top.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { realpathSync, statSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, readlink, realpath } from "node:fs/promises";
 import { basename, delimiter, dirname, join, sep } from "node:path";
@@ -43,6 +45,48 @@ export async function bwrapArgs(root: string, cwd: string): Promise<string[]> {
 	args.push("--bind", root, root, "--chdir", cwd, "--setenv", "HOME", root);
 	return args;
 }
+
+/**
+ * A readers-writer lock, first come first served, so a stream of commands can't starve a file operation.
+ * Reentrant: the base class's file methods call each other, and a nested call runs under the holder's lock.
+ */
+class SandboxLock {
+	#shared = 0;
+	#exclusive = false;
+	readonly #waiting: { exclusive: boolean; resolve: () => void }[] = [];
+	readonly #held = new AsyncLocalStorage<"shared" | "exclusive">();
+
+	async run<T>(exclusive: boolean, task: () => Promise<T>): Promise<T> {
+		const held = this.#held.getStore();
+		if (held === "exclusive" || (held === "shared" && !exclusive)) return task();
+		if (held === "shared") throw new Error("A file operation inside a shell command would wait for itself");
+		if (this.#waiting.length === 0 && this.#free(exclusive)) this.#take(exclusive);
+		else await new Promise<void>((resolve) => this.#waiting.push({ exclusive, resolve }));
+		try {
+			return await this.#held.run(exclusive ? "exclusive" : "shared", task);
+		} finally {
+			if (exclusive) this.#exclusive = false;
+			else this.#shared -= 1;
+			while (this.#waiting.length > 0 && this.#free(this.#waiting[0]!.exclusive)) {
+				const next = this.#waiting.shift()!;
+				this.#take(next.exclusive);
+				next.resolve();
+			}
+		}
+	}
+
+	#free(exclusive: boolean): boolean {
+		return !this.#exclusive && (!exclusive || this.#shared === 0);
+	}
+
+	#take(exclusive: boolean) {
+		if (exclusive) this.#exclusive = true;
+		else this.#shared += 1;
+	}
+}
+
+/** One per process: environments are made per tool call, and every conversation shares the sandbox. */
+const lock = new SandboxLock();
 
 function inside(path: string, root: string): boolean {
 	return path === root || path.startsWith(root + sep);
@@ -87,18 +131,22 @@ export class SandboxEnv extends RedactingEnv {
 		return err(new FileError("permission_denied", `${path} is outside the sandbox (${this.root}); tools can only use files there`, path));
 	}
 
-	async #at<T>(path: string, context: Context, run: (real: string) => FileResult<T>): FileResult<T> {
-		const real = await this.#confine(path, context);
-		return real.ok ? run(real.value) : real;
+	#at<T>(path: string, context: Context, run: (real: string) => FileResult<T>): FileResult<T> {
+		return lock.run(true, async () => {
+			const real = await this.#confine(path, context);
+			return real.ok ? run(real.value) : real;
+		});
 	}
 
 	override async exec(command: string | readonly string[], options: ShellExecOptions | undefined, context: Context): ReturnType<RedactingEnv["exec"]> {
-		const cwd = await this.#confine(options?.cwd ?? this.cwd, context);
-		if (!cwd.ok) return err(new ExecutionError("spawn_error", cwd.error.message));
-		if (this.#bwrap === undefined) return super.exec(command, { ...options, cwd: cwd.value }, context);
-		const inner = typeof command === "string" ? ["bash", "-c", command] : [...command];
-		const argv = [this.#bwrap, ...(await bwrapArgs(this.root, cwd.value)), "--", ...inner];
-		return super.exec(argv, { ...options, cwd: cwd.value }, context);
+		return lock.run(false, async () => {
+			const cwd = await this.#confine(options?.cwd ?? this.cwd, context);
+			if (!cwd.ok) return err(new ExecutionError("spawn_error", cwd.error.message));
+			if (this.#bwrap === undefined) return super.exec(command, { ...options, cwd: cwd.value }, context);
+			const inner = typeof command === "string" ? ["bash", "-c", command] : [...command];
+			const argv = [this.#bwrap, ...(await bwrapArgs(this.root, cwd.value)), "--", ...inner];
+			return super.exec(argv, { ...options, cwd: cwd.value }, context);
+		});
 	}
 
 	override async createTempDir(prefix: string | undefined, _context: Context): FileResult<string> {
@@ -138,10 +186,13 @@ export class SandboxEnv extends RedactingEnv {
 	override flushFile(path: string, context: Context) {
 		return this.#at(path, context, (p) => super.flushFile(p, context));
 	}
-	override async renameFile(source: string, destination: string, context: Context) {
-		const from = await this.#confine(source, context);
-		if (!from.ok) return from;
-		return this.#at(destination, context, (to) => super.renameFile(from.value, to, context));
+	override renameFile(source: string, destination: string, context: Context) {
+		return lock.run(true, async () => {
+			const from = await this.#confine(source, context);
+			if (!from.ok) return from;
+			const to = await this.#confine(destination, context);
+			return to.ok ? super.renameFile(from.value, to.value, context) : to;
+		});
 	}
 	override fileInfo(path: string, context: Context) {
 		return this.#at(path, context, (p) => super.fileInfo(p, context));
@@ -164,13 +215,15 @@ export class SandboxEnv extends RedactingEnv {
 	override remove(path: string, options: { recursive?: boolean; force?: boolean } | undefined, context: Context) {
 		return this.#at(path, context, (p) => super.remove(p, options, context));
 	}
-	override async watch(targets: readonly WatchTarget[], onChange: (change: WatchChange) => void, context: Context) {
-		const confined: WatchTarget[] = [];
-		for (const target of targets) {
-			const real = await this.#confine(target.path, context);
-			if (!real.ok) return real;
-			confined.push({ ...target, path: real.value });
-		}
-		return super.watch(confined, onChange, context);
+	override watch(targets: readonly WatchTarget[], onChange: (change: WatchChange) => void, context: Context) {
+		return lock.run(true, async () => {
+			const confined: WatchTarget[] = [];
+			for (const target of targets) {
+				const real = await this.#confine(target.path, context);
+				if (!real.ok) return err<never, FileError>(real.error);
+				confined.push({ ...target, path: real.value });
+			}
+			return super.watch(confined, onChange, context);
+		});
 	}
 }

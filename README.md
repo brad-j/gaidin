@@ -57,7 +57,7 @@ Setup:
 
 `src/sandbox.ts` confines the tools to the sandbox directory (`data/sandbox`). Shell commands run under bubblewrap: the sandbox is the only writable place, `/usr`, `/etc` and `/opt` are read-only, and nothing else is mounted, so the data directory, the Unix socket and the app's code aren't there. They get their own process tree (the server's `/proc/<pid>/environ` is out of reach), no network, and background processes end with the command. The file tools run in the server process, so each path is resolved through symlinks and refused outside the sandbox; temp files, such as a long command's full output, go in the sandbox's `.tmp`.
 
-No network means the agent can't `curl` anything; the homelab tool fetches from the server side. A command in one conversation could still swap a directory for a symlink between a file tool's check and its open in another; the unit's `ReadOnlyPaths` for the app and `InaccessiblePaths` for the deploy key cover the worst of that.
+No network means the agent can't `curl` anything; the homelab tool fetches from the server side. So that a command can't swap a directory for a symlink between a file tool's check and its use, shell commands share a lock that each file operation takes alone; a long command makes file tools in other conversations wait for it. The unit also makes the app read-only and hides the deploy key from the server itself.
 
 On the VM, `setup.sh` installs bubblewrap and `deploy/vm/bwrap.apparmor`, which lets bwrap create user namespaces under Ubuntu's restriction. `test/sandbox.test.ts` runs the real thing where `bwrap` is installed and skips otherwise.
 

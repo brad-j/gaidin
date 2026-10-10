@@ -68,6 +68,21 @@ test("file tools stay inside the sandbox, through .., absolute paths and symlink
 	assert.throws(() => new SandboxEnv({ root, cwd: dir, redactor: noRedaction, bwrap: undefined }), /outside the sandbox/);
 });
 
+test("file operations wait for running commands, and commands run side by side", async (t) => {
+	const { root } = layout(t);
+	const env = new SandboxEnv({ root, redactor: noRedaction, bwrap });
+
+	const command = run(env, "sleep 0.4; echo done > late.txt");
+	await new Promise((r) => setTimeout(r, 50));
+	const read = await env.readTextFile("late.txt", context);
+	assert.ok(read.ok && read.value === "done\n", "the read ran before the command finished");
+	await command;
+
+	const start = Date.now();
+	await Promise.all([run(env, "sleep 0.4"), run(env, "sleep 0.4")]);
+	assert.ok(Date.now() - start < 750, "commands ran one after another");
+});
+
 test("shell commands see only the sandbox, their own processes and no network", { skip: bwrap === undefined && "bwrap isn't installed" }, async (t) => {
 	const { dir, root } = layout(t);
 	const server = createServer((_req, res) => res.end("reached"));
