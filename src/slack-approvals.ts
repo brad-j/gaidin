@@ -24,7 +24,7 @@ const OUTCOME: Record<Exclude<ApprovalRequest["status"], "pending">, string> = {
 export function blocksFor(request: ApprovalRequest): { text: string; blocks: unknown[] } {
 	const what = `\`${escape(request.summary)}\``;
 	if (request.status !== "pending") {
-		const how = request.decision === "always" && request.always !== undefined ? `Always allowed ${request.always.value}` : request.decision === "once" ? "Allowed once" : OUTCOME[request.status];
+		const how = request.decision === "always" && request.always !== undefined ? request.always.done : request.decision === "once" ? "Allowed once" : OUTCOME[request.status];
 		const outcome = `${how}${request.by ? ` in ${request.by === "slack" ? "Slack" : "the web view"}` : ""}`;
 		const text = `gaidin asked to ${request.summary}. ${outcome}.`;
 		return { text, blocks: [{ type: "section", text: { type: "mrkdwn", text: `gaidin asked to ${what}\n*${outcome}.*` } }] };
@@ -33,8 +33,8 @@ export function blocksFor(request: ApprovalRequest): { text: string; blocks: unk
 	const buttons: unknown[] = [
 		{ type: "button", action_id: "gaidin-approve-once", style: "primary", text: { type: "plain_text", text: "Allow once" }, value: value("once") },
 	];
-	if (request.always?.kind === "fetch-host") {
-		buttons.push({ type: "button", action_id: "gaidin-approve-always", text: { type: "plain_text", text: `Always allow ${request.always.value}`.slice(0, 75) }, value: value("always") });
+	if (request.always !== undefined) {
+		buttons.push({ type: "button", action_id: "gaidin-approve-always", text: { type: "plain_text", text: request.always.label.slice(0, 75) }, value: value("always") });
 	}
 	buttons.push({ type: "button", action_id: "gaidin-deny", style: "danger", text: { type: "plain_text", text: "Deny" }, value: value("deny") });
 	return {

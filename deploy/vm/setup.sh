@@ -37,6 +37,10 @@ fi
 sudo -u gaidin git -C "$app" pull -q --ff-only
 (cd "$app" && sudo -u gaidin env HOME="$home" pnpm install -s --frozen-lockfile --prod)
 
+# The key gaidin reaches workspaces with (src/workspaces.ts, deploy/vm/add-workspace.sh).
+install -d -o gaidin -g gaidin -m 700 "$home/keys"
+[ -f "$home/keys/workspace" ] || sudo -u gaidin ssh-keygen -q -t ed25519 -N "" -C "gaidin workspace" -f "$home/keys/workspace"
+
 # The tools' sandbox (src/sandbox.ts). The server won't start without bwrap.
 command -v bwrap >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bubblewrap >/dev/null
 install -m 644 "$app/deploy/vm/bwrap.apparmor" /etc/apparmor.d/bwrap

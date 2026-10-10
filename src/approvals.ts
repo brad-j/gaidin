@@ -24,8 +24,8 @@ export type ApprovalRequest = {
 	tool: string;
 	/** One line for Brad: what the call does. */
 	summary: string;
-	/** What "always" allows from now on, when it's offered. */
-	always?: { kind: "fetch-host"; value: string };
+	/** The wider grant the second button gives, when one is offered. `label` is the button, `done` the outcome. */
+	always?: { kind: "fetch-host" | "workspace-hour"; value: string; label: string; done: string };
 	createdAt: number;
 	expiresAt: number;
 	status: ApprovalStatus;
@@ -37,19 +37,37 @@ export type ApprovalRequest = {
 	slackTs?: string;
 };
 
-export const Approvals = defineDoc<{ requests: Record<string, ApprovalRequest>; fetchHosts: string[] }>({
+/** A workspace allowed in one conversation until a time. */
+export type Grant = { workspace: string; conversationId: number; until: number };
+
+export const Approvals = defineDoc<{ requests: Record<string, ApprovalRequest>; fetchHosts: string[]; grants?: Grant[] }>({
 	kind: "gaidin.approvals",
 	version: 1,
 	scope: "session",
 	initial: () => ({ requests: {}, fetchHosts: [] }),
 });
 
-type ApprovalState = { requests: Record<string, ApprovalRequest>; fetchHosts: string[] };
+type ApprovalState = { requests: Record<string, ApprovalRequest>; fetchHosts: string[]; grants?: Grant[] };
 
 /** What a call needs approval for, or nothing. */
-export type Policy = (call: ToolCall, state: ApprovalState) => Pick<ApprovalRequest, "summary" | "always"> | undefined;
+export type Policy = (call: ToolCall, state: ApprovalState, conversationId: number) => Pick<ApprovalRequest, "summary" | "always"> | undefined;
 
-export const defaultPolicy: Policy = (call, state) => {
+const WORKSPACE_GRANT_MS = 60 * 60_000;
+const clip = (text: string, max = 1500) => (text.length > max ? `${text.slice(0, max)}… (${text.length} characters)` : text);
+
+export const defaultPolicy: Policy = (call, state, conversationId) => {
+	// Every workspace tool asks, unless Brad allowed that workspace for an hour in this conversation.
+	if (call.name.startsWith("workspace_")) {
+		const workspace = String(call.arguments.workspace);
+		const now = Date.now();
+		if ((state.grants ?? []).some((g) => g.workspace === workspace && g.conversationId === conversationId && g.until > now)) return undefined;
+		const a = call.arguments;
+		const summary = call.name === "workspace_run" ? `run on ${workspace}${a.cwd ? ` in ${String(a.cwd)}` : ""}: ${clip(String(a.command))}`
+			: call.name === "workspace_write" ? `write ${String(a.path)} on ${workspace} (${String(a.content ?? "").length} characters)`
+			: call.name === "workspace_edit" ? `edit ${String(a.path)} on ${workspace} (${Array.isArray(a.edits) ? a.edits.length : 0} changes)`
+			: `read ${String(a.path)} on ${workspace}`;
+		return { summary, always: { kind: "workspace-hour", value: workspace, label: `Allow ${workspace} for an hour here`, done: `Allowed ${workspace} for an hour` } };
+	}
 	if (call.name === "fetch_url") {
 		let host: string;
 		try {
@@ -58,7 +76,7 @@ export const defaultPolicy: Policy = (call, state) => {
 			return undefined; // the tool reports the bad URL itself
 		}
 		if (state.fetchHosts.includes(host)) return undefined;
-		return { summary: `fetch ${String(call.arguments.url)}`, always: { kind: "fetch-host", value: host } };
+		return { summary: `fetch ${String(call.arguments.url)}`, always: { kind: "fetch-host", value: host, label: `Always allow ${host}`, done: `Always allowed ${host}` } };
 	}
 	return undefined;
 };
@@ -162,6 +180,13 @@ export class ApprovalService {
 			if (decision === "always" && request.always?.kind === "fetch-host" && !doc.fetchHosts.includes(request.always.value)) {
 				doc.fetchHosts.push(request.always.value);
 			}
+			if (decision === "always" && request.always?.kind === "workspace-hour") {
+				const now = Date.now();
+				doc.grants = [
+					...(doc.grants ?? []).filter((g) => g.until > now),
+					{ workspace: request.always.value, conversationId: request.conversationId, until: now + WORKSPACE_GRANT_MS },
+				];
+			}
 			return plain(request);
 		});
 		if (decided !== undefined) this.#settled(decided);
@@ -239,7 +264,7 @@ export function approvalExtension(service: () => ApprovalService, policy: Policy
 			hook(ToolTask, {
 				beforeTool: async (call, api, context: Context) => {
 					const approvals = service();
-					const ask = policy(call, await approvals.state());
+					const ask = policy(call, await approvals.state(), api.conversationId as number);
 					if (ask === undefined) return undefined;
 					// The same id for every run of this call's phase, so a restart doesn't ask twice.
 					const id = await api.memo<string>("gaidin.approval", randomUUID(), context);

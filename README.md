@@ -61,6 +61,25 @@ No network means the agent can't `curl` anything; `fetch_url` and the homelab to
 
 On the VM, `setup.sh` installs bubblewrap and `deploy/vm/bwrap.apparmor`, which lets bwrap create user namespaces under Ubuntu's restriction. `test/sandbox.test.ts` runs the real thing where `bwrap` is installed and skips otherwise.
 
+## Workspaces
+
+A workspace is a machine where gaidin works on projects as that machine's user: reading and editing files, and running tests, builds and git. `src/workspaces.ts` gives the model `workspace_run`, `workspace_read`, `workspace_write` and `workspace_edit`, each taking a workspace name. Nothing in it is specific to one machine; egwene is the first workspace.
+
+The server connects over SSH with `/var/lib/gaidin/keys/workspace`, which `setup.sh` creates. On the machine, `deploy/workspace/install.sh` (run as the user) installs `deploy/workspace/gaidin-workspace.py` outside the projects and authorizes the key so that it only works from gaidin's address, can't open a shell or forward anything, and only runs that helper. The helper's config names the roots gaidin may use. Commands run under bubblewrap with the roots writable, secret files masked, every repo's `.git/config` and `.git/hooks` read-only, Node and similar tools under the home read-only, a scratch home, and the network; the rest of the home, with its SSH keys and tokens, isn't there, so `git push` stays with Brad. Commits are authored by gaidin. The file operations refuse paths outside the roots, secret files and `.git`.
+
+Every workspace call waits for Brad's approval; the second button allows that workspace for an hour in that conversation only. Stop ends a running command. Workspaces are listed in `/var/lib/gaidin/keys/workspaces`, one `name user@host` per line, and `deploy/vm/add-workspace.sh` adds one and pins its host key. With none listed there are no workspace tools.
+
+To add a machine:
+
+```sh
+ssh ubuntu@gaidin sudo cat /var/lib/gaidin/keys/workspace.pub                       # the key
+deploy/workspace/install.sh --key "<key>" --from 192.168.3.150 ~/projects           # on the machine
+sudo ufw allow from 192.168.3.150 to any port 22 proto tcp                            # if it runs ufw
+ssh ubuntu@gaidin sudo sh /var/lib/gaidin/app/deploy/vm/add-workspace.sh NAME USER@HOST
+```
+
+What gaidin changes in a project can run later as the user: a script in `package.json`, a test, a git alias in a repo's tracked files. The approvals and `git diff` are the check on that.
+
 ## Container logs
 
 `src/logs.ts` gives the model `container_logs`: the container list, or one container's latest lines, from apps-01 and infra-01. The server runs `ssh` with a key in `/var/lib/gaidin/keys`, out of the sandbox's reach. On each host the key belongs to `gaidin-logs`, is only accepted from gaidin's address, can't open a shell or forward ports, and only runs a root script that lists containers or prints one's logs, checking every argument. The homelab repo holds that script (`scripts/docker-logs.py`) and its installer (`scripts/install-gaidin-docker-logs.sh`). Without the key there's no tool.
@@ -117,7 +136,7 @@ Pinned to `@earendil-works/pi-durable` 1.1.0. The API is experimental and change
 
 1. One long-lived process, SQLite storage, one root conversation, reminders through ntfy (done). VM 104 on `think-1` is set up by `deploy/vm/setup.sh`, operator notes in the homelab repo's `docs/gaidin.md`. A Slack bot in its own Tar Valon channel, with each thread a fork of the channel conversation (live in `#warder` since 2026-10-10).
 2. A second surface on the same conversation: a small web view over Tailscale (written 2026-10-10). This is the part Hermes can't do.
-3. Approval hook, stored in a memo so a restart doesn't ask twice (done 2026-10-10), read-only homelab tools (Kuma, Beszel, Docker and backup snapshots, and container logs, done 2026-10-10), a sandbox for the tools (done 2026-10-10), and a remote execution environment on egwene. Hindsight (retired 2026-09-30) and Dozzle (retired 2026-10-10) are no longer part of the plan.
+3. Approval hook, stored in a memo so a restart doesn't ask twice (done 2026-10-10), read-only homelab tools (Kuma, Beszel, Docker and backup snapshots, and container logs, done 2026-10-10), a sandbox for the tools (done 2026-10-10), and workspaces: machines gaidin works on as their user, with egwene the first (done 2026-10-10). Hindsight (retired 2026-09-30) and Dozzle (retired 2026-10-10) are no longer part of the plan.
 4. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
 
 ## Rules from the start

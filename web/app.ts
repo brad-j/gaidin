@@ -14,7 +14,7 @@ type Usage = { cost: { total: number } };
 type UsageState = { models: Record<string, Usage>; tools: Record<string, Usage> };
 type Slot = { callId: string; name: string; output: string };
 type Reminder = { taskId: number; text: string; at: number };
-type Approval = { id: string; summary: string; tool: string; expiresAt: number; always?: { kind: string; value: string } };
+type Approval = { id: string; summary: string; tool: string; expiresAt: number; always?: { kind: string; value: string; label: string } };
 type Settings = { model: string; models: string[]; thinkingLevel: string; instructions: string; tools: { name: string; enabled: boolean }[] };
 // The event stream's shapes are pi-durable's AgentEvent; only the fields used here are read.
 type AgentEvent = { type: string; [field: string]: any };
@@ -382,7 +382,7 @@ async function loadApprovals() {
 				);
 				const buttons = el("div", "buttons");
 				const choices: [string, string, string?][] = [["once", "Allow once"]];
-				if (request.always?.kind === "fetch-host") choices.push(["always", `Always allow ${request.always.value}`]);
+				if (request.always !== undefined) choices.push(["always", request.always.label]);
 				choices.push(["deny", "Deny", "danger"]);
 				for (const [decision, label, className] of choices) {
 					const button = el("button", className, label);

@@ -14,6 +14,7 @@ import { createLogs, type RunRemote, sshRunner } from "./logs.ts";
 import { ntfyNotifier } from "./ntfy.ts";
 import { type Redactor, redactionExtension, redactorFromEnv } from "./redact.ts";
 import { findBwrap, SandboxEnv } from "./sandbox.ts";
+import { createWorkspaces, readWorkspaces, type Remote, sshRemote, type Workspace } from "./workspaces.ts";
 import { createReminders, type Notify } from "./reminders.ts";
 import { timeZone } from "./time.ts";
 
@@ -83,6 +84,8 @@ export type HostOptions = {
 	fetch?: FetchOptions;
 	/** How container_logs reaches the hosts. Defaults to ssh with the key in /var/lib/gaidin/keys; without one there's no tool. */
 	logs?: RunRemote | null;
+	/** Machines gaidin can work on, and how to reach them. Default: the keys directory's `workspaces` file, over ssh. */
+	workspaces?: { list: Workspace[]; remote: Remote | undefined };
 	/** How long a request for approval waits for Brad. Default 30 minutes. */
 	approvalTimeoutMs?: number;
 	/** "none" runs shell commands without bubblewrap. Defaults to GAIDIN_SANDBOX, then "bwrap". */
@@ -112,6 +115,12 @@ export async function openHost(options: HostOptions = {}) {
 	registry.install(createLogs(options.logs === null ? undefined : (options.logs ?? sshRunner())));
 	const web = createFetch(options.fetch);
 	registry.install(web.extension);
+	const workspaces = createWorkspaces({
+		workspaces: options.workspaces?.list ?? readWorkspaces(),
+		remote: options.workspaces === undefined ? sshRemote() : options.workspaces.remote,
+		redactor,
+	});
+	registry.install(workspaces.extension);
 	// The service needs the Harness, which needs the registry; the hook reads it once calls start.
 	let approvals: ApprovalService | undefined;
 	registry.install(approvalExtension(() => approvals!));
@@ -130,7 +139,7 @@ export async function openHost(options: HostOptions = {}) {
 	approvals = new ApprovalService(harness, options.approvalTimeoutMs === undefined ? {} : { timeoutMs: options.approvalTimeoutMs });
 	const root = await harness.root(context, { agent: { model, cwd: sandbox } });
 	harness.resume();
-	// The tools the web view can switch off: the coding tools, and fetch_url, gaidin's only way to the internet.
-	const switchable = [...(CodingTools.tools ?? []), web.tool];
+	// The tools the web view can switch off: the coding tools, fetch_url (gaidin's only way to the internet) and the workspace tools.
+	const switchable = [...(CodingTools.tools ?? []), web.tool, ...workspaces.tools];
 	return { harness, root, reminders, switchable, approvals };
 }

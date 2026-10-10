@@ -80,7 +80,7 @@ test("a fetch to a new host waits for Brad; once allows that call, always allows
 	const [request] = await nextPending(host.approvals);
 	assert.equal(request!.tool, "fetch_url");
 	assert.match(request!.summary, /^fetch http:\/\/a\.test:\d+\/$/);
-	assert.deepEqual(request!.always, { kind: "fetch-host", value: "a.test" });
+	assert.deepEqual(request!.always, { kind: "fetch-host", value: "a.test", label: "Always allow a.test", done: "Always allowed a.test" });
 	await host.approvals.decide(request!.id, "once", "test");
 	assert.equal((await first.wait(context)).status, "done");
 	assert.match((await results(host))[0]!, /page text/);
