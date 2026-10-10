@@ -48,6 +48,10 @@ Setup:
 
 `test/slack.test.ts` covers forking, redelivery, ignored events and an answer owed across a restart, with a fake Slack. The Socket Mode client is only exercised against the real thing.
 
+## Homelab status
+
+`src/homelab.ts` gives the model `homelab_status`, which reads the feeds behind infra.half.black: Uptime Kuma's public `homelab` status page and the Beszel, Docker and backup snapshots on infra-01 (`http://192.168.3.177:8080/data`). None needs a credential, and the tool only reads. It lists what needs attention first, using the thresholds in the dashboard's `src/attention.ts`; keep the two in step. The dashboard's coverage checks are left out, because they need the homelab repo's inventory. A feed that's down is reported as such, and the others are still read. `details: true` adds every monitor, host, container and backup. `GAIDIN_HOMELAB_DATA` and `GAIDIN_KUMA_URL` override the sources.
+
 ## Web view
 
 `src/web.ts` serves `web/index.html` and `web/app.ts` (types stripped by Node as it's served, so there's no build step) on `127.0.0.1:GAIDIN_WEB_PORT`. On the VM, `tailscale serve` puts it at `https://gaidin.aardvark-dory.ts.net`. Serve strips any identity headers a client sends and adds `Tailscale-User-Login` for a person's device; the server answers only `GAIDIN_WEB_USER`, so tagged and shared devices get a 403. POSTs need a JSON body and a same-origin `Origin`, so another site open in the browser can't drive it.
@@ -86,7 +90,7 @@ Pinned to `@earendil-works/pi-durable` 1.1.0. The API is experimental and change
 
 1. One long-lived process, SQLite storage, one root conversation, reminders through ntfy (done). VM 104 on `think-1` is set up by `deploy/vm/setup.sh`, operator notes in the homelab repo's `docs/gaidin.md`. A Slack bot in its own Tar Valon channel, with each thread a fork of the channel conversation (live in `#warder` since 2026-10-10).
 2. A second surface on the same conversation: a small web view over Tailscale (written 2026-10-10). This is the part Hermes can't do.
-3. Approval hook (stored in a memo so a restart doesn't ask twice), read-only homelab tools (Kuma, Beszel, backup snapshot, Dozzle), Hindsight recall and retention, and a remote execution environment on egwene.
+3. Approval hook (stored in a memo so a restart doesn't ask twice), read-only homelab tools (Kuma, Beszel, Docker and backup snapshots done 2026-10-10; Dozzle's logs wait for the sandbox, since they're text from anywhere), and a remote execution environment on egwene. Hindsight was retired on 2026-09-30, so it's no longer part of the plan.
 4. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
 
 ## Rules from the start
