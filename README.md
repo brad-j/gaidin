@@ -4,7 +4,7 @@ A personal agent built on [Pi Durable](https://earendil.com/posts/pi-durable/). 
 
 ## Status
 
-Phase 2, running on VM 104 on `think-1`. One server process owns the SQLite file and the agent; clients attach over a Unix socket in the data directory, and a Slack channel and a web view talk to the same conversation. The agent has the coding tools, confined to a sandbox (see [Sandbox](#sandbox)), durable reminders that push to ntfy, and a read-only homelab status tool.
+Phase 2, running on VM 104 on `think-1`. One server process owns the SQLite file and the agent; clients attach over a Unix socket in the data directory, and a Slack channel and a web view talk to the same conversation. The agent has the coding tools, confined to a sandbox (see [Sandbox](#sandbox)), durable reminders that push to ntfy, a read-only homelab status tool, and `fetch_url` for the public internet.
 
 ```sh
 pnpm install
@@ -57,15 +57,21 @@ Setup:
 
 `src/sandbox.ts` confines the tools to the sandbox directory (`data/sandbox`). Shell commands run under bubblewrap: the sandbox is the only writable place, `/usr`, `/etc` and `/opt` are read-only, and nothing else is mounted, so the data directory, the Unix socket and the app's code aren't there. They get their own process tree (the server's `/proc/<pid>/environ` is out of reach), no network, and background processes end with the command. The file tools run in the server process, so each path is resolved through symlinks and refused outside the sandbox; temp files, such as a long command's full output, go in the sandbox's `.tmp`.
 
-No network means the agent can't `curl` anything; the homelab tool fetches from the server side. So that a command can't swap a directory for a symlink between a file tool's check and its use, shell commands share a lock that each file operation takes alone; a long command makes file tools in other conversations wait for it. The unit also makes the app read-only and hides the deploy key from the server itself.
+No network means the agent can't `curl` anything; `fetch_url` and the homelab tool reach the network from the server side. So that a command can't swap a directory for a symlink between a file tool's check and its use, shell commands share a lock that each file operation takes alone; a long command makes file tools in other conversations wait for it. The unit also makes the app read-only and hides the deploy key from the server itself.
 
 On the VM, `setup.sh` installs bubblewrap and `deploy/vm/bwrap.apparmor`, which lets bwrap create user namespaces under Ubuntu's restriction. `test/sandbox.test.ts` runs the real thing where `bwrap` is installed and skips otherwise.
+
+## Fetching
+
+`src/fetch.ts` gives the model `fetch_url`: a GET of a public web page or API, returned as text (HTML is reduced to its main content, with headings, lists and links kept), labelled as coming from the web and not from Brad. It runs in the server, since the shell has no network. Every address a name resolves to is checked when the connection is made, and again after each redirect, so DNS can't point it at the LAN; private, CGNAT (which covers the tailnet and `*.half.black`), loopback, link-local and other reserved ranges are refused. It sends no cookies or auth headers, downloads stop at 2 MB after decompression, and the text is cut to 20,000 characters unless the model asks for more.
+
+A URL can still carry data out in its path or query; the approval hook is where that gets a check. Switching `fetch_url` off in the web view's settings cuts gaidin off from the internet.
 
 ## Web view
 
 `src/web.ts` serves `web/index.html` and `web/app.ts` (types stripped by Node as it's served, so there's no build step) on `127.0.0.1:GAIDIN_WEB_PORT`. On the VM, `tailscale serve` puts it at `https://gaidin.aardvark-dory.ts.net`. Serve strips any identity headers a client sends and adds `Tailscale-User-Login` for a person's device; the server answers only `GAIDIN_WEB_USER`, so tagged and shared devices get a 403. POSTs need a JSON body and a same-origin `Origin`, so another site open in the browser can't drive it.
 
-The page shows the root conversation live from the same event stream as `pnpm watch`: messages from any surface, tool calls with their output, fired reminders, and spend. It sends messages, stops a run, lists and cancels reminders, and sets the model, thinking level, standing instructions and coding tools. Settings are stored in the conversation, apply from the next request and survive restarts; Slack threads started afterwards inherit them. Credentials and Slack settings aren't on the page.
+The page shows the root conversation live from the same event stream as `pnpm watch`: messages from any surface, tool calls with their output, fired reminders, and spend. It sends messages, stops a run, lists and cancels reminders, and sets the model, thinking level, standing instructions, and the coding tools and `fetch_url`. Settings are stored in the conversation, apply from the next request and survive restarts; Slack threads started afterwards inherit them. Credentials and Slack settings aren't on the page.
 
 Anything else on the VM running as `gaidin` can reach the loopback port and send any header, the same as it can reach the Unix socket. The agent's shell can't: it has no network and doesn't see the data directory.
 

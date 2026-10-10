@@ -30,7 +30,7 @@ if (slackSet.length > 0 && slackSet.length < slackSettings.length) {
 	process.exit(1);
 }
 
-const { harness, root } = await openHost();
+const { harness, root, switchable } = await openHost();
 
 let slack: { stop(): void } | undefined;
 if (slackSet.length > 0) {
@@ -46,7 +46,7 @@ if (slackSet.length > 0) {
 	console.error(`gaidin on Slack in ${process.env.SLACK_CHANNEL_ID}`);
 }
 
-const web = process.env.GAIDIN_WEB_USER ? createWebServer({ harness, root, user: process.env.GAIDIN_WEB_USER }) : undefined;
+const web = process.env.GAIDIN_WEB_USER ? createWebServer({ harness, root, user: process.env.GAIDIN_WEB_USER, switchable }) : undefined;
 if (web !== undefined) {
 	const port = Number(process.env.GAIDIN_WEB_PORT ?? 8410);
 	// Loopback only: tailscale serve is the way in, and it vouches for who's asking.

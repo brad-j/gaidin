@@ -7,6 +7,7 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@ear
 import { AssistantEntry, createRegistry, defineExtension, type EntryRecord, Harness, type ModelRef, section } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { createFetch, type FetchOptions } from "./fetch.ts";
 import { createHomelab, type FetchJson } from "./homelab.ts";
 import { ntfyNotifier } from "./ntfy.ts";
 import { type Redactor, redactionExtension, redactorFromEnv } from "./redact.ts";
@@ -76,6 +77,8 @@ export type HostOptions = {
 	redactor?: Redactor;
 	/** How the homelab tool fetches its feeds; tests replace it. */
 	homelabFetch?: FetchJson;
+	/** How fetch_url resolves names and which addresses it refuses; tests replace them. */
+	fetch?: FetchOptions;
 	/** "none" runs shell commands without bubblewrap. Defaults to GAIDIN_SANDBOX, then "bwrap". */
 	sandbox?: "bwrap" | "none";
 };
@@ -100,6 +103,8 @@ export async function openHost(options: HostOptions = {}) {
 	registry.install(CodingTools);
 	registry.install(reminders.extension);
 	registry.install(createHomelab(options.homelabFetch));
+	const web = createFetch(options.fetch);
+	registry.install(web.extension);
 	// Last, so its afterTool sees what every other hook left.
 	registry.install(redactionExtension(redactor));
 	const harness = await Harness.open(
@@ -114,5 +119,7 @@ export async function openHost(options: HostOptions = {}) {
 	);
 	const root = await harness.root(context, { agent: { model, cwd: sandbox } });
 	harness.resume();
-	return { harness, root, reminders };
+	// The tools the web view can switch off: the coding tools, and fetch_url, gaidin's only way to the internet.
+	const switchable = [...(CodingTools.tools ?? []), web.tool];
+	return { harness, root, reminders, switchable };
 }

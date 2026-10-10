@@ -9,7 +9,6 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { stripTypeScriptTypes } from "node:module";
 import { resolve } from "node:path";
 import { type Conversation, type Harness, type ModelRef, type ToolRegistration, watchEvents } from "@earendil-works/pi-durable";
-import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { context } from "./host.ts";
 import { Reminders, removeReminder } from "./reminders.ts";
 import { stamp } from "./time.ts";
@@ -17,8 +16,6 @@ import { stamp } from "./time.ts";
 const WEB_DIR = resolve(import.meta.dirname, "../web");
 const THINKING = ["off", "low", "medium", "high"] as const;
 const ANTHROPIC_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
-/** Tools the page can switch off. The reminder tools stay on. */
-const SWITCHABLE: readonly ToolRegistration[] = CodingTools.tools ?? [];
 
 export type Settings = {
 	model: string;
@@ -28,8 +25,14 @@ export type Settings = {
 	tools: { name: string; enabled: boolean }[];
 };
 
-export function createWebServer(options: { harness: Harness; root: Conversation; user: string }) {
-	const { harness, root, user } = options;
+export function createWebServer(options: {
+	harness: Harness;
+	root: Conversation;
+	user: string;
+	/** Tools the page can switch off. The reminder and homelab tools stay on. */
+	switchable: readonly ToolRegistration[];
+}) {
+	const { harness, root, user, switchable } = options;
 	const page = readFileSync(resolve(WEB_DIR, "index.html"));
 	const script = stripTypeScriptTypes(readFileSync(resolve(WEB_DIR, "app.ts"), "utf8"));
 
@@ -42,7 +45,7 @@ export function createWebServer(options: { harness: Harness; root: Conversation;
 			models: model.provider === "anthropic" ? [...new Set([...ANTHROPIC_MODELS, model.modelId])] : [model.modelId],
 			thinkingLevel: agent.thinkingLevel,
 			instructions: agent.instructions ?? "",
-			tools: SWITCHABLE.map((t) => ({ name: t.name, enabled: offered.has(t.name) })),
+			tools: switchable.map((t) => ({ name: t.name, enabled: offered.has(t.name) })),
 		};
 	}
 
@@ -53,7 +56,7 @@ export function createWebServer(options: { harness: Harness; root: Conversation;
 		const thinkingLevel = String(body.thinkingLevel ?? current.thinkingLevel);
 		if (!(THINKING as readonly string[]).includes(thinkingLevel)) throw new HttpError(400, `Unknown thinking level ${thinkingLevel}`);
 		const disabled = new Set(Array.isArray(body.disabledTools) ? body.disabledTools.map(String) : []);
-		const remove = SWITCHABLE.filter((t) => disabled.has(t.name));
+		const remove = switchable.filter((t) => disabled.has(t.name));
 		const instructions = typeof body.instructions === "string" ? body.instructions.trim() : current.instructions;
 		const provider = (await root.agent(context)).model?.provider ?? "anthropic";
 		const model: ModelRef = { provider, modelId };
