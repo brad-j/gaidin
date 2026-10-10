@@ -194,7 +194,7 @@ async function findJob(tx: Tx, taskId: number): Promise<Job | undefined> {
 	return (await tx.doc(Jobs)).items.find((j) => j.taskId === taskId);
 }
 
-export function createJobs(options: { deliver: () => Deliver; owner: string }) {
+export function createJobs(options: { deliver: () => Deliver; owner: string; explain?: (reason: string | undefined) => string | undefined }) {
 	const { owner } = options;
 
 	function prompt(job: Job): string {
@@ -257,7 +257,8 @@ export function createJobs(options: { deliver: () => Deliver; owner: string }) {
 						answer = settled.answer as number;
 						text = answerText(await tx.entry(settled.answer)) ?? "(the run gave no text)";
 					} else {
-						text = `The run didn't finish (${settled.status}${settled.reason ? `: ${settled.reason}` : ""}).`;
+						const why = options.explain?.(settled.reason);
+						text = why === undefined ? `The run didn't finish (${settled.status}${settled.reason ? `: ${settled.reason}` : ""}).` : `The run didn't happen. ${why}`;
 					}
 					return { status: "running", checkpoint: { phase: "deliver", at, firing, conversationId, text, ...(answer === undefined ? {} : { answer }), attempt: 1, retryAt: 0 } };
 				}, context);

@@ -74,7 +74,7 @@ The web view trusts the identity header Tailscale Serve adds, and listens only o
 - Redaction and log scrubbing match known values and labelled patterns; they won't catch everything.
 - Workspace secret masking goes by file name.
 - Anything gaidin writes into a project can run later as you.
-- The tools that don't ask (sandbox, reminders, homelab reads) can still be steered: a manipulated model could set reminders or fill the sandbox.
+- The tools that don't ask (sandbox, reminders, homelab reads) can still be steered: a manipulated model could set reminders or fill the sandbox. Any steered run also spends money, which the [spend limits](deploy.md#spend-limits) cap.
 - A note the owner approves, or one written before any outside text was read, goes into every later prompt. The web view shows them all, and deleting one takes it out.
 - An approved job runs its instruction later with the tools of an ordinary run. Its own calls to workspaces or new hosts still ask, but the instruction itself isn't checked again.
 

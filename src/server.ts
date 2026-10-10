@@ -56,19 +56,20 @@ export async function serve(config: Config) {
 		process.exit(1);
 	}
 
-	const { harness, root, switchable, approvals, setDeliver } = await openHost({ config });
+	const { harness, root, switchable, approvals, setDeliver, setBudgetNotify, budget, explain } = await openHost({ config });
 
 	let slack: { stop(): void } | undefined;
 	if (config.slack !== undefined) {
 		const { botToken, appToken, channelId: channel, userId: user } = config.slack;
 		const api = slackApi(botToken);
-		const surface = createSlackSurface({ harness, root, post: slackPoster(api), channel, user });
+		const surface = createSlackSurface({ harness, root, post: slackPoster(api), channel, user, explain });
 		const approvalButtons = createSlackApprovals({ harness, approvals, api, channel, user });
 		void surface.recover();
 		approvalButtons.recover().catch((error) => console.error("[slack] approvals:", error));
 		slack = socketMode(appToken, { event: surface.receive, action: approvalButtons.action });
 		// Job reports go to the channel; a thread on one continues that run's conversation.
 		const post = slackPoster(api);
+		setBudgetNotify(async (text) => void (await post(channel, text)));
 		setDeliver(async (report) => {
 			const posted = await post(channel, `*${report.title}*\n\n${report.text}`);
 			if (report.answer !== undefined) await recordPosted(root, posted, report.answer, report.conversationId);
@@ -78,7 +79,7 @@ export async function serve(config: Config) {
 
 	const web = config.web === undefined
 		? undefined
-		: createWebServer({ harness, root, user: config.web.user, switchable, approvals, models: config.model.choices });
+		: createWebServer({ harness, root, user: config.web.user, switchable, approvals, models: config.model.choices, budget });
 	if (web !== undefined) {
 		const port = config.web!.port;
 		// Loopback only: tailscale serve is the way in, and it vouches for who's asking.
@@ -116,6 +117,10 @@ export async function serve(config: Config) {
 		if (settled.status === "done" && settled.type === "input" && !shown.has(settled.answer)) {
 			const text = assistantText(await root.commit((tx) => tx.entry(settled.answer), context));
 			if (text !== undefined) send(socket, { type: "line", text });
+		}
+		if (settled.status === "unanswered") {
+			const why = explain(settled.reason);
+			if (why !== undefined) send(socket, { type: "line", text: `! ${why}` });
 		}
 		send(socket, { type: "done", status: settled.status });
 		socket.end();

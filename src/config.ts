@@ -28,6 +28,8 @@ export type Config = {
 	slack?: { botToken: string; appToken: string; channelId: string; userId: string };
 	web?: { user: string; port: number };
 	sandbox: "bwrap" | "none";
+	/** Spend limits in dollars; 0 is no limit. */
+	budget: { daily: number; monthly: number };
 	/** SSH keys for workspaces and container logs, and the workspace list. */
 	keysDir: string;
 	homelab?: HomelabConfig;
@@ -36,7 +38,7 @@ export type Config = {
 export type Loaded = { config: Config; errors: string[]; warnings: string[] };
 
 const DEFAULT_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
-const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "slack", "web", "sandbox", "keys", "extensions"];
+const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "slack", "web", "sandbox", "budget", "keys", "extensions"];
 
 /** The settings file to use: `explicit`, GAIDIN_CONFIG, or the first default location that exists. */
 export function findConfigFile(explicit?: string, env: NodeJS.ProcessEnv = process.env, search = true): string | undefined {
@@ -68,6 +70,8 @@ function fromEnv(env: NodeJS.ProcessEnv) {
 		webPort: pick("GAIDIN_WEB_PORT"),
 		sandbox: pick("GAIDIN_SANDBOX"),
 		keys: pick("GAIDIN_KEYS"),
+		daily: pick("GAIDIN_BUDGET_DAILY"),
+		monthly: pick("GAIDIN_BUDGET_MONTHLY"),
 		homelabFeeds: pick("GAIDIN_HOMELAB_DATA"),
 		kumaUrl: pick("GAIDIN_KUMA_URL"),
 	};
@@ -174,6 +178,19 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	if (sandbox !== "bwrap" && sandbox !== "none") errors.push(`sandbox must be "bwrap" or "none", not "${sandbox}"`);
 	if (sandbox === "none") warnings.push('sandbox is "none": tools run unconfined, with everything the server can reach');
 
+	// Budget
+	const budgetSection = section("budget");
+	const limit = (name: string, value: unknown, fallback: number) => {
+		const number = value === undefined ? fallback : Number(value);
+		if (!Number.isFinite(number) || number < 0) {
+			errors.push(`budget.${name} must be a dollar amount, 0 for no limit, not ${JSON.stringify(value)}`);
+			return fallback;
+		}
+		return number;
+	};
+	const budget = { daily: limit("daily", e.daily ?? budgetSection.daily, 5), monthly: limit("monthly", e.monthly ?? budgetSection.monthly, 0) };
+	if (budget.daily === 0 && budget.monthly === 0) warnings.push("No budget: nothing limits what scheduled jobs and runs can spend");
+
 	// Extensions
 	const extensions = section("extensions");
 	for (const key of Object.keys(extensions)) {
@@ -217,6 +234,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 		...(slackGiven.length === 4 ? { slack: slack as NonNullable<Config["slack"]> } : {}),
 		...(webUser === undefined ? {} : { web: { user: webUser, port } }),
 		sandbox: sandbox as Config["sandbox"],
+		budget,
 		keysDir: path(e.keys ?? text("keys", raw.keys) ?? "/var/lib/gaidin/keys"),
 		...(homelab === undefined ? {} : { homelab }),
 	};

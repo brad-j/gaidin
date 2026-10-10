@@ -34,6 +34,7 @@ const state = {
 	retry: undefined as string | undefined,
 	usage: undefined as UsageState | undefined,
 	allSpend: undefined as number | undefined,
+	budget: undefined as { today: number; dailyLimit: number; month: number; monthlyLimit: number; stopped: boolean; reason?: string } | null | undefined,
 };
 /** Tool calls and thinking blocks Brad has opened, so a re-render keeps them open. */
 const opened = new Set<string>();
@@ -253,8 +254,18 @@ function render() {
 		: undefined;
 	const parts = [];
 	if (here !== undefined) parts.push(`${money(here)} this conversation`);
-	if (state.allSpend !== undefined) parts.push(`${money(state.allSpend)} all`);
-	$("spend").textContent = parts.join(" · ");
+	const budget = state.budget;
+	const spendLine = $("spend");
+	spendLine.className = "";
+	if (budget) {
+		parts.push(budget.dailyLimit > 0 ? `${money(budget.today)} of ${money(budget.dailyLimit)} today` : `${money(budget.today)} today`);
+		if (budget.monthlyLimit > 0) parts.push(`${money(budget.month)} of ${money(budget.monthlyLimit)} this month`);
+		if (budget.stopped) spendLine.className = "stopped";
+		else if (budget.dailyLimit > 0 && budget.today >= budget.dailyLimit * 0.8) spendLine.className = "near";
+		spendLine.title = budget.reason ?? "";
+	} else if (state.allSpend !== undefined) parts.push(`${money(state.allSpend)} all`);
+	spendLine.textContent = (budget?.stopped ? "Stopped: " : "") + parts.join(" · ");
+	($("allow") as HTMLButtonElement).hidden = !budget?.stopped;
 
 	const entries = [...state.entries.values()].sort((a, b) => a.id - b.id);
 	const results = new Map<string, Extract<Message, { role: "toolResult" }>>();
@@ -344,6 +355,7 @@ async function loadSpend() {
 	try {
 		const usage = await load<UsageState>("/api/usage");
 		state.allSpend = [...Object.values(usage.models), ...Object.values(usage.tools)].reduce((s, u) => s + (u.cost?.total ?? 0), 0);
+		state.budget = await load<typeof state.budget>("/api/budget");
 		schedule();
 	} catch (error) {
 		notice(String(error));
@@ -543,6 +555,15 @@ input.addEventListener("keydown", (event) => {
 	if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
 		event.preventDefault();
 		($("composer") as HTMLFormElement).requestSubmit();
+	}
+});
+
+$("allow").addEventListener("click", async () => {
+	try {
+		state.budget = await post("/api/budget/allow", {});
+		schedule();
+	} catch (error) {
+		notice(String(error));
 	}
 });
 

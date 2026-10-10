@@ -8,6 +8,7 @@ import { AssistantEntry, createRegistry, defineExtension, type EntryRecord, Harn
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { ApprovalService, approvalExtension } from "./approvals.ts";
+import { createBudget } from "./budget.ts";
 import { type Config, configFor, secretsOf } from "./config.ts";
 import { createHomelab, type HomelabOptions } from "./extensions/homelab/index.ts";
 import { createFetch, type FetchOptions } from "./fetch.ts";
@@ -84,6 +85,8 @@ export type HostOptions = {
 	notify?: Notify;
 	/** Where scheduled jobs' reports go. Default: ntfy, or the server's output. The server sends them to Slack with `setDeliver`. */
 	deliver?: Deliver;
+	/** Replaces how the spend guard totals spend; tests use it. */
+	spend?: (harness: Harness) => Promise<number>;
 	/** Default: the secrets in the settings. */
 	redactor?: Redactor;
 	/** Replaces how the homelab extension reaches its feeds and hosts. */
@@ -106,7 +109,15 @@ export async function openHost(options: HostOptions = {}) {
 	// Transcripts and tool output live here.
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	mkdirSync(sandbox, { recursive: true });
-	const { models, model } = options.models && options.model ? { models: options.models, model: options.model } : modelFor(config);
+	const chosen = options.models && options.model ? { models: options.models, model: options.model } : modelFor(config);
+	const model = chosen.model;
+	// The guard refuses the model lookup each request makes once a spend limit is reached.
+	const ntfyText = ntfyReporter(config.ntfy);
+	let budgetNotify = (text: string) => ntfyText({ title: "budget", text });
+	const budget = createBudget({ limits: config.budget, notify: () => budgetNotify, ...(options.spend === undefined ? {} : { spend: options.spend }) });
+	const models = budget.guard(chosen.models);
+	// A run the guard refused says so, wherever it's reported.
+	const explain = (reason: string | undefined) => (reason === "no_model" ? budget.blocked() : undefined);
 	const owner = config.owner;
 	const reminders = createReminders(options.notify ?? ntfyNotifier(config.ntfy), owner);
 	const redactor = options.redactor ?? redactorFor(secretsOf(config));
@@ -121,7 +132,7 @@ export async function openHost(options: HostOptions = {}) {
 	registry.install(reminders.extension);
 	registry.install(createMemory(owner));
 	let deliver: Deliver = options.deliver ?? ntfyReporter(config.ntfy);
-	const jobs = createJobs({ deliver: () => deliver, owner });
+	const jobs = createJobs({ deliver: () => deliver, owner, explain });
 	registry.install(jobs.extension);
 	if (config.homelab !== undefined) registry.install(createHomelab(config.homelab, owner, config.keysDir, options.homelab));
 	const web = createFetch(options.fetch, owner);
@@ -137,6 +148,7 @@ export async function openHost(options: HostOptions = {}) {
 	let approvals: ApprovalService | undefined;
 	registry.install(approvalExtension(() => approvals!, owner));
 	// Last, so its afterTool sees what every other hook left.
+	registry.install(budget.extension);
 	registry.install(redactionExtension(redactor));
 
 	const harness = await Harness.open(
@@ -152,11 +164,16 @@ export async function openHost(options: HostOptions = {}) {
 	);
 	approvals = new ApprovalService(harness, options.approvalTimeoutMs === undefined ? {} : { timeoutMs: options.approvalTimeoutMs });
 	const root = await harness.root(context, { agent: { model, cwd: sandbox } });
+	// After the root exists: the guard's first read would otherwise create it without its agent.
+	await budget.attach(harness);
 	harness.resume();
 	// The tools the web view can switch off: the coding tools, fetch_url (gaidin's only way to the internet) and the workspace tools.
 	const switchable = [...(CodingTools.tools ?? []), web.tool, ...workspaces.tools];
 	const setDeliver = (next: Deliver) => {
 		deliver = next;
 	};
-	return { harness, root, reminders, jobs, setDeliver, switchable, approvals, config };
+	const setBudgetNotify = (next: (text: string) => Promise<void>) => {
+		budgetNotify = next;
+	};
+	return { harness, root, reminders, jobs, setDeliver, budget, setBudgetNotify, explain, switchable, approvals, config };
 }

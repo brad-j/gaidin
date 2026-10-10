@@ -18,5 +18,9 @@
   },
   "web": {
     "user": "alex@example.com"
+  },
+  "budget": {
+    "daily": 5,
+    "monthly": 60
   }
 }

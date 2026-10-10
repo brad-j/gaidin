@@ -54,7 +54,7 @@ Back up the VM or the data directory; the SQLite file is the whole of gaidin's s
 
 ## The model and its key
 
-gaidin uses Claude through an API key, by default `claude-haiku-5-5`. Create the key in its own Claude Console workspace with a spend limit, so a runaway loop stops at the limit. A Claude Max plan includes monthly API credit, claimed under Settings > Billing on claude.ai into a linked Console organization; with auto-reload off, requests stop when the month's credit runs out instead of charging. The web view switches between the models in `model.choices` per conversation.
+gaidin uses Claude through an API key, by default `claude-haiku-5-5`. Create the key in its own Claude Console workspace with a spend limit, so a runaway loop stops at the limit even if gaidin's own [spend limits](#spend-limits) miss it. A Claude Max plan includes monthly API credit, claimed under Settings > Billing on claude.ai into a linked Console organization; with auto-reload off, requests stop when the month's credit runs out instead of charging. The web view switches between the models in `model.choices` per conversation.
 
 ## Adding a workspace
 
@@ -94,9 +94,17 @@ The settings file is JSON: the first of `--config`, `GAIDIN_CONFIG`, `./gaidin.j
 | `web.user` | `GAIDIN_WEB_USER` | | Tailscale login allowed into the web view. Without it there's no web view. |
 | `web.port` | `GAIDIN_WEB_PORT` | `8410` | Loopback port for the web view. |
 | `sandbox` | `GAIDIN_SANDBOX` | `bwrap` | `none` runs tools without bubblewrap. |
+| `budget.daily` | `GAIDIN_BUDGET_DAILY` | `5` | Dollars a day; 0 is no daily limit. See [Spend limits](#spend-limits). |
+| `budget.monthly` | `GAIDIN_BUDGET_MONTHLY` | `0` | Dollars a calendar month; 0 is no monthly limit. |
 | `extensions.homelab` | | off | The [homelab extension](extending.md#the-homelab-extension). |
 
 The secrets are `model.apiKey`, the ntfy URL and token, and the two Slack tokens. Keep the file readable only by you or the service; `gaidin doctor` warns when anyone else can read it.
+
+## Spend limits
+
+gaidin totals what its conversations have cost, from Pi Durable's per-model costs, and counts from the start of each local day and month. When the day's spend reaches `budget.daily`, or the month's reaches `budget.monthly`, it stops making model requests: every run, including the owner's own messages and scheduled jobs, ends unanswered and says why. It tells the owner once, in Slack or by push, and once earlier at 80% of the daily limit. A daily stop lifts at local midnight and a monthly one at the start of the next month. The web view's header shows today's spend against the limit and, while stopped, an "Allow more today" button that adds another day's limit.
+
+The total is read after each model response, so the request that crosses a limit finishes and the stop starts with the next one. Costs come from the model catalog's prices, which are estimates of what the provider bills. Set the Console workspace's own spend limit as well; that one is enforced by the provider.
 
 ## Upgrading Pi Durable
 

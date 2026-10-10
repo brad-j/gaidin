@@ -63,6 +63,8 @@ export function createSlackSurface(options: {
 	channel: string;
 	user: string;
 	retryDelayMs?: number;
+	/** Says why a run went unanswered, when there's more to say than its reason, such as the spend limit. */
+	explain?: (reason: string | undefined) => string | undefined;
 }) {
 	const { harness, root, post, channel, user, retryDelayMs = 1000 } = options;
 	const delivering = new Set<string>();
@@ -139,7 +141,7 @@ export function createSlackSurface(options: {
 				answer = settled.answer;
 				text = assistantText(await conversation.commit((tx) => tx.entry(settled.answer), context)) ?? "(no text in the answer)";
 			} else {
-				text = `! ${settled.status}${settled.reason ? `: ${settled.reason}` : ""}`;
+				text = options.explain?.(settled.reason) ?? `! ${settled.status}${settled.reason ? `: ${settled.reason}` : ""}`;
 			}
 			// At least once: a crash between posting and the commit below posts it again.
 			const posted = await postWithRetry(pending.threadTs, text);

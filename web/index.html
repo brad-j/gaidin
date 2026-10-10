@@ -47,6 +47,8 @@ header h1 { font-size: 16px; margin: 0; font-weight: 600; }
 #status.running { color: var(--accent); }
 #status.problem { color: var(--warn); }
 #spend { margin-left: auto; color: var(--muted); font-size: 13px; }
+#spend.near { color: var(--warn); }
+#spend.stopped { color: var(--bad); }
 
 #layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; padding: 16px; max-width: 1280px; margin: 0 auto; }
 @media (max-width: 860px) { #layout { grid-template-columns: minmax(0, 1fr); } }
@@ -102,6 +104,7 @@ label.check { display: flex; gap: 6px; align-items: center; color: var(--text); 
 	<h1>gaidin</h1>
 	<span id="status">connecting</span>
 	<span id="spend"></span>
+	<button id="allow" hidden>Allow more today</button>
 	<button id="stop" class="danger" disabled>Stop</button>
 </header>
 <div id="layout">

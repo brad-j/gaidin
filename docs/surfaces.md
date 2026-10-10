@@ -38,7 +38,7 @@ Give gaidin its own channel. In a channel shared with another bot, both would an
 The web view shows the root conversation live and lets you act on it:
 
 - your messages and its answers from every surface, with tool calls you can expand to see their arguments and output while they run
-- fired reminders, and the cost so far for this conversation and in total
+- fired reminders, the cost of this conversation, and today's spend against the daily limit, with a button to allow more when gaidin has stopped
 - a message box, a Stop button, and pending approvals at the top
 - open reminders and scheduled jobs, with Cancel, and job reports in the transcript
 - gaidin's memory, with Delete, and a box for adding notes of your own

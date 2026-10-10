@@ -18,10 +18,11 @@
 4. The foundation for features and a release: one settings file checked at start, the `gaidin` command with `doctor`, the owner's name as a setting, and the homelab tools as an optional extension.
 5. Scheduled jobs: briefings, repeating checks, watches that report only when something needs attention, and follow-ups gaidin sets for itself, each run in its own conversation.
 6. Memory: notes in every system prompt, kept by gaidin and editable in the web view, with writes after outside text asking first.
+7. A spend guard: daily and monthly limits that stop model requests and tell the owner, with a way to allow more from the web view.
 
 ## Next
 
-7. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
+8. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
 
 Candidates after that:
 
