@@ -1,15 +1,16 @@
 import type { Notify } from "./reminders.ts";
 
 /**
- * Posts to an ntfy topic URL (NTFY_URL, e.g. https://ntfy.sh/<topic>). The topic name is a credential.
- * Without NTFY_URL, reminders are printed to stderr instead.
+ * Posts to an ntfy topic URL, e.g. https://ntfy.sh/<topic>. The topic name is a secret. Without one,
+ * reminders are printed to stderr instead.
  */
-export function ntfyNotifier(url = process.env.NTFY_URL, token = process.env.NTFY_TOKEN): Notify {
-	if (!url) {
+export function ntfyNotifier(ntfy: { url: string; token?: string } | undefined): Notify {
+	if (ntfy === undefined) {
 		return async (reminder) => {
-			console.error(`[reminder] ${reminder.text} (NTFY_URL not set, not pushed)`);
+			console.error(`[reminder] ${reminder.text} (no ntfy.url, not pushed)`);
 		};
 	}
+	const { url, token } = ntfy;
 	return async (reminder) => {
 		const response = await fetch(url, {
 			method: "POST",

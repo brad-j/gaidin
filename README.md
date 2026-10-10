@@ -20,14 +20,15 @@ On Linux with Node 22.18 or later, pnpm, and bubblewrap (`bwrap`):
 
 ```sh
 pnpm install
-printf 'ANTHROPIC_API_KEY=%s\n' "<your key>" > .env
-pnpm serve                                   # the agent; reads .env
+echo '{ "owner": "Alex", "model": { "apiKey": "<your key>" } }' > gaidin.json && chmod 600 gaidin.json
+pnpm doctor                                  # checks the settings and everything gaidin needs
+pnpm serve                                   # the agent
 pnpm ask "remind me in 10 minutes to check the oven"
 pnpm watch                                   # everything the agent does, from any surface
 pnpm check                                   # type check and tests
 ```
 
-`GAIDIN_MODEL=faux pnpm serve` runs a scripted model with no key and no network. Without `NTFY_URL`, reminders print to the server's output.
+`pnpm gaidin --help` lists the commands, and `deploy/config.example.json` shows every section of the settings. `GAIDIN_MODEL=faux pnpm serve` runs a scripted model with no key and no network. Without `ntfy.url`, reminders print to the server's output.
 
 ## Documentation
 

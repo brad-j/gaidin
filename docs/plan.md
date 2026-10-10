@@ -15,13 +15,14 @@
 1. One long-lived process, SQLite storage, one root conversation, reminders through ntfy, on its own VM.
 2. Slack, with threads as forks, and the web view over Tailscale, both on the same conversation.
 3. Redaction, the sandbox, `fetch_url`, the approval hook, read-only homelab tools, container logs, and workspaces, with egwene the first.
+4. The foundation for features and a release: one settings file checked at start, the `gaidin` command with `doctor`, the owner's name as a setting, and the homelab tools as an optional extension.
 
 ## Next
 
-4. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
+5. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
 
 Candidates after that:
 
 - Scheduled jobs, such as a morning briefing, as durable tasks like reminders. This is the largest gap compared with Hermes.
-- Splitting the core from the homelab extension, and making the owner's name a setting ([Extending](extending.md#parts-written-for-one-deployment)).
+- Release polish: a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
 - Push-to-talk in the web view. That would need more memory on the VM.

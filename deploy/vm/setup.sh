@@ -10,8 +10,10 @@ deploy=$home/deploy
 
 id gaidin >/dev/null 2>&1 || useradd --system --home-dir "$home" --create-home --shell /usr/sbin/nologin gaidin
 install -d -m 700 -o gaidin -g gaidin "$home" "$home/data" "$deploy"
-# systemd reads the env file as root; the agent's tools run as gaidin and can't open it.
-install -d -m 700 -o root -g root /etc/gaidin
+# The settings: readable by the service, not by other users. The sandbox can't read them either
+# (src/sandbox.ts hides the file from commands).
+install -d -m 750 -o root -g gaidin /etc/gaidin
+[ ! -f /etc/gaidin/config.json ] || { chown root:gaidin /etc/gaidin/config.json; chmod 640 /etc/gaidin/config.json; }
 
 # Read-only GitHub deploy key, used only by this checkout.
 if [ ! -f "$deploy/github" ]; then
@@ -46,13 +48,22 @@ command -v bwrap >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install -y
 install -m 644 "$app/deploy/vm/bwrap.apparmor" /etc/apparmor.d/bwrap
 apparmor_parser -r /etc/apparmor.d/bwrap
 
+# `gaidin ...` on this VM runs as the service does: as gaidin, with its settings.
+cat > /usr/local/bin/gaidin <<'EOF'
+#!/bin/sh
+cd /var/lib/gaidin/app || exit 1
+exec sudo -u gaidin env GAIDIN_CONFIG=/etc/gaidin/config.json /usr/local/bin/node --no-warnings src/main.ts "$@"
+EOF
+chmod 755 /usr/local/bin/gaidin
+
 install -m 644 "$app/deploy/vm/gaidin.service" /etc/systemd/system/gaidin.service
 systemctl daemon-reload
 systemctl enable gaidin.service
-if [ -f /etc/gaidin/env ]; then
+if [ -f /etc/gaidin/config.json ]; then
 	systemctl restart gaidin.service
 else
-	echo "Not started: put ANTHROPIC_API_KEY and NTFY_URL in /etc/gaidin/env (root, 600), then: systemctl start gaidin"
+	echo "Not started: copy deploy/config.example.json to /etc/gaidin/config.json (root:gaidin, 640),"
+	echo "fill it in, check it with 'gaidin doctor', then rerun this script"
 fi
 
 # The web view: HTTPS on the tailnet name, proxied to the loopback port the server listens on when

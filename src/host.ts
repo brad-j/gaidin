@@ -8,15 +8,15 @@ import { AssistantEntry, createRegistry, defineExtension, type EntryRecord, Harn
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { ApprovalService, approvalExtension } from "./approvals.ts";
+import { type Config, configFor, secretsOf } from "./config.ts";
+import { createHomelab, type HomelabOptions } from "./extensions/homelab/index.ts";
 import { createFetch, type FetchOptions } from "./fetch.ts";
-import { createHomelab, type FetchJson } from "./homelab.ts";
-import { createLogs, type RunRemote, sshRunner } from "./logs.ts";
 import { ntfyNotifier } from "./ntfy.ts";
-import { type Redactor, redactionExtension, redactorFromEnv } from "./redact.ts";
-import { findBwrap, SandboxEnv } from "./sandbox.ts";
-import { createWorkspaces, readWorkspaces, type Remote, sshRemote, type Workspace } from "./workspaces.ts";
+import { type Redactor, redactionExtension, redactorFor } from "./redact.ts";
 import { createReminders, type Notify } from "./reminders.ts";
-import { timeZone } from "./time.ts";
+import { findBwrap, SandboxEnv } from "./sandbox.ts";
+import { setTimeZone, timeZone } from "./time.ts";
+import { createWorkspaces, readWorkspaces, type Remote, sshRemote, type Workspace } from "./workspaces.ts";
 
 export const context = BACKGROUND_CONTEXT;
 
@@ -28,110 +28,114 @@ export function assistantText(entry: EntryRecord | undefined): string | undefine
 	return message.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("") || undefined;
 }
 
-export function dataDir(): string {
-	return resolve(process.env.GAIDIN_DATA ?? "data");
-}
-
-// GAIDIN_MODEL=faux runs a scripted model with no network or key: it calls bash once
-// (`sleep`, so there is time to kill the process), then answers with the tool output.
-function modelFromEnv(): { models: Models; model: ModelRef } {
-	const models = createModels();
-	if (process.env.GAIDIN_MODEL === "faux") {
+// The faux model runs a script with no network or key: it calls bash once (`sleep`, so there is time
+// to kill the process), then answers with the tool output.
+function modelFor(config: Config): { models: Models; model: ModelRef } {
+	if (config.model.provider === "faux") {
+		const models = createModels();
 		const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
 		const step = (ctx: { messages: readonly { role: string; content?: unknown }[] }) => {
 			const last = ctx.messages.at(-1);
-			if (last?.role === "toolResult") {
-				const text = JSON.stringify(last.content);
-				return fauxAssistantMessage(fauxText(`Tool came back: ${text}`));
-			}
-			return fauxAssistantMessage(
-				fauxToolCall("bash", { command: "sleep 4 && date -Is >> slept.log && echo slept" }),
-				{ stopReason: "toolUse" },
-			);
+			if (last?.role === "toolResult") return fauxAssistantMessage(fauxText(`Tool came back: ${JSON.stringify(last.content)}`));
+			return fauxAssistantMessage(fauxToolCall("bash", { command: "sleep 4 && date -Is >> slept.log && echo slept" }), { stopReason: "toolUse" });
 		};
 		faux.setResponses(Array.from({ length: 50 }, () => step));
 		models.setProvider(faux.provider);
 		return { models, model: { provider: "faux", modelId: "faux-1" } };
 	}
-	models.setProvider(anthropicProvider()); // reads ANTHROPIC_API_KEY
-	return { models, model: { provider: "anthropic", modelId: process.env.GAIDIN_MODEL_ID ?? "claude-haiku-5-5" } };
+	// The key comes from the settings, not from this process's environment.
+	const models = createModels({
+		authContext: {
+			env: async (name) => (name === "ANTHROPIC_API_KEY" ? config.model.apiKey : undefined),
+			fileExists: async () => false,
+		},
+	});
+	models.setProvider(anthropicProvider());
+	return { models, model: { provider: "anthropic", modelId: config.model.id } };
 }
 
-const Persona = defineExtension({
-	name: "persona",
-	sections: [
-		section(
-			"preamble",
-			() =>
-				"You are gaidin, Brad's personal agent. Be brief and direct. " +
-				`Each of Brad's messages starts with the local time in brackets; his time zone is ${timeZone}. ` +
-				"Use the reminder tools for anything he wants to be reminded of, and read back the time the tool reports.",
-			{ tag: false },
-		),
-	],
-});
+function persona(owner: string) {
+	return defineExtension({
+		name: "persona",
+		sections: [
+			section(
+				"preamble",
+				() =>
+					`You are gaidin, ${owner}'s personal agent. Be brief and direct. ` +
+					`Each of ${owner}'s messages starts with the local time in brackets, in the ${timeZone()} time zone. ` +
+					`Use the reminder tools for anything ${owner} wants to be reminded of, and read back the time the tool reports.`,
+				{ tag: false },
+			),
+		],
+	});
+}
 
 export type HostOptions = {
+	/** The settings. Default: defaults and the environment, without reading a file. */
+	config?: Config;
+	/** Replaces the settings' data directory. */
 	dataDir?: string;
 	models?: Models;
 	model?: ModelRef;
 	notify?: Notify;
-	/** Defaults to the credentials in the environment. */
+	/** Default: the secrets in the settings. */
 	redactor?: Redactor;
-	/** How the homelab tool fetches its feeds; tests replace it. */
-	homelabFetch?: FetchJson;
+	/** Replaces how the homelab extension reaches its feeds and hosts. */
+	homelab?: HomelabOptions;
 	/** How fetch_url resolves names and which addresses it refuses; tests replace them. */
 	fetch?: FetchOptions;
-	/** How container_logs reaches the hosts. Defaults to ssh with the key in /var/lib/gaidin/keys; without one there's no tool. */
-	logs?: RunRemote | null;
 	/** Machines gaidin can work on, and how to reach them. Default: the keys directory's `workspaces` file, over ssh. */
 	workspaces?: { list: Workspace[]; remote: Remote | undefined };
-	/** How long a request for approval waits for Brad. Default 30 minutes. */
+	/** How long a request for approval waits for the owner. Default 30 minutes. */
 	approvalTimeoutMs?: number;
-	/** "none" runs shell commands without bubblewrap. Defaults to GAIDIN_SANDBOX, then "bwrap". */
+	/** Replaces the settings' sandbox: "none" runs shell commands without bubblewrap. */
 	sandbox?: "bwrap" | "none";
 };
 
 export async function openHost(options: HostOptions = {}) {
-	const dir = options.dataDir ?? dataDir();
+	const config = options.config ?? configFor();
+	setTimeZone(config.timeZone);
+	const dir = options.dataDir ?? config.dataDir;
 	const sandbox = resolve(dir, "sandbox");
 	// Transcripts and tool output live here.
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	mkdirSync(sandbox, { recursive: true });
-	const { models, model } = options.models && options.model
-		? { models: options.models, model: options.model }
-		: modelFromEnv();
-	const reminders = createReminders(options.notify ?? ntfyNotifier());
-	const redactor = options.redactor ?? redactorFromEnv();
-	const mode = options.sandbox ?? (process.env.GAIDIN_SANDBOX === "none" ? "none" : "bwrap");
+	const { models, model } = options.models && options.model ? { models: options.models, model: options.model } : modelFor(config);
+	const owner = config.owner;
+	const reminders = createReminders(options.notify ?? ntfyNotifier(config.ntfy), owner);
+	const redactor = options.redactor ?? redactorFor(secretsOf(config));
+	const mode = options.sandbox ?? config.sandbox;
 	const bwrap = mode === "bwrap" ? findBwrap() : undefined;
 	// Fail closed: without bubblewrap, shell commands would reach everything the server can.
-	if (mode === "bwrap" && bwrap === undefined) throw new Error("bwrap isn't on PATH. Install bubblewrap, or set GAIDIN_SANDBOX=none to run tools unconfined.");
+	if (mode === "bwrap" && bwrap === undefined) throw new Error('bwrap isn\'t on PATH. Install bubblewrap, or set "sandbox": "none" to run tools unconfined.');
+
 	const registry = createRegistry();
-	registry.install(Persona);
+	registry.install(persona(owner));
 	registry.install(CodingTools);
 	registry.install(reminders.extension);
-	registry.install(createHomelab(options.homelabFetch));
-	registry.install(createLogs(options.logs === null ? undefined : (options.logs ?? sshRunner())));
-	const web = createFetch(options.fetch);
+	if (config.homelab !== undefined) registry.install(createHomelab(config.homelab, owner, config.keysDir, options.homelab));
+	const web = createFetch(options.fetch, owner);
 	registry.install(web.extension);
 	const workspaces = createWorkspaces({
-		workspaces: options.workspaces?.list ?? readWorkspaces(),
-		remote: options.workspaces === undefined ? sshRemote() : options.workspaces.remote,
+		workspaces: options.workspaces?.list ?? readWorkspaces(config.keysDir),
+		remote: options.workspaces === undefined ? sshRemote(config.keysDir) : options.workspaces.remote,
 		redactor,
+		owner,
 	});
 	registry.install(workspaces.extension);
 	// The service needs the Harness, which needs the registry; the hook reads it once calls start.
 	let approvals: ApprovalService | undefined;
-	registry.install(approvalExtension(() => approvals!));
+	registry.install(approvalExtension(() => approvals!, owner));
 	// Last, so its afterTool sees what every other hook left.
 	registry.install(redactionExtension(redactor));
+
 	const harness = await Harness.open(
 		await openNodeSqliteStorage(resolve(dir, "gaidin.sqlite")),
 		{
 			models,
 			registry,
-			env: ({ cwd }) => new SandboxEnv({ root: sandbox, cwd: cwd ?? sandbox, redactor, bwrap }),
+			// The settings file can hold secrets; commands can't read it.
+			env: ({ cwd }) => new SandboxEnv({ root: sandbox, cwd: cwd ?? sandbox, redactor, bwrap, hide: config.file === undefined ? [] : [config.file] }),
 			onReport: (error) => console.error("[report]", error),
 		},
 		context,
@@ -141,5 +145,5 @@ export async function openHost(options: HostOptions = {}) {
 	harness.resume();
 	// The tools the web view can switch off: the coding tools, fetch_url (gaidin's only way to the internet) and the workspace tools.
 	const switchable = [...(CodingTools.tools ?? []), web.tool, ...workspaces.tools];
-	return { harness, root, reminders, switchable, approvals };
+	return { harness, root, reminders, switchable, approvals, config };
 }

@@ -1,43 +1,43 @@
-// Usage:
-//   node src/cli.ts "<prompt>"                    ask, and print the run until it settles
-//   node src/cli.ts --id <request-id> "<prompt>"  rerunning with the same id reattaches instead of asking twice
-//   node src/cli.ts --watch                       print everything the agent does until Ctrl+C
+// `gaidin ask` and `gaidin watch`: clients of a running server, over its Unix socket.
 import { randomUUID } from "node:crypto";
 import { connect } from "node:net";
-import { resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { parseArgs } from "node:util";
-import { dataDir } from "./host.ts";
+import type { Config } from "./config.ts";
+import { socketPathFor } from "./server.ts";
 
-const { values, positionals } = parseArgs({
-	options: { id: { type: "string" }, watch: { type: "boolean" } },
-	allowPositionals: true,
-});
-const prompt = positionals.join(" ");
-if (!values.watch && !prompt) {
-	console.error('usage: gaidin [--id <request-id>] "<prompt>" | gaidin --watch');
-	process.exit(2);
+/** Sends a message and prints the run until it settles. Resolves with the exit code. */
+export function ask(config: Config, prompt: string, id?: string): Promise<number> {
+	const requestId = id ?? randomUUID();
+	if (id === undefined) console.error(`request ${requestId}`);
+	return talk(config, { type: "ask", content: prompt, requestId }, true);
 }
 
-const socket = connect(resolve(dataDir(), "gaidin.sock"));
-socket.once("error", (error) => {
-	console.error(`can't reach the gaidin server (${error.message}). Start it with: pnpm serve`);
-	process.exit(1);
-});
-socket.once("connect", () => {
-	const request = values.watch ? { type: "watch" } : { type: "ask", content: prompt, requestId: values.id ?? randomUUID() };
-	if (!values.watch && !values.id) console.error(`request ${request.requestId}`);
-	socket.write(`${JSON.stringify(request)}\n`);
-});
+/** Prints everything the agent does until Ctrl+C. */
+export function watch(config: Config): Promise<number> {
+	return talk(config, { type: "watch" }, false);
+}
 
-let status: string | undefined;
-for await (const line of createInterface({ input: socket })) {
-	const message = JSON.parse(line) as { type: "line"; text: string } | { type: "done"; status: string };
-	if (message.type === "line") console.log(message.text);
-	else status = message.status;
+function talk(config: Config, request: object, waitForDone: boolean): Promise<number> {
+	return new Promise((resolvePromise) => {
+		const socket = connect(socketPathFor(config));
+		socket.once("error", (error) => {
+			console.error(`can't reach the gaidin server (${error.message}). Start it with: gaidin serve`);
+			resolvePromise(1);
+		});
+		socket.once("connect", async () => {
+			socket.write(`${JSON.stringify(request)}\n`);
+			let status: string | undefined;
+			for await (const line of createInterface({ input: socket })) {
+				const message = JSON.parse(line) as { type: "line"; text: string } | { type: "done"; status: string };
+				if (message.type === "line") console.log(message.text);
+				else status = message.status;
+			}
+			if (status === undefined && waitForDone) {
+				console.error("lost the server before the answer. The run is stored; rerun with the same --id to reattach.");
+				resolvePromise(1);
+				return;
+			}
+			resolvePromise(status === undefined || status === "done" ? 0 : 1);
+		});
+	});
 }
-if (status === undefined && !values.watch) {
-	console.error("lost the server before the answer. The run is stored; rerun with the same --id to reattach.");
-	process.exit(1);
-}
-process.exit(status === undefined || status === "done" ? 0 : 1);

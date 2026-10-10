@@ -16,7 +16,6 @@ import { stamp } from "./time.ts";
 
 const WEB_DIR = resolve(import.meta.dirname, "../web");
 const THINKING = ["off", "low", "medium", "high"] as const;
-const ANTHROPIC_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
 
 export type Settings = {
 	model: string;
@@ -33,8 +32,11 @@ export function createWebServer(options: {
 	/** Tools the page can switch off. The reminder and homelab tools stay on. */
 	switchable: readonly ToolRegistration[];
 	approvals: ApprovalService;
+	/** Model ids the page offers, from the settings' model.choices. */
+	models?: readonly string[];
 }) {
 	const { harness, root, user, switchable, approvals } = options;
+	const choices = options.models ?? [];
 	// Each open page's event stream, told when a request for approval opens or closes.
 	const streams = new Set<(event: unknown) => void>();
 	approvals.onChange(() => {
@@ -49,7 +51,7 @@ export function createWebServer(options: {
 		const offered = new Set(agent.tools.map((t) => t.name));
 		return {
 			model: model.modelId,
-			models: model.provider === "anthropic" ? [...new Set([...ANTHROPIC_MODELS, model.modelId])] : [model.modelId],
+			models: [...new Set([...choices, model.modelId])],
 			thinkingLevel: agent.thinkingLevel,
 			instructions: agent.instructions ?? "",
 			tools: switchable.map((t) => ({ name: t.name, enabled: offered.has(t.name) })),

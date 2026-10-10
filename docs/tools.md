@@ -9,7 +9,7 @@
 | `homelab_status` | in the server | the homelab's monitoring feeds | no |
 | `container_logs` | in the server, over SSH | Docker logs on two hosts | no |
 
-The last two belong to the [homelab extension](#homelab-extension), written for the original deployment. Every tool's result passes through [redaction](security.md#redaction) before it's stored.
+The last two belong to the [homelab extension](#homelab-extension), which is off unless the settings turn it on. Every tool's result passes through [redaction](security.md#redaction) before it's stored.
 
 ## Coding tools
 
@@ -46,11 +46,11 @@ Commands run under bubblewrap on that machine with the project roots writable, s
 
 ## Homelab extension
 
-These two tools read one particular homelab and are switched on for the original deployment. [Extending](extending.md#parts-written-for-one-deployment) lists what would need to change to use them elsewhere.
+These two tools were written for the original deployment's homelab. [Extending](extending.md#the-homelab-extension) shows how to turn them on and what they expect.
 
 ### homelab_status
 
-Reads the feeds behind a homelab dashboard: an Uptime Kuma public status page (`GAIDIN_KUMA_URL`) and JSON snapshots of Beszel host metrics, Docker containers and Proxmox backups (`GAIDIN_HOMELAB_DATA`). None needs a key, and the tool only reads. It lists what needs attention first:
+Reads the feeds behind a homelab dashboard: an Uptime Kuma public status page (`kuma`) and JSON snapshots of Beszel host metrics, Docker containers and Proxmox backups (`feeds`). None needs a key, and the tool only reads. It lists what needs attention first:
 
 - Kuma monitors that aren't up
 - stopped or unhealthy containers, and Docker hosts the collector can't reach
@@ -62,6 +62,6 @@ A feed that's down is reported and the rest are still read. `details: true` adds
 
 ### container_logs
 
-Lists the containers on the configured Docker hosts, or returns one container's latest lines (default 200, at most 2,000), oldest first with timestamps, optionally only those newer than `since` (`30m`, `6h`, `2d`). Without `host` it finds the container's host itself.
+Lists the containers on the hosts in `logHosts`, or returns one container's latest lines (default 200, at most 2,000), oldest first with timestamps, optionally only those newer than `since` (`30m`, `6h`, `2d`). Without `host` it finds the container's host itself.
 
-The server connects over SSH to an account on each host whose key can only run a script that lists containers or prints a container's logs ([Security](security.md#container-logs)). Lines are labelled as other programs' text, terminal colour codes are removed, and values that look like secrets are scrubbed. Without the key (`GAIDIN_LOGS_KEYS`, default `/var/lib/gaidin/keys/docker-logs`) the tool doesn't exist.
+The server connects over SSH to an account on each host whose key can only run a script that lists containers or prints a container's logs ([Security](security.md#container-logs)). Lines are labelled as other programs' text, terminal colour codes are removed, and values that look like secrets are scrubbed. Without `logHosts`, or without the `docker-logs` key in the keys directory, the tool doesn't exist.

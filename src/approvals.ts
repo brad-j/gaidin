@@ -1,11 +1,11 @@
-// Approval hook: some tool calls wait for Brad to allow them, from Slack or the web view.
+// Approval hook: some tool calls wait for the owner to allow them, from Slack or the web view.
 //
 // A beforeTool hook asks the policy whether a call needs approval. If it does, the hook takes a request
 // id from a memo on the tool task, so after a restart the rerun of the same call finds the same
 // request, and waits for the decision. Requests and decisions live in a session document; hooks can't
 // write documents, so the host's ApprovalService does the writing and tells the surfaces.
 //
-// Now: fetch_url to a host Brad hasn't allowed for good. Tools that change things outside the
+// Now: fetch_url to a host the owner hasn't allowed for good. Tools that change things outside the
 // sandbox will ask every time.
 import { randomUUID } from "node:crypto";
 import type { Context } from "@earendil-works/chord";
@@ -22,7 +22,7 @@ export type ApprovalRequest = {
 	/** The tool call's task. A request whose task has ended isn't waited on any more. */
 	taskId: number;
 	tool: string;
-	/** One line for Brad: what the call does. */
+	/** One line for the owner: what the call does. */
 	summary: string;
 	/** The wider grant the second button gives, when one is offered. `label` is the button, `done` the outcome. */
 	always?: { kind: "fetch-host" | "workspace-hour"; value: string; label: string; done: string };
@@ -56,7 +56,7 @@ const WORKSPACE_GRANT_MS = 60 * 60_000;
 const clip = (text: string, max = 1500) => (text.length > max ? `${text.slice(0, max)}… (${text.length} characters)` : text);
 
 export const defaultPolicy: Policy = (call, state, conversationId) => {
-	// Every workspace tool asks, unless Brad allowed that workspace for an hour in this conversation.
+	// Every workspace tool asks, unless the owner allowed that workspace for an hour in this conversation.
 	if (call.name.startsWith("workspace_")) {
 		const workspace = String(call.arguments.workspace);
 		const now = Date.now();
@@ -104,7 +104,7 @@ export class ApprovalService {
 		return (await this.#harness.snapshot(Approvals, background)) ?? { requests: {}, fetchHosts: [] };
 	}
 
-	/** Requests still waiting for Brad. Ones whose call was stopped, or whose time ran out while the server was down, are closed. */
+	/** Requests still waiting for the owner. Ones whose call was stopped, or whose time ran out while the server was down, are closed. */
 	async pending(): Promise<ApprovalRequest[]> {
 		const waiting: ApprovalRequest[] = [];
 		for (const request of Object.values((await this.state()).requests)) {
@@ -163,7 +163,7 @@ export class ApprovalService {
 		return request;
 	}
 
-	/** Brad's answer. Returns the request, or nothing if it wasn't pending. */
+	/** The owner's answer. Returns the request, or nothing if it wasn't pending. */
 	async decide(id: string, decision: Decision, by: string): Promise<ApprovalRequest | undefined> {
 		const decided = await this.#commit((doc) => {
 			const request = doc.requests[id];
@@ -257,7 +257,7 @@ export class ApprovalService {
 }
 
 /** The hook. `service` is read lazily, because the Harness that the service needs is opened after the registry. */
-export function approvalExtension(service: () => ApprovalService, policy: Policy = defaultPolicy) {
+export function approvalExtension(service: () => ApprovalService, owner: string, policy: Policy = defaultPolicy) {
 	return defineExtension({
 		name: "approvals",
 		hooks: [
@@ -273,8 +273,8 @@ export function approvalExtension(service: () => ApprovalService, policy: Policy
 					const signals = [context.abortSignal, (api as { signal?: AbortSignal }).signal].filter((s) => s !== undefined);
 					const done = await approvals.wait(request, AbortSignal.any(signals));
 					if (done.status === "approved") return undefined;
-					const why = done.status === "denied" ? "Brad said no" : done.status === "expired" ? "Brad didn't answer in time" : "the run was stopped";
-					return { block: `Needs Brad's approval to ${ask.summary}, and ${why}.` };
+					const why = done.status === "denied" ? `${owner} said no` : done.status === "expired" ? `${owner} didn't answer in time` : "the run was stopped";
+					return { block: `Needs ${owner}'s approval to ${ask.summary}, and ${why}.` };
 				},
 			}),
 		],

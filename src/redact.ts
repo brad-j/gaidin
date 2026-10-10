@@ -6,7 +6,7 @@
 // redacts every tool's final result, which covers the file tools (`read /proc/self/environ`).
 //
 // This catches the values as they are. It doesn't stop a command from encoding or sending them, since
-// tools run as the server's user; that needs a sandbox, which comes before any tool reads untrusted input.
+// tools run as the server's user; the sandbox (sandbox.ts) is what keeps those values out of reach.
 import type { Context } from "@earendil-works/chord";
 import { defineExtension, hook, ToolTask } from "@earendil-works/pi-durable";
 import type { ShellExecOptions, ShellOutputInfo } from "@earendil-works/pi-durable/env";
@@ -24,11 +24,15 @@ export type Redactor = {
 	readonly longest: number;
 };
 
-/** A redactor for the credentials in `env`. An ntfy topic URL also redacts the bare topic name. */
+/** A redactor for the secrets in `env`. */
 export function redactorFromEnv(env: NodeJS.ProcessEnv = process.env): Redactor {
+	return redactorFor(Object.fromEntries(SECRET_NAMES.map((name) => [name, env[name]])));
+}
+
+/** A redactor for secret values by name. An ntfy topic URL also redacts the bare topic name. */
+export function redactorFor(values: Record<string, string | undefined>): Redactor {
 	const secrets = new Map<string, string>();
-	for (const name of SECRET_NAMES) {
-		const value = env[name];
+	for (const [name, value] of Object.entries(values)) {
 		if (!value) continue;
 		secrets.set(value, name);
 		if (name === "NTFY_URL") {

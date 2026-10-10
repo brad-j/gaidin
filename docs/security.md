@@ -6,14 +6,14 @@ The transcript is kept forever, compaction included, so anything a tool returns 
 
 ## Redaction
 
-`src/redact.ts` keeps the server's own secrets (`SECRET_NAMES`: `ANTHROPIC_API_KEY`, `NTFY_URL`, `NTFY_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`) out of tools and the transcript:
+`src/redact.ts` keeps the server's own secrets (the API key, the ntfy URL and token, and the two Slack tokens) out of tools and the transcript:
 
-- Shell commands don't inherit those variables.
+- Shell commands can't read the settings file and don't inherit those values' environment variables.
 - Shell output is redacted as it streams, holding back a few characters so a value split across two chunks is still caught. The live output, the stored result and the partial result saved after a crash are all clean.
 - An `afterTool` hook redacts every tool's final result, so a file tool reading `/proc/self/environ` gets `[redacted NAME]` too.
 - The bare ntfy topic name is redacted as well as its URL. Values under 8 characters aren't matched.
 
-It matches the values as they are, so an encoded copy would get through. The sandbox is what prevents that: the shell can't see the server's environment or reach the network. A new secret passed in the environment needs its variable added to `SECRET_NAMES`.
+It matches the values as they are, so an encoded copy would get through. The sandbox is what prevents that: the shell can't see the server's environment or reach the network. A new secret needs adding to `secretsOf` in `config.ts`, and its variable to `SECRET_NAMES`.
 
 ## The sandbox
 
@@ -77,6 +77,6 @@ The web view trusts the identity header Tailscale Serve adds, and listens only o
 ## Rules
 
 - Mark a tool `replay: "safe"` only when running it again after a crash is harmless.
-- Pass a new secret through the environment and add it to `SECRET_NAMES`.
+- Keep a new secret in the settings and add it to `secretsOf`, so it's redacted.
 - A tool that reads text from outside labels it as such in its result.
 - A tool that changes things outside the sandbox asks first.

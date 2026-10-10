@@ -2,9 +2,9 @@
 
 ## One process, one conversation
 
-`pnpm serve` (`src/server.ts`) is the only process that opens the SQLite file. It runs the agent and serves every surface: the Unix socket the CLI uses, Slack over Socket Mode, and the web view. Pi Durable allows one process per storage, so nothing else may open the file while the server runs.
+`gaidin serve` (`src/server.ts`) is the only process that opens the SQLite file. It runs the agent and serves every surface: the Unix socket the CLI uses, Slack over Socket Mode, and the web view. Pi Durable allows one process per storage, so nothing else may open the file while the server runs.
 
-Everything you say from any surface goes to the root conversation, so the CLI, the Slack channel and the web view all see the same history. A message sent from Slack shows up live in the web view and in `pnpm watch`.
+Everything you say from any surface goes to the root conversation, so the CLI, the Slack channel and the web view all see the same history. A message sent from Slack shows up live in the web view and in `gaidin watch`.
 
 ## Durability
 
@@ -17,7 +17,7 @@ Pi Durable stores the conversation as entries (your messages, the model's answer
 
 Delivery of reminder pushes and Slack posts is at least once: a crash between sending and recording that it was sent sends it again.
 
-Every message carries a request id, and submitting the same id again returns the stored submission instead of asking twice. `pnpm ask --id <id>` uses this to reattach to a run after the CLI or the server went away.
+Every message carries a request id, and submitting the same id again returns the stored submission instead of asking twice. `gaidin ask --id <id>` uses this to reattach to a run after the CLI or the server went away.
 
 ## Forks
 

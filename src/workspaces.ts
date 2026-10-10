@@ -6,7 +6,7 @@
 // The server connects with the `workspace` key, checking host keys against `workspaces_known_hosts`
 // (deploy/vm/add-workspace.sh writes both). On the machine, the key only runs
 // deploy/workspace/gaidin-workspace.py, which confines everything to the roots it's configured with.
-// Every call waits for Brad's approval (approvals.ts) unless he allowed that workspace for an hour in
+// Every call waits for the owner's approval (approvals.ts) unless they allowed that workspace for an hour in
 // the conversation. With no workspaces listed there are no workspace tools.
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -26,9 +26,7 @@ export type Remote = (
 	options: { signal?: AbortSignal; onOutput?: (text: string) => void },
 ) => Promise<{ code: number; output: string }>;
 
-export const keysDir = () => process.env.GAIDIN_KEYS ?? "/var/lib/gaidin/keys";
-
-export function readWorkspaces(dir = keysDir()): Workspace[] {
+export function readWorkspaces(dir: string): Workspace[] {
 	const file = join(dir, "workspaces");
 	if (!existsSync(file)) return [];
 	return readFileSync(file, "utf8")
@@ -42,7 +40,7 @@ export function readWorkspaces(dir = keysDir()): Workspace[] {
 		});
 }
 
-export function sshRemote(dir = keysDir()): Remote | undefined {
+export function sshRemote(dir: string): Remote | undefined {
 	const key = join(dir, "workspace");
 	if (!existsSync(key)) return undefined;
 	return (workspace, operation, request, { signal, onOutput }) =>
@@ -99,8 +97,9 @@ function answer(output: string): Record<string, any> {
 	return parsed;
 }
 
-export function createWorkspaces(options: { workspaces: Workspace[]; remote: Remote | undefined; redactor: Redactor }) {
-	const { workspaces, remote, redactor } = options;
+export function createWorkspaces(options: { workspaces: Workspace[]; remote: Remote | undefined; redactor: Redactor; owner: string }) {
+	const { workspaces, remote, redactor, owner } = options;
+	const asks = `Each call waits for ${owner}'s approval.`;
 	const names = workspaces.map((w) => w.name);
 	const find = (name: string) => {
 		const workspace = workspaces.find((w) => w.name === name);
@@ -113,9 +112,9 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 	const run = defineTool({
 		name: "workspace_run",
 		description:
-			`Run a bash command on one of Brad's machines (${names.join(", ")}), as Brad, in his projects: tests, builds, git, ` +
+			`Run a bash command on one of ${owner}'s machines (${names.join(", ")}), as ${owner}'s user, in their projects: tests, builds, git, ` +
 			"package installs. Only the workspace's project roots are writable, secret files are hidden, and there's network " +
-			"but no SSH keys or tokens, so git push won't work. Commits are authored by gaidin. Each call waits for Brad's approval.",
+			`but no SSH keys or tokens, so git push won't work. Commits are authored by gaidin. ${asks}`,
 		parameters: Type.Object({
 			workspace: workspaceParam,
 			command: Type.String(),
@@ -139,7 +138,7 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 
 	const read = defineTool({
 		name: "workspace_read",
-		description: "Read a text file, or list a directory, in a workspace's projects. Each call waits for Brad's approval.",
+		description: `Read a text file, or list a directory, in a workspace's projects. ${asks}`,
 		parameters: Type.Object({
 			workspace: workspaceParam,
 			path: pathParam,
@@ -158,7 +157,7 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 
 	const write = defineTool({
 		name: "workspace_write",
-		description: "Create or replace a file in a workspace's projects. Each call waits for Brad's approval.",
+		description: `Create or replace a file in a workspace's projects. ${asks}`,
 		parameters: Type.Object({ workspace: workspaceParam, path: pathParam, content: Type.String() }),
 		execute: async (args) => {
 			const result = answer((await remote!(find(args.workspace), "write", { path: args.path, content: args.content }, {})).output);
@@ -168,7 +167,7 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 
 	const edit = defineTool({
 		name: "workspace_edit",
-		description: "Edit a file in a workspace's projects: each oldText must occur exactly once and is replaced by newText. Each call waits for Brad's approval.",
+		description: `Edit a file in a workspace's projects: each oldText must occur exactly once and is replaced by newText. ${asks}`,
 		parameters: Type.Object({
 			workspace: workspaceParam,
 			path: pathParam,

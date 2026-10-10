@@ -2,7 +2,7 @@
 
 ## How the code is laid out
 
-`src/host.ts` opens the Harness and installs every extension into one registry. Each extension is a named bundle of tools, prompt sections and hooks:
+`src/main.ts` is the `gaidin` command, `src/config.ts` reads and checks the settings, and `src/doctor.ts` is `gaidin doctor`. `src/host.ts` opens the Harness and installs every extension into one registry. Each extension is a named bundle of tools, prompt sections and hooks:
 
 | File | Extension |
 |---|---|
@@ -11,7 +11,7 @@
 | `reminders.ts` | reminders and their background task |
 | `fetch.ts` | `fetch_url` |
 | `workspaces.ts` | the workspace tools |
-| `homelab.ts`, `logs.ts` | the homelab extension |
+| `extensions/homelab/` | the homelab extension, when configured |
 | `approvals.ts` | the approval hook |
 | `redact.ts` | the redaction hook, installed last so it sees every result |
 
@@ -37,7 +37,8 @@ registry.install(defineExtension({ name: "weather", tools: [weather] }));
 - A tool that runs commands should use the environment it's given (`api.env`), which is the sandbox, so it can't reach anything the sandbox hides.
 - If it reads text from outside, say so in the result, as `fetch_url` and `container_logs` do.
 - To make it switchable in the web view, add it to `switchable` in `host.ts`.
-- A tool that needs a secret reads it from the environment; add the variable to `SECRET_NAMES` in `redact.ts`.
+- A tool that needs a secret takes it from the settings: add it to `Config` and `loadConfig` in `config.ts` and to `secretsOf`, so it's redacted, and add its environment variable to `SECRET_NAMES` in `redact.ts`.
+- A tool's description should name the owner with `config.owner`, not a fixed name.
 
 Durable state goes in a document (`defineDoc`) changed inside `api.commit`, and timed work goes in a task (`defineTask`), as `reminders.ts` does. Both survive restarts.
 
@@ -57,17 +58,27 @@ faux.setResponses([
 ]);
 ```
 
-`openHost` takes options that replace each outside dependency: the notifier, the homelab feeds, `fetch_url`'s resolver, the container logs runner, the workspace list and remote, and the approval timeout. `test/` has an example for each.
+`openHost` takes the settings (`configFor({...})` builds them in a test) and options that replace each outside dependency: the notifier, the homelab feeds and log runner, `fetch_url`'s resolver, the workspace list and remote, and the approval timeout. `test/` has an example for each.
 
-## Parts written for one deployment
+## The homelab extension
 
-gaidin is generic apart from these, which were written for its first owner and would move into a separate, optional extension pack before a release:
+`src/extensions/homelab/` holds `homelab_status` and `container_logs`, written for gaidin's first deployment. It's off unless the settings have `extensions.homelab`:
 
-- The persona prompt and several tool descriptions name the owner ("Brad").
-- `homelab.ts` defaults to that homelab's feed URLs and links its dashboard. Its thresholds copy the dashboard's own and have to be kept in step with it.
-- `logs.ts` names two Docker hosts and their addresses. The script it calls on them, and its installer, live in the homelab's own repository.
-- `deploy/vm/setup.sh` clones a specific repository.
-- `deploy/gaidin.service` points at a specific Node install.
-- The web view offers a fixed list of Anthropic models.
+```json
+"extensions": {
+  "homelab": {
+    "feeds": "http://192.0.2.10:8080/data",
+    "kuma": { "url": "https://status.example.com", "page": "homelab" },
+    "dashboard": "https://dashboard.example.com",
+    "logHosts": { "apps": "192.0.2.11" }
+  }
+}
+```
 
-The plan for a release is a core package (the conversation, surfaces, sandbox, redaction, approvals, reminders, `fetch_url`, workspaces) with the owner's name as a setting, and the homelab tools as an example extension configured by a file instead of constants.
+`feeds` is the base URL of `beszel.json`, `docker.json` and `backups.json` snapshots in the format that deployment's dashboard collectors write, and `kuma` names an Uptime Kuma public status page. `container_logs` exists only with `logHosts` and the `docker-logs` key in the keys directory; each host needs the restricted account and script described in [Security](security.md#container-logs). The thresholds copy that dashboard's own. It's the model for an extension: tools in their own directory, configured by a section of the settings, installed in `host.ts` only when that section is there.
+
+## Still specific to one deployment
+
+- `deploy/vm/setup.sh` clones the original repository.
+- The scripts that set up the container logs account live in that deployment's homelab repository.
+- The homelab snapshot formats are those of that deployment's dashboard collectors.

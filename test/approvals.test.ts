@@ -9,6 +9,7 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import type { ApprovalRequest, ApprovalService } from "../src/approvals.ts";
 import { blockedRanges, type FetchOptions } from "../src/fetch.ts";
+import { configFor } from "../src/config.ts";
 import { context, type HostOptions, openHost } from "../src/host.ts";
 
 /** A page on loopback, reachable as a.test and b.test. */
@@ -66,7 +67,8 @@ async function results(host: Awaited<ReturnType<typeof openHost>>) {
 async function start(t: TestContext, rounds: string[][], extra: Partial<HostOptions> = {}) {
 	const { port, fetch } = await site(t);
 	const dir = dataDir(t);
-	const host = await openHost({ dataDir: dir, fetch, notify: async () => {}, ...models(port, rounds), ...extra });
+	// Named, so the messages are checked with the owner's name in them.
+	const host = await openHost({ config: configFor({ owner: "Brad" }), dataDir: dir, fetch, notify: async () => {}, ...models(port, rounds), ...extra });
 	t.after(() => host.harness.close(context));
 	return { host, dir, port, fetch };
 }

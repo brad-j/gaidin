@@ -1,0 +1,22 @@
+{
+  "owner": "Alex",
+  "timeZone": "America/New_York",
+  "data": "/var/lib/gaidin/data",
+  "keys": "/var/lib/gaidin/keys",
+  "model": {
+    "id": "claude-haiku-5-5",
+    "apiKey": "sk-ant-..."
+  },
+  "ntfy": {
+    "url": "https://ntfy.sh/gaidin-<long random name>"
+  },
+  "slack": {
+    "botToken": "xoxb-...",
+    "appToken": "xapp-...",
+    "channelId": "C0123ABCD",
+    "userId": "U0123ABCD"
+  },
+  "web": {
+    "user": "alex@example.com"
+  }
+}

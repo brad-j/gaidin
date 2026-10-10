@@ -5,8 +5,11 @@ import { join } from "node:path";
 import test from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import { configFor, type HomelabConfig } from "../src/config.ts";
+import { type RunRemote, scrubSecrets, stripAnsi } from "../src/extensions/homelab/logs.ts";
 import { context, openHost } from "../src/host.ts";
-import { type RunRemote, scrubSecrets, stripAnsi } from "../src/logs.ts";
+
+const HOMELAB: HomelabConfig = { feeds: "http://feeds.test", kuma: { url: "https://kuma.test", page: "p" }, logHosts: { "apps-01": "192.0.2.1", "infra-01": "192.0.2.2" } };
 
 const LOGS = [
 	"2026-10-10T20:00:00Z GET /bookmarks 200",
@@ -34,7 +37,7 @@ async function call(run: RunRemote, args: Record<string, string | number>) {
 	faux.setResponses([fauxAssistantMessage(fauxToolCall("container_logs", args), { stopReason: "toolUse" }), fauxAssistantMessage(fauxText("Done."))]);
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const host = await openHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, logs: run, notify: async () => {} });
+	const host = await openHost({ config: configFor({ homelab: HOMELAB }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, homelab: { logs: run }, notify: async () => {} });
 	try {
 		await (await host.root.submit({ type: "input", content: "logs" }, context)).wait(context);
 		const result = (await host.root.context(context)).messages.find((m) => m.role === "toolResult") as { content: { text: string }[]; isError?: boolean };
@@ -69,7 +72,7 @@ test("a container's logs come from the host that has it, labelled and scrubbed",
 	const { text } = await call(run, { container: "uptime-kuma", lines: 50, since: "2h" });
 	assert.deepEqual(calls.at(-1), ["infra-01", "logs uptime-kuma 50 2h"]);
 	assert.match(text, /^Logs of uptime-kuma on infra-01, oldest first\./);
-	assert.match(text, /not by Brad/);
+	assert.match(text, /not by the user/);
 	assert.match(text, /GET \/bookmarks 200/);
 	assert.doesNotMatch(text, /hunter2/);
 });
@@ -82,10 +85,15 @@ test("bad input is refused before anything is sent", async () => {
 	assert.ok(calls.every(([, command]) => command === "list"));
 });
 
-test("without a key there's no container_logs tool", async (t) => {
+test("without hosts, or with the extension off, there's no container_logs tool", async (t) => {
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
-	const host = await openHost({ dataDir: dir, logs: null, notify: async () => {}, models: createModels(), model: { provider: "faux", modelId: "x" } });
-	t.after(() => host.harness.close(context));
-	assert.ok(!(await host.root.agent(context)).tools.some((tool) => tool.name === "container_logs"));
+	const options = { notify: async () => {}, models: createModels(), model: { provider: "faux", modelId: "x" } };
+	const off = await openHost({ ...options, dataDir: join(dir, "off") });
+	t.after(() => off.harness.close(context));
+	assert.ok(!(await off.root.agent(context)).tools.some((tool) => tool.name === "container_logs" || tool.name === "homelab_status"));
+	const noHosts = await openHost({ ...options, dataDir: join(dir, "no-hosts"), config: configFor({ homelab: { ...HOMELAB, logHosts: {} } }), homelab: { logs: async () => "" } });
+	t.after(() => noHosts.harness.close(context));
+	const tools = (await noHosts.root.agent(context)).tools.map((tool) => tool.name);
+	assert.ok(tools.includes("homelab_status") && !tools.includes("container_logs"));
 });

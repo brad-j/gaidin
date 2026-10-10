@@ -1,9 +1,10 @@
-// Read-only homelab status from the feeds the infra dashboard (infra.half.black) reads: Uptime Kuma's
-// public status page and the Beszel, Docker and backup snapshots that infra-01 publishes. None of them
-// needs a credential. The checks and thresholds follow the dashboard's src/attention.ts in the homelab
-// repo, without its coverage checks, which need the repo's inventory.
+// Read-only homelab status from the feeds behind a homelab dashboard: an Uptime Kuma public status
+// page, and JSON snapshots of Beszel host metrics, Docker containers and Proxmox backups. None of them
+// needs a key. The checks and thresholds follow the original deployment's dashboard (its homelab repo's
+// src/attention.ts), without its coverage checks, which need that repo's inventory.
 import { Type } from "@earendil-works/pi-ai";
-import { defineExtension, defineTool } from "@earendil-works/pi-durable";
+import { defineTool } from "@earendil-works/pi-durable";
+import type { HomelabConfig } from "../../config.ts";
 
 export const DISK_WARNING = 85;
 export const DISK_CRITICAL = 95;
@@ -39,11 +40,6 @@ export type FetchedFeeds = { [K in keyof Feeds]: Settled<Feeds[K]> };
 
 export type FetchJson = (url: string) => Promise<unknown>;
 
-export const sources = {
-	data: process.env.GAIDIN_HOMELAB_DATA ?? "http://192.168.3.177:8080/data",
-	kuma: process.env.GAIDIN_KUMA_URL ?? "https://status.half.black",
-};
-
 export const fetchJson: FetchJson = async (url) => {
 	const response = await fetch(url, { signal: AbortSignal.timeout(8_000) });
 	if (!response.ok) throw new Error(`${response.status} from ${url}`);
@@ -53,7 +49,7 @@ export const fetchJson: FetchJson = async (url) => {
 const MONITOR_STATES: Record<number, string> = { 0: "down", 1: "up", 2: "pending", 3: "maintenance" };
 
 /** Fetches every feed at once; one failing doesn't stop the others. */
-export async function fetchFeeds(get: FetchJson = fetchJson): Promise<FetchedFeeds> {
+export async function fetchFeeds(sources: Pick<HomelabConfig, "feeds" | "kuma">, get: FetchJson = fetchJson): Promise<FetchedFeeds> {
 	const settle = async <T>(load: () => Promise<T>): Promise<Settled<T>> => {
 		try {
 			return { data: await load() };
@@ -62,7 +58,7 @@ export async function fetchFeeds(get: FetchJson = fetchJson): Promise<FetchedFee
 		}
 	};
 	const snapshot = async <T>(name: string, check: (value: any) => boolean): Promise<T> => {
-		const value = (await get(`${sources.data}/${name}.json`)) as any;
+		const value = (await get(`${sources.feeds}/${name}.json`)) as any;
 		if (value?.schemaVersion !== 1 || typeof value.generatedAt !== "string" || !check(value)) {
 			throw new Error(`${name}.json used an unsupported schema`);
 		}
@@ -71,8 +67,8 @@ export async function fetchFeeds(get: FetchJson = fetchJson): Promise<FetchedFee
 	const [kuma, beszel, docker, backups] = await Promise.all([
 		settle(async () => {
 			const [page, heartbeat] = (await Promise.all([
-				get(`${sources.kuma}/api/status-page/homelab`),
-				get(`${sources.kuma}/api/status-page/heartbeat/homelab`),
+				get(`${sources.kuma.url}/api/status-page/${encodeURIComponent(sources.kuma.page)}`),
+				get(`${sources.kuma.url}/api/status-page/heartbeat/${encodeURIComponent(sources.kuma.page)}`),
 			])) as [any, any];
 			if (!Array.isArray(page?.publicGroupList) || !heartbeat?.heartbeatList) throw new Error("Uptime Kuma answered in an unexpected shape");
 			return page.publicGroupList.flatMap((group: any) => group.monitorList).map((monitor: any): KumaMonitor => {
@@ -100,7 +96,7 @@ function stale(generatedAt: string | undefined, maxAgeMs: number, now: number): 
 	return Number.isFinite(time) && now - time > maxAgeMs;
 }
 
-/** Everything that needs Brad, most severe first. */
+/** Everything that needs attention, most severe first. */
 export function collectAttention(feeds: FetchedFeeds, now = Date.now()): Item[] {
 	const items: Item[] = [];
 	const add = (severity: Severity, title: string, detail: string) => items.push({ severity, title, detail });
@@ -216,19 +212,18 @@ export function report(feeds: FetchedFeeds, details: boolean, now = Date.now()):
 	return lines.join("\n");
 }
 
-export function createHomelab(get: FetchJson = fetchJson) {
-	const homelabStatus = defineTool({
+export function homelabStatusTool(config: HomelabConfig, owner: string, get: FetchJson = fetchJson) {
+	return defineTool({
 		name: "homelab_status",
 		description:
-			"Check Brad's homelab: Uptime Kuma monitors, host metrics from Beszel, Docker containers and Proxmox backups. " +
+			`Check ${owner}'s homelab: Uptime Kuma monitors, host metrics from Beszel, Docker containers and Proxmox backups. ` +
 			"Read-only. Lists what needs attention first, with the dashboard's thresholds. Set `details` for every monitor, " +
 			"host, container and backup.",
 		parameters: Type.Object({ details: Type.Optional(Type.Boolean()) }),
 		replay: "safe",
 		execute: async (args) => {
-			const text = report(await fetchFeeds(get), args.details === true);
-			return { content: [{ type: "text", text: `${text}\n\nDashboard: https://infra.half.black` }] };
+			const text = report(await fetchFeeds(config, get), args.details === true);
+			return { content: [{ type: "text", text: config.dashboard === undefined ? text : `${text}\n\nDashboard: ${config.dashboard}` }] };
 		},
 	});
-	return defineExtension({ name: "homelab", tools: [homelabStatus] });
 }

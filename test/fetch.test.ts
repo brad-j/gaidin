@@ -83,7 +83,7 @@ test("pages come back as labelled, readable text", async (t) => {
 	assert.equal(fetched.url, `${base}/page`);
 	const text = render(fetched, 20_000);
 	assert.match(text, /^Fetched http:\/\/public\.test:\d+\/page \(HTTP 200, text\/html\)\./);
-	assert.match(text, /not from Brad/);
+	assert.match(text, /not from the user/);
 	assert.match(text, /# Fish & Chips/);
 	assert.match(text, /# Recipe\n\nBatter - light\./);
 	assert.match(text, /- Cod\n- Potatoes/);

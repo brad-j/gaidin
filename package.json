@@ -2,10 +2,15 @@
   "name": "gaidin",
   "version": "1.0.0",
   "description": "Personal agent on Pi Durable",
+  "bin": {
+    "gaidin": "src/main.ts"
+  },
   "scripts": {
-    "serve": "node --no-warnings --env-file-if-exists=.env src/server.ts",
-    "ask": "node --no-warnings src/cli.ts",
-    "watch": "node --no-warnings src/cli.ts --watch",
+    "gaidin": "node --no-warnings --env-file-if-exists=.env src/main.ts",
+    "serve": "node --no-warnings --env-file-if-exists=.env src/main.ts serve",
+    "ask": "node --no-warnings --env-file-if-exists=.env src/main.ts ask",
+    "watch": "node --no-warnings --env-file-if-exists=.env src/main.ts watch",
+    "doctor": "node --no-warnings --env-file-if-exists=.env src/main.ts doctor",
     "check": "tsc && pnpm test",
     "test": "node --no-warnings --test test/*.test.ts"
   },

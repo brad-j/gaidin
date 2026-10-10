@@ -5,8 +5,11 @@ import { join } from "node:path";
 import test from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { collectAttention, fetchFeeds, type FetchJson, report, sources } from "../src/homelab.ts";
+import { configFor, type HomelabConfig } from "../src/config.ts";
+import { collectAttention, fetchFeeds, type FetchJson, report } from "../src/extensions/homelab/status.ts";
 import { context, openHost } from "../src/host.ts";
+
+const HOMELAB: HomelabConfig = { feeds: "http://feeds.test/data", kuma: { url: "https://kuma.test", page: "homelab" }, dashboard: "https://dash.test", logHosts: {} };
 
 const NOW = Date.parse("2026-10-10T20:00:00Z");
 const HOUR = 3_600_000;
@@ -64,7 +67,7 @@ function fixtures(change: (f: any, iso: (msAgo: number) => string) => void = () 
 }
 
 test("a healthy homelab needs nothing", async () => {
-	const feeds = await fetchFeeds(fixtures());
+	const feeds = await fetchFeeds(HOMELAB, fixtures());
 	assert.deepEqual(collectAttention(feeds, NOW), []);
 	const text = report(feeds, false, NOW);
 	assert.match(text, /^Nothing needs attention\./);
@@ -75,7 +78,7 @@ test("a healthy homelab needs nothing", async () => {
 });
 
 test("problems are listed most severe first, with the dashboard's thresholds", async () => {
-	const feeds = await fetchFeeds(fixtures((f, iso) => {
+	const feeds = await fetchFeeds(HOMELAB, fixtures((f, iso) => {
 		f.heartbeat.heartbeatList[2].push({ status: 0, time: "2026-10-10 19:59:30", msg: "timeout of 48000ms exceeded" });
 		f.docker.hosts[0].containers[0].health = "unhealthy";
 		f.docker.hosts[0].containers[1].state = "exited";
@@ -98,7 +101,7 @@ test("problems are listed most severe first, with the dashboard's thresholds", a
 });
 
 test("a feed that's down is reported and the others still are", async () => {
-	const feeds = await fetchFeeds(fixtures((f) => {
+	const feeds = await fetchFeeds(HOMELAB, fixtures((f) => {
 		f.docker = new Error("connect ECONNREFUSED 192.168.3.177:8080");
 		f.backups.runs[0].status = "job errors";
 	}));
@@ -108,7 +111,7 @@ test("a feed that's down is reported and the others still are", async () => {
 });
 
 test("a stale snapshot is a warning", async () => {
-	const feeds = await fetchFeeds(fixtures((f, iso) => {
+	const feeds = await fetchFeeds(HOMELAB, fixtures((f, iso) => {
 		f.beszel.generatedAt = iso(10 * 60_000);
 	}));
 	assert.deepEqual(collectAttention(feeds, NOW).map((i) => i.title), ["Beszel snapshot is stale"]);
@@ -124,12 +127,11 @@ test("the agent can call homelab_status", async (t) => {
 	]);
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const host = await openHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, homelabFetch: fixtures(undefined, Date.now()), notify: async () => {} });
+	const host = await openHost({ config: configFor({ homelab: HOMELAB }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, homelab: { fetch: fixtures(undefined, Date.now()) }, notify: async () => {} });
 	t.after(() => host.harness.close(context));
 	const settled = await (await host.root.submit({ type: "input", content: "is the homelab ok?" }, context)).wait(context);
 	assert.equal(settled.status, "done");
 	const result = (await host.root.context(context)).messages.find((m) => m.role === "toolResult");
 	assert.match(JSON.stringify(result), /Nothing needs attention\./);
-	assert.match(JSON.stringify(result), /infra\.half\.black/);
-	assert.ok(sources.data.startsWith("http"));
+	assert.match(JSON.stringify(result), /dash\.test/);
 });

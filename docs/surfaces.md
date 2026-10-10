@@ -4,15 +4,15 @@ All three surfaces talk to the same root conversation ([Concepts](concepts.md)).
 
 ## Command line
 
-`src/cli.ts` talks to the server over the Unix socket in the data directory, so it has to run on the same machine, as a user who can open the socket.
+`gaidin ask` and `gaidin watch` (`src/cli.ts`) talk to the server over the Unix socket in the data directory, so it has to run on the same machine, as a user who can open the socket.
 
 ```sh
-pnpm ask "what's on my list?"
-pnpm ask --id oven-1 "..."    # rerunning the same id reattaches instead of asking twice
-pnpm watch                    # follow everything until Ctrl+C
+gaidin ask "what's on my list?"
+gaidin ask --id oven-1 "..."    # rerunning the same id reattaches instead of asking twice
+gaidin watch                    # follow everything until Ctrl+C
 ```
 
-On a server, run it as the service's user with `GAIDIN_DATA` pointing at the data directory. `pnpm ask` prints the request id it used, so you can reattach if the connection drops.
+On the VM, `setup.sh`'s `gaidin` command runs as the service's user. `gaidin ask` prints the request id it used, so you can reattach if the connection drops.
 
 ## Slack
 
@@ -29,7 +29,7 @@ Answers are posted as Markdown, which Slack renders. Answers over 12,000 charact
 5. Your own member ID (your profile > ⋯ > Copy member ID) is `SLACK_USER_ID`.
 6. Optionally, under Basic Information > Display Information, upload a PNG of `assets/logo.svg` as the app icon. The manifest can't set it.
 
-All four `SLACK_*` settings are needed; the server refuses to start with only some of them.
+Put the four values in the `slack` section of the settings ([Deploying](deploy.md#settings)). The server refuses to start with only some of them.
 
 Give gaidin its own channel. In a channel shared with another bot, both would answer every message.
 
@@ -47,12 +47,12 @@ It shows no keys or Slack settings, and turning a tool off there is the quickest
 
 ### How it's reached
 
-The server listens on `127.0.0.1:GAIDIN_WEB_PORT` (default 8410) and nowhere else. [Tailscale Serve](https://tailscale.com/kb/1312/serve) puts HTTPS in front of it on the machine's tailnet name:
+The server listens on `127.0.0.1` at `web.port` (default 8410) and nowhere else. [Tailscale Serve](https://tailscale.com/kb/1312/serve) puts HTTPS in front of it on the machine's tailnet name:
 
 ```sh
 sudo tailscale serve --bg --yes 8410
 ```
 
-Serve removes any identity headers a client sends and adds `Tailscale-User-Login` for requests from a person's device. The server answers only the login in `GAIDIN_WEB_USER` and returns 403 to everyone else, including tagged devices, which get no identity. POSTs need a JSON body and an `Origin` matching the page, so another site open in your browser can't drive it.
+Serve removes any identity headers a client sends and adds `Tailscale-User-Login` for requests from a person's device. The server answers only the login in `web.user` and returns 403 to everyone else, including tagged devices, which get no identity. POSTs need a JSON body and an `Origin` matching the page, so another site open in your browser can't drive it.
 
-Without `GAIDIN_WEB_USER` there's no web view. The page is `web/index.html` and `web/app.ts`; Node strips the TypeScript types as it serves the file, so there's no build step.
+Without `web.user` there's no web view. The page is `web/index.html` and `web/app.ts`; Node strips the TypeScript types as it serves the file, so there's no build step.

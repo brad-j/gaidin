@@ -3,15 +3,14 @@
 Description=gaidin personal agent
 After=network-online.target
 Wants=network-online.target
-ConditionPathExists=/etc/gaidin/env
+ConditionPathExists=/etc/gaidin/config.json
 
 [Service]
 User=gaidin
 Group=gaidin
 WorkingDirectory=/var/lib/gaidin/app
-EnvironmentFile=/etc/gaidin/env
-Environment=GAIDIN_DATA=/var/lib/gaidin/data
-ExecStart=/usr/local/bin/node --no-warnings src/server.ts
+Environment=GAIDIN_CONFIG=/etc/gaidin/config.json
+ExecStart=/usr/local/bin/node --no-warnings src/main.ts serve
 Restart=on-failure
 RestartSec=5
 UMask=0077

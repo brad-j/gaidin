@@ -31,8 +31,11 @@ export function findBwrap(path = process.env.PATH ?? ""): string | undefined {
 	return undefined;
 }
 
-/** bwrap's arguments for a command run in `cwd`, with `root` the only writable place. */
-export async function bwrapArgs(root: string, cwd: string): Promise<string[]> {
+/**
+ * bwrap's arguments for a command run in `cwd`, with `root` the only writable place. Files in `hide`, such
+ * as a settings file holding secrets under /etc, are covered with /dev/null, which reads as permission denied.
+ */
+export async function bwrapArgs(root: string, cwd: string, hide: readonly string[] = []): Promise<string[]> {
 	const args = ["--unshare-all", "--die-with-parent", "--new-session", "--ro-bind", "/usr", "/usr"];
 	// Merged-/usr systems make these symlinks into /usr; keep them as they are on the host.
 	for (const top of ["/bin", "/sbin", "/lib", "/lib64"]) {
@@ -43,6 +46,11 @@ export async function bwrapArgs(root: string, cwd: string): Promise<string[]> {
 	// The tmpfs comes before the sandbox's bind, so a sandbox under /tmp (as in tests) still shows.
 	args.push("--ro-bind", "/etc", "/etc", "--ro-bind-try", "/opt", "/opt", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp");
 	args.push("--bind", root, root, "--chdir", cwd, "--setenv", "HOME", root);
+	// Only files inside what's mounted; bwrap can't mask a path that isn't there.
+	for (const file of hide) {
+		const real = await realpath(file).catch(() => undefined);
+		if (real !== undefined && ["/usr", "/etc", "/opt", root].some((top) => inside(real, top))) args.push("--ro-bind", "/dev/null", real);
+	}
 	return args;
 }
 
@@ -98,15 +106,17 @@ export class SandboxEnv extends RedactingEnv {
 	/** The sandbox directory, with symlinks resolved. */
 	readonly root: string;
 	readonly #bwrap: string | undefined;
+	readonly #hide: readonly string[];
 
 	/** Without `bwrap`, shell commands run unconfined; only tests and local runs that ask for it do that. */
-	constructor(options: { root: string; cwd?: string; redactor: Redactor; bwrap: string | undefined }) {
+	constructor(options: { root: string; cwd?: string; redactor: Redactor; bwrap: string | undefined; hide?: readonly string[] }) {
 		const root = realpathSync(options.root);
 		const cwd = options.cwd === undefined ? root : realpathSync(options.cwd);
 		if (!inside(cwd, root)) throw new Error(`The working directory ${options.cwd} is outside the sandbox ${root}`);
 		super({ cwd, redactor: options.redactor });
 		this.root = root;
 		this.#bwrap = options.bwrap;
+		this.#hide = options.hide ?? [];
 	}
 
 	/** The real path of `path`, following every symlink that exists so far, if it's inside the sandbox. */
@@ -144,7 +154,7 @@ export class SandboxEnv extends RedactingEnv {
 			if (!cwd.ok) return err(new ExecutionError("spawn_error", cwd.error.message));
 			if (this.#bwrap === undefined) return super.exec(command, { ...options, cwd: cwd.value }, context);
 			const inner = typeof command === "string" ? ["bash", "-c", command] : [...command];
-			const argv = [this.#bwrap, ...(await bwrapArgs(this.root, cwd.value)), "--", ...inner];
+			const argv = [this.#bwrap, ...(await bwrapArgs(this.root, cwd.value, this.#hide)), "--", ...inner];
 			return super.exec(argv, { ...options, cwd: cwd.value }, context);
 		});
 	}

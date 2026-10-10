@@ -1,15 +1,32 @@
 # Deploying
 
-gaidin needs Linux, Node 22.18 or later (it runs the TypeScript directly), pnpm, bubblewrap, and an API key for the model. It can run on a workstation, but it's meant to live on a small always-on machine, so reminders fire and Slack gets answered while your desktop is off.
+gaidin needs Linux, Node 22.18 or later (it runs the TypeScript directly), pnpm, bubblewrap, and an API key for the model. It can run on a workstation, but it's meant to live on a small always-on machine, so reminders fire and Slack gets answered while your desktop is off. It needs no inbound ports: Slack is an outbound connection and the web view goes through Tailscale.
+
+## The gaidin command
+
+```sh
+gaidin serve                    # run the agent and its surfaces
+gaidin ask "MESSAGE"            # send a message and print the run; --id ID reattaches
+gaidin watch                    # print everything the agent does, until Ctrl+C
+gaidin doctor                   # check the settings and everything the server needs
+gaidin doctor --push            # the same, and send a test notification
+gaidin config                   # print the settings in use, secrets shortened
+```
+
+From a checkout, `pnpm gaidin ...` runs it, and `pnpm serve`, `pnpm ask`, `pnpm watch` and `pnpm doctor` are shortcuts. On the VM, `setup.sh` installs `/usr/local/bin/gaidin`, which runs it as the service's user with the service's settings.
+
+`gaidin doctor` doesn't start the server and spends no tokens. It checks the settings, Node, the data directory, that bubblewrap can start a sandbox, the API key and model (by looking the model up), the ntfy topic, both Slack tokens, `tailscale serve`, each workspace, and the homelab feeds and log hosts, and says what to fix.
 
 ## Running it locally
 
 ```sh
 pnpm install
+cp deploy/config.example.json gaidin.json && chmod 600 gaidin.json   # then edit it
+pnpm doctor
 pnpm serve
 ```
 
-`pnpm serve` reads a gitignored `.env` in the repository, if there is one, with the [settings](#settings) below. `deploy/gaidin.service` is a systemd user unit for running it this way in the background; it points at a specific Node install, so edit `ExecStart` first. User units stop when you log out unless lingering is on (`loginctl enable-linger`).
+`gaidin.json` in the checkout is gitignored. `deploy/gaidin.service` is a systemd user unit for running it this way in the background; edit its paths first. User units stop when you log out unless lingering is on (`loginctl enable-linger`).
 
 ## Running it on a VM
 
@@ -18,32 +35,26 @@ pnpm serve
 1. Create the VM and install Node (in `/usr/local/bin`) and pnpm.
 2. Change the repository URL in `deploy/vm/setup.sh` to your fork.
 3. Copy `setup.sh` to the VM and run it as root. The first run creates a read-only deploy key, prints it and stops. Add it to the repository's deploy keys, then run it again.
-4. Put the [settings](#settings) in `/etc/gaidin/env` (owned by root, mode 600). The service doesn't start without this file.
-5. `systemctl start gaidin`, then check `journalctl -u gaidin`.
+4. Copy `deploy/config.example.json` to `/etc/gaidin/config.json` and fill it in. `setup.sh` makes it readable by the service only (`root:gaidin`, mode 640).
+5. `gaidin doctor`, then run `setup.sh` again to start the service, and check `journalctl -u gaidin`.
 
-`setup.sh` is safe to rerun and is how you update: it pulls, installs dependencies, installs bubblewrap and its AppArmor profile, writes the unit, creates the workspace key, restarts the service, and runs `tailscale serve` for the web view when Tailscale is logged in. When a change touches `setup.sh` itself, run it twice: the first run still executes the old copy.
+`setup.sh` is safe to rerun and is how you update: it pulls, installs dependencies, installs bubblewrap and its AppArmor profile, writes the unit and the `gaidin` command, creates the workspace key, restarts the service, and runs `tailscale serve` for the web view when Tailscale is logged in. When a change touches `setup.sh` itself, run it twice: the first run still executes the old copy.
 
 On the VM:
 
 | Path | What |
 |---|---|
+| `/etc/gaidin/config.json` | the settings, with secrets; the sandbox can't read it |
 | `/var/lib/gaidin/app` | the checkout, read-only to the service |
 | `/var/lib/gaidin/data` | the [data directory](concepts.md#the-data-directory) |
 | `/var/lib/gaidin/keys` | SSH keys for workspaces and container logs, and the workspace list |
 | `/var/lib/gaidin/deploy` | the deploy key, hidden from the service |
-| `/etc/gaidin/env` | settings and secrets |
-
-The service runs as the `gaidin` system user. To talk to it on the VM:
-
-```sh
-sudo -u gaidin sh -c 'cd /var/lib/gaidin/app && GAIDIN_DATA=/var/lib/gaidin/data node --no-warnings src/cli.ts "hello"'
-```
 
 Back up the VM or the data directory; the SQLite file is the whole of gaidin's state.
 
 ## The model and its key
 
-gaidin uses Claude through an API key, by default `claude-haiku-5-5`. Create the key in its own Claude Console workspace with a spend limit, so a runaway loop stops at the limit. A Claude Max plan includes monthly API credit, claimed under Settings > Billing on claude.ai into a linked Console organization; with auto-reload off, requests stop when the month's credit runs out instead of charging. The web view switches between Haiku, Sonnet and Opus per conversation.
+gaidin uses Claude through an API key, by default `claude-haiku-5-5`. Create the key in its own Claude Console workspace with a spend limit, so a runaway loop stops at the limit. A Claude Max plan includes monthly API credit, claimed under Settings > Billing on claude.ai into a linked Console organization; with auto-reload off, requests stop when the month's credit runs out instead of charging. The web view switches between the models in `model.choices` per conversation.
 
 ## Adding a workspace
 
@@ -62,28 +73,30 @@ The workspace list is `/var/lib/gaidin/keys/workspaces`, one `name user@host` pe
 
 ## Settings
 
-All settings come from the environment: `.env` locally, `/etc/gaidin/env` on the VM.
+The settings file is JSON: the first of `--config`, `GAIDIN_CONFIG`, `./gaidin.json` and `/etc/gaidin/config.json` that exists. Relative paths in it are relative to the file. Environment variables override it, which suits containers and systemd. `gaidin serve` won't start with a mistake in the settings, such as an unknown key, a token of the wrong kind or only some of Slack's four values; `gaidin doctor` and `gaidin config` show the same errors.
 
-| Variable | Default | |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | | Required unless `GAIDIN_MODEL=faux`. |
-| `GAIDIN_MODEL_ID` | `claude-haiku-5-5` | The model new conversations start with. |
-| `GAIDIN_MODEL` | | `faux` runs a scripted model with no key or network, for testing. |
-| `GAIDIN_DATA` | `data` | The data directory. |
-| `GAIDIN_TZ` | the system's | Time zone for message stamps and reminders. |
-| `NTFY_URL` | | Full ntfy topic URL for reminders. Without it they print to the server's output. |
-| `NTFY_TOKEN` | | ntfy access token, if the topic needs one. |
-| `SLACK_BOT_TOKEN` | | `xoxb-` token. All four `SLACK_*` or none. |
-| `SLACK_APP_TOKEN` | | `xapp-` token with `connections:write`. |
-| `SLACK_CHANNEL_ID` | | The one channel gaidin answers in. |
-| `SLACK_USER_ID` | | The one Slack user it answers. |
-| `GAIDIN_WEB_USER` | | Tailscale login allowed into the web view. Without it there's no web view. |
-| `GAIDIN_WEB_PORT` | `8410` | Loopback port for the web view. |
-| `GAIDIN_SANDBOX` | | `none` runs tools without bubblewrap. |
-| `GAIDIN_KEYS` | `/var/lib/gaidin/keys` | Where the workspace key and list live. |
-| `GAIDIN_LOGS_KEYS` | `/var/lib/gaidin/keys` | Where the container logs key lives. |
-| `GAIDIN_HOMELAB_DATA` | the original deployment's | URL of the homelab snapshot feeds. |
-| `GAIDIN_KUMA_URL` | the original deployment's | Uptime Kuma base URL. |
+| Setting | Variable | Default | |
+|---|---|---|---|
+| `owner` | `GAIDIN_OWNER` | `the user` | What gaidin calls you, in its prompt and tool descriptions. |
+| `timeZone` | `GAIDIN_TZ` | the system's | For message stamps and reminders. |
+| `data` | `GAIDIN_DATA` | `data` | The data directory. |
+| `keys` | `GAIDIN_KEYS` | `/var/lib/gaidin/keys` | SSH keys for workspaces and container logs, and the workspace list. |
+| `model.apiKey` | `ANTHROPIC_API_KEY` | | Required unless the provider is `faux`. |
+| `model.id` | `GAIDIN_MODEL_ID` | `claude-haiku-5-5` | The model new conversations start with. |
+| `model.choices` | | Haiku, Sonnet and Opus 5.5 | Models the web view offers. |
+| `model.provider` | `GAIDIN_MODEL` | `anthropic` | `faux` runs a scripted model with no key or network, for testing. |
+| `ntfy.url` | `NTFY_URL` | | Full topic URL for reminders. Without it they print to the server's output. |
+| `ntfy.token` | `NTFY_TOKEN` | | Access token, if the topic needs one. |
+| `slack.botToken` | `SLACK_BOT_TOKEN` | | `xoxb-` token. All four Slack values or none. |
+| `slack.appToken` | `SLACK_APP_TOKEN` | | `xapp-` token with `connections:write`. |
+| `slack.channelId` | `SLACK_CHANNEL_ID` | | The one channel gaidin answers in. |
+| `slack.userId` | `SLACK_USER_ID` | | The one Slack user it answers. |
+| `web.user` | `GAIDIN_WEB_USER` | | Tailscale login allowed into the web view. Without it there's no web view. |
+| `web.port` | `GAIDIN_WEB_PORT` | `8410` | Loopback port for the web view. |
+| `sandbox` | `GAIDIN_SANDBOX` | `bwrap` | `none` runs tools without bubblewrap. |
+| `extensions.homelab` | | off | The [homelab extension](extending.md#the-homelab-extension). |
+
+The secrets are `model.apiKey`, the ntfy URL and token, and the two Slack tokens. Keep the file readable only by you or the service; `gaidin doctor` warns when anyone else can read it.
 
 ## Upgrading Pi Durable
 

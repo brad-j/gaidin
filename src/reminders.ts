@@ -32,7 +32,7 @@ const MAX_ATTEMPTS = 5;
 type State = { phase: "wait" } | { phase: "notify"; attempt: number; retryAt: number };
 type Result = "sent" | "cancelled" | "failed";
 
-export function createReminders(notify: Notify) {
+export function createReminders(notify: Notify, owner = "the user") {
 	const ReminderTask = defineTask<{ text: string; at: number }, State, Result>({
 		name: "gaidin.reminder",
 		version: 1,
@@ -89,10 +89,10 @@ export function createReminders(notify: Notify) {
 	const remind = defineTool({
 		name: "remind",
 		description:
-			"Schedule a push notification to Brad's phone. Give exactly one of `inMinutes` (relative) or `at` " +
+			`Schedule a push notification to ${owner}'s phone. Give exactly one of \`inMinutes\` (relative) or \`at\` ` +
 			"(ISO 8601 with a UTC offset, e.g. 2026-10-09T08:30:00-04:00). Check the time in the result.",
 		parameters: Type.Object({
-			text: Type.String({ description: "What to remind Brad about, as he should read it" }),
+			text: Type.String({ description: `What to remind ${owner} about, as they should read it` }),
 			inMinutes: Type.Optional(Type.Number({ minimum: 0 })),
 			at: Type.Optional(Type.String()),
 		}),

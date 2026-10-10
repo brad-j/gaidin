@@ -1,13 +1,14 @@
-# systemd user unit for running gaidin on egwene. Install:
-#   ln -s ~/westwood/Projects/Software/gaidin/deploy/gaidin.service ~/.config/systemd/user/
+# systemd user unit for running gaidin from a checkout, as your own user. Edit the paths, then:
+#   ln -s "$PWD/deploy/gaidin.service" ~/.config/systemd/user/
 #   systemctl --user daemon-reload && systemctl --user enable --now gaidin
-# Node is Pi's bundled one; update the path when it changes.
+# User units stop at logout unless lingering is on (loginctl enable-linger). Settings come from
+# gaidin.json in the checkout; deploy/config.example.json shows the shape.
 [Unit]
 Description=gaidin personal agent
 
 [Service]
 WorkingDirectory=%h/westwood/Projects/Software/gaidin
-ExecStart=%h/.local/share/pi-node/node-v22.23.2-linux-x64/bin/node --no-warnings --env-file-if-exists=.env src/server.ts
+ExecStart=/usr/bin/env node --no-warnings src/main.ts serve
 Restart=on-failure
 RestartSec=5
 UMask=0077
