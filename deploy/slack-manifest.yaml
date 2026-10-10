@@ -1,0 +1,23 @@
+# Slack app for gaidin. Create it at https://api.slack.com/apps > Create New App > From a manifest,
+# in the Tar Valon workspace. Steps after that are in the README under "Slack".
+display_information:
+  name: gaidin
+  description: Brad's personal agent, on Pi Durable
+features:
+  bot_user:
+    display_name: gaidin
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - channels:history
+      - groups:history
+      - chat:write
+settings:
+  event_subscriptions:
+    bot_events:
+      - message.channels
+      - message.groups
+  socket_mode_enabled: true
+  org_deploy_enabled: false
+  token_rotation_enabled: false

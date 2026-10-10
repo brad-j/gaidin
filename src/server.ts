@@ -1,5 +1,6 @@
 // Owns the SQLite file and runs the agent. Clients talk to it over a Unix socket in the data
-// directory, one JSON object per line.
+// directory, one JSON object per line. With Slack settings in the environment it also runs the
+// Slack surface (src/slack.ts).
 //
 // client → server: {"type":"ask","content":"...","requestId":"..."} or {"type":"watch"}
 // server → client: {"type":"line","text":"..."} and, after an ask settles, {"type":"done","status":"..."}
@@ -8,10 +9,11 @@ import { chmodSync, rmSync } from "node:fs";
 import { connect, createServer, type Socket } from "node:net";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { AssistantEntry, type AgentEvent, type EntryId, type EntryRecord, watchEvents } from "@earendil-works/pi-durable";
-import { context, dataDir, openHost } from "./host.ts";
+import { type AgentEvent, type EntryId, watchEvents } from "@earendil-works/pi-durable";
+import { assistantText, context, dataDir, openHost } from "./host.ts";
 import { ReminderFired } from "./reminders.ts";
-import { formatTime } from "./time.ts";
+import { createSlackSurface, slackPoster, socketMode } from "./slack.ts";
+import { stamp } from "./time.ts";
 
 const socketPath = resolve(dataDir(), "gaidin.sock");
 
@@ -20,13 +22,27 @@ if (await isListening(socketPath)) {
 	process.exit(1);
 }
 
+const slackSettings = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_CHANNEL_ID", "SLACK_USER_ID"] as const;
+const slackSet = slackSettings.filter((name) => process.env[name]);
+if (slackSet.length > 0 && slackSet.length < slackSettings.length) {
+	console.error(`Slack needs all of ${slackSettings.join(", ")}; missing ${slackSettings.filter((n) => !process.env[n]).join(", ")}`);
+	process.exit(1);
+}
+
 const { harness, root } = await openHost();
 
-function assistantText(entry: EntryRecord | undefined): string | undefined {
-	if (!AssistantEntry.is(entry)) return undefined;
-	const message = entry.model?.[0];
-	if (message?.role !== "assistant") return undefined;
-	return message.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("") || undefined;
+let slack: { stop(): void } | undefined;
+if (slackSet.length > 0) {
+	const surface = createSlackSurface({
+		harness,
+		root,
+		post: slackPoster(process.env.SLACK_BOT_TOKEN!),
+		channel: process.env.SLACK_CHANNEL_ID!,
+		user: process.env.SLACK_USER_ID!,
+	});
+	void surface.recover();
+	slack = socketMode(process.env.SLACK_APP_TOKEN!, surface.receive);
+	console.error(`gaidin on Slack in ${process.env.SLACK_CHANNEL_ID}`);
 }
 
 function describe(event: AgentEvent): string | undefined {
@@ -68,9 +84,7 @@ async function handle(socket: Socket, line: string) {
 	const request = JSON.parse(line) as { type: "ask"; content: string; requestId?: string } | { type: "watch" };
 	const { events, shown } = await follow(socket);
 	if (request.type === "watch") return;
-	// The time goes in the message, not the system prompt, so the prompt cache stays valid.
-	const content = `[${formatTime(Date.now())}] ${request.content}`;
-	const submission = await root.submit({ type: "input", content, requestId: request.requestId ?? randomUUID() }, context);
+	const submission = await root.submit({ type: "input", content: stamp(request.content), requestId: request.requestId ?? randomUUID() }, context);
 	// If the client goes away, the run continues; only this wait and its watch end.
 	const settled = await submission.wait(context);
 	await events.stop();
@@ -101,6 +115,7 @@ server.listen(socketPath, () => {
 });
 
 async function shutdown() {
+	slack?.stop();
 	server.close();
 	await harness.close(context);
 	process.exit(0);

@@ -4,7 +4,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels, type Models } from "@earendil-works/pi-ai/models";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { createRegistry, defineExtension, Harness, type ModelRef, section } from "@earendil-works/pi-durable";
+import { AssistantEntry, createRegistry, defineExtension, type EntryRecord, Harness, type ModelRef, section } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
@@ -13,6 +13,14 @@ import { createReminders, type Notify } from "./reminders.ts";
 import { timeZone } from "./time.ts";
 
 export const context = BACKGROUND_CONTEXT;
+
+/** The text of an answer entry, if it is one and has any. */
+export function assistantText(entry: EntryRecord | undefined): string | undefined {
+	if (!AssistantEntry.is(entry)) return undefined;
+	const message = entry.model?.[0];
+	if (message?.role !== "assistant") return undefined;
+	return message.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("") || undefined;
+}
 
 export function dataDir(): string {
 	return resolve(process.env.GAIDIN_DATA ?? "data");
