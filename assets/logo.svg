@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>gaidin</title>
+  <defs>
+    <clipPath id="cloak"><path d="M80 448 C100 326 166 172 256 52 C346 172 412 326 432 448 Q256 488 80 448 Z"/></clipPath>
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#cdeff6"/>
+      <stop offset="0.3" stop-color="#6fb3c4" stop-opacity="0.65"/>
+      <stop offset="1" stop-color="#6fb3c4" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#12161b"/>
+  <g clip-path="url(#cloak)">
+    <path d="M40 40 H200 L120 500 H40 Z" fill="#26313a"/>
+    <path d="M200 40 H244 L176 500 H120 Z" fill="#3a4955"/>
+    <path d="M244 40 H276 L236 500 H176 Z" fill="#53697a"/>
+    <path d="M276 40 H300 L300 500 H236 Z" fill="#7290a0"/>
+    <path d="M300 40 H330 L362 500 H300 Z" fill="#4b6372"/>
+    <path d="M330 40 H372 L420 500 H362 Z" fill="#35444f"/>
+    <path d="M372 40 H480 V500 H420 Z" fill="#232c34"/>
+  </g>
+  <path d="M256 172 C210 222 194 302 212 376 Q256 408 300 376 C318 302 302 222 256 172 Z" fill="#0a0d11"/>
+  <circle cx="256" cy="288" r="38" fill="url(#glow)"/>
+  <circle cx="256" cy="288" r="9" fill="#eaf8fb"/>
+</svg>
