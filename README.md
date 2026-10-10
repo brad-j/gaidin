@@ -90,7 +90,7 @@ Pinned to `@earendil-works/pi-durable` 1.1.0. The API is experimental and change
 
 1. One long-lived process, SQLite storage, one root conversation, reminders through ntfy (done). VM 104 on `think-1` is set up by `deploy/vm/setup.sh`, operator notes in the homelab repo's `docs/gaidin.md`. A Slack bot in its own Tar Valon channel, with each thread a fork of the channel conversation (live in `#warder` since 2026-10-10).
 2. A second surface on the same conversation: a small web view over Tailscale (written 2026-10-10). This is the part Hermes can't do.
-3. Approval hook (stored in a memo so a restart doesn't ask twice), read-only homelab tools (Kuma, Beszel, Docker and backup snapshots done 2026-10-10; Dozzle's logs wait for the sandbox, since they're text from anywhere), and a remote execution environment on egwene. Hindsight was retired on 2026-09-30, so it's no longer part of the plan.
+3. Approval hook (stored in a memo so a restart doesn't ask twice), read-only homelab tools (Kuma, Beszel, Docker and backup snapshots done 2026-10-10; container logs wait for the sandbox, since they're text from anywhere), and a remote execution environment on egwene. Hindsight (retired 2026-09-30) and Dozzle (retired 2026-10-10) are no longer part of the plan.
 4. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
 
 ## Rules from the start
