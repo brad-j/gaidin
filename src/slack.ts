@@ -9,8 +9,10 @@ type Pending = { conversationId: number; content: string; threadTs?: string };
 
 /** Slack bookkeeping, keyed by message ts. Durable, so a restart still posts answers it owes. */
 export const SlackState = defineDoc<{
-	/** Brad's top-level messages and gaidin's answers to them → the answer entry a thread on them forks at. */
+	/** The owner's top-level messages and gaidin's answers to them → the answer entry a thread on them forks at. */
 	answers: Record<string, number>;
+	/** For answers outside the root conversation, such as a scheduled job's report: the conversation they're in. */
+	answerConversations?: Record<string, number>;
 	/** Thread parent ts → the fork for that thread. */
 	threads: Record<string, number>;
 	/** Accepted messages whose answer isn't posted yet. */
@@ -21,6 +23,21 @@ export const SlackState = defineDoc<{
 	scope: "session",
 	initial: () => ({ answers: {}, threads: {}, pending: {} }),
 });
+
+/**
+ * Records messages gaidin posted on its own, such as a job's report, so a thread on them forks
+ * `conversationId` at `answer`.
+ */
+export async function recordPosted(root: Conversation, posted: readonly string[], answer: EntryId, conversationId: number): Promise<void> {
+	await root.commit(async (tx) => {
+		const state = await tx.doc(SlackState);
+		state.answerConversations ??= {};
+		for (const ts of posted) {
+			state.answers[ts] = answer;
+			if (conversationId !== root.id) state.answerConversations[ts] = conversationId;
+		}
+	}, context);
+}
 
 /** The fields of a Slack `message` event this uses. */
 export type SlackMessage = {
@@ -83,7 +100,10 @@ export function createSlackSurface(options: {
 				await postWithRetry(threadTs, "I can only pick up threads on messages I've answered in this channel.");
 				return false;
 			} else {
-				const fork = await root.fork(at as EntryId, {
+				const from = state.answerConversations?.[threadTs];
+				const parent = from === undefined ? root : await harness.conversation(from as ConversationId, context);
+				if (parent === undefined) throw new Error(`conversation ${from} is gone`);
+				const fork = await parent.fork(at as EntryId, {
 					ownership: { kind: "ownerless" },
 					init: async (tx, id) => {
 						(await tx.doc(SlackState)).threads[threadTs] = id;

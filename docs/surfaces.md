@@ -18,7 +18,7 @@ On the VM, `setup.sh`'s `gaidin` command runs as the service's user. `gaidin ask
 
 gaidin answers in one channel, for one Slack user, over Socket Mode, so the server needs no inbound port. It answers every top-level message you post in the channel; you don't need to mention it. Replies in a thread go to that thread's [fork](concepts.md#forks). It ignores other people, other channels, bots and edited messages. A thread on a message it never answered gets a note instead of a fork.
 
-Answers are posted as Markdown, which Slack renders. Answers over 12,000 characters go out as several messages. Requests for [approval](security.md#approvals) arrive as a message with buttons, in the thread when the conversation is a thread's fork, and the message changes to show the outcome once you answer from either surface.
+Reports from [scheduled jobs](tools.md#scheduled-jobs) are posted as messages of their own, headed with the job's title; a reply in a report's thread continues that run's conversation. Answers are posted as Markdown, which Slack renders. Answers over 12,000 characters go out as several messages. Requests for [approval](security.md#approvals) arrive as a message with buttons, in the thread when the conversation is a thread's fork, and the message changes to show the outcome once you answer from either surface.
 
 ### Setting up Slack
 
@@ -40,7 +40,7 @@ The web view shows the root conversation live and lets you act on it:
 - your messages and its answers from every surface, with tool calls you can expand to see their arguments and output while they run
 - fired reminders, and the cost so far for this conversation and in total
 - a message box, a Stop button, and pending approvals at the top
-- open reminders, with Cancel
+- open reminders and scheduled jobs, with Cancel, and job reports in the transcript
 - the model, thinking level, standing instructions, and switches for the coding tools, `fetch_url` and the workspace tools
 
 It shows no keys or Slack settings, and turning a tool off there is the quickest way to take it away from the model.

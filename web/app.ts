@@ -14,6 +14,7 @@ type Usage = { cost: { total: number } };
 type UsageState = { models: Record<string, Usage>; tools: Record<string, Usage> };
 type Slot = { callId: string; name: string; output: string };
 type Reminder = { taskId: number; text: string; at: number };
+type Job = { taskId: number; title: string; when: string; mode: string; nextAt?: number; lastAt?: number; lastResult?: string };
 type Approval = { id: string; summary: string; tool: string; expiresAt: number; always?: { kind: string; value: string; label: string } };
 type Settings = { model: string; models: string[]; thinkingLevel: string; instructions: string; tools: { name: string; enabled: boolean }[] };
 // The event stream's shapes are pi-durable's AgentEvent; only the fields used here are read.
@@ -60,6 +61,7 @@ function apply(event: AgentEvent) {
 			state.retry = undefined;
 			void loadSpend();
 			void loadReminders();
+			void loadJobs();
 			break;
 		case "message_start":
 			if (event.message.role === "assistant") state.partial = structuredClone(event.message);
@@ -88,6 +90,7 @@ function apply(event: AgentEvent) {
 		case "entry_appended":
 			add(event.entry);
 			if (event.entry.kind === "gaidin.reminder-fired") void loadReminders();
+			if (event.entry.kind === "gaidin.job-reported") void loadJobs();
 			break;
 		case "usage_changed":
 			state.usage = event.usage;
@@ -255,7 +258,7 @@ function render() {
 	const results = new Map<string, Extract<Message, { role: "toolResult" }>>();
 	for (const entry of entries) for (const m of entry.model ?? []) if (m.role === "toolResult") results.set(m.toolCallId, m);
 
-	// One group per message from Brad or fired reminder, oldest first inside, newest group on top.
+	// One group per message, fired reminder or job report, oldest first inside, newest group on top.
 	const groups: HTMLElement[][] = [];
 	for (const entry of entries) {
 		const out: HTMLElement[] = [];
@@ -264,6 +267,12 @@ function render() {
 			const data = entry.data ?? {};
 			starts = true;
 			out.push(el("div", "fired", `Reminder: ${data.text}${data.delivered ? "" : ` (push failed: ${data.error})`}`));
+		}
+		if (entry.kind === "gaidin.job-reported") {
+			const data = entry.data ?? {};
+			starts = true;
+			out.push(el("div", "fired", `Scheduled: ${data.title}${data.delivered ? "" : ` (not delivered: ${data.error})`}`));
+			out.push(el("div", "text", String(data.text ?? "")));
 		}
 		for (const message of entry.model ?? []) {
 			if (message.role === "user") {
@@ -365,6 +374,37 @@ async function loadReminders() {
 			}),
 		);
 		if (reminders.length === 0) list.append(el("li", "note", "None open."));
+	} catch (error) {
+		notice(String(error));
+	}
+}
+
+async function loadJobs() {
+	try {
+		const jobs = await load<Job[]>("/api/jobs");
+		const list = $("jobs");
+		list.replaceChildren(
+			...jobs.map((job) => {
+				const item = el("li");
+				const body = el("div");
+				const next = job.nextAt === undefined ? "" : `next ${when.format(job.nextAt)}`;
+				const last = job.lastAt === undefined ? "" : `, last ${when.format(job.lastAt)} (${job.lastResult})`;
+				body.append(el("span", undefined, `${job.title}${job.mode === "watch" ? " (watch)" : ""}`), el("span", "when", `${job.when}; ${next}${last}`));
+				const cancel = el("button", "danger", "Cancel");
+				cancel.addEventListener("click", async () => {
+					cancel.disabled = true;
+					try {
+						await post("/api/jobs/cancel", { id: job.taskId });
+					} catch (error) {
+						notice(String(error));
+					}
+					await loadJobs();
+				});
+				item.append(body, cancel);
+				return item;
+			}),
+		);
+		if (jobs.length === 0) list.append(el("li", "note", "Nothing scheduled."));
 	} catch (error) {
 		notice(String(error));
 	}
@@ -489,6 +529,10 @@ $("settings").addEventListener("submit", async (event) => {
 
 connect();
 void loadReminders();
+void loadJobs();
 void loadSettings();
 void loadSpend();
-setInterval(() => void loadReminders(), 60_000);
+setInterval(() => {
+	void loadReminders();
+	void loadJobs();
+}, 60_000);

@@ -11,6 +11,7 @@ import { resolve } from "node:path";
 import { type Conversation, type Harness, type ModelRef, type ToolRegistration, watchEvents } from "@earendil-works/pi-durable";
 import type { ApprovalService, Decision } from "./approvals.ts";
 import { context } from "./host.ts";
+import { describeSchedule, Jobs, removeJob } from "./jobs.ts";
 import { Reminders, removeReminder } from "./reminders.ts";
 import { stamp } from "./time.ts";
 
@@ -109,6 +110,10 @@ export function createWebServer(options: {
 			const items = (await harness.snapshot(Reminders, context))?.items ?? [];
 			return json(response, [...items].sort((a, b) => a.at - b.at));
 		}
+		if (get && url.pathname === "/api/jobs") {
+			const items = (await harness.snapshot(Jobs, context))?.items ?? [];
+			return json(response, items.map((job) => ({ ...job, when: describeSchedule(job.schedule) })).sort((a, b) => (a.nextAt ?? 0) - (b.nextAt ?? 0)));
+		}
 		if (get && url.pathname === "/api/usage") return json(response, await harness.usage(context));
 		if (get && url.pathname === "/api/approvals") return json(response, await approvals.pending());
 		if (request.method !== "POST") throw new HttpError(404, "Not found");
@@ -127,6 +132,10 @@ export function createWebServer(options: {
 				return json(response, { ok: true });
 			case "/api/reminders/cancel": {
 				const removed = await root.commit((tx) => removeReminder(tx, Number(body.id)), context);
+				return json(response, { ok: removed !== undefined });
+			}
+			case "/api/jobs/cancel": {
+				const removed = await root.commit((tx) => removeJob(tx, Number(body.id)), context);
 				return json(response, { ok: removed !== undefined });
 			}
 			case "/api/approvals/decide": {

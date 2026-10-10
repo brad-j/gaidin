@@ -84,10 +84,10 @@ details pre { padding: 6px 8px 8px; border-top: 1px solid var(--line); max-heigh
 
 aside section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 16px; }
 aside h2 { font-size: 14px; margin: 0 0 8px; font-weight: 600; }
-#reminders { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-#reminders li { display: flex; gap: 8px; align-items: baseline; }
-#reminders li div { flex: 1; min-width: 0; }
-#reminders .when { color: var(--muted); font-size: 12px; display: block; }
+#reminders, #jobs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+#reminders li, #jobs li { display: flex; gap: 8px; align-items: baseline; }
+#reminders li div, #jobs li div { flex: 1; min-width: 0; }
+#reminders .when, #jobs .when { color: var(--muted); font-size: 12px; display: block; }
 label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
 label.check { display: flex; gap: 6px; align-items: center; color: var(--text); margin: 4px 0; }
 #settings-tools { display: flex; flex-wrap: wrap; gap: 0 14px; }
@@ -116,6 +116,10 @@ label.check { display: flex; gap: 6px; align-items: center; color: var(--text); 
 		<section>
 			<h2>Reminders</h2>
 			<ul id="reminders"></ul>
+		</section>
+		<section>
+			<h2>Scheduled</h2>
+			<ul id="jobs"></ul>
 		</section>
 		<section>
 			<h2>Settings</h2>

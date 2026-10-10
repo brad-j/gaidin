@@ -130,3 +130,17 @@ test("reminders are listed and can be cancelled", async (t) => {
 	assert.deepEqual(await (await post("/api/reminders/cancel", { id: listed[0]!.taskId })).json(), { ok: true });
 	assert.deepEqual(await (await call("/api/reminders")).json(), []);
 });
+
+test("scheduled jobs are listed and can be cancelled", async (t) => {
+	const { Jobs } = await import("../src/jobs.ts");
+	const { host, call, post } = await start(t);
+	const firstAt = Date.now() + 60 * 60_000;
+	await host.root.commit(async (tx) => {
+		const id = await tx.createTask(host.jobs.JobTask, { title: "Briefing", firstAt }, { ownership: { kind: "conversation" }, background: true });
+		(await tx.doc(Jobs)).items.push({ taskId: id as number, title: "Briefing", instruction: "Brief me.", schedule: { kind: "daily", time: "08:00", days: [1, 2, 3, 4, 5] }, mode: "report", createdAt: Date.now(), nextAt: firstAt, runs: 0 });
+	}, context);
+	const listed = (await (await call("/api/jobs")).json()) as { taskId: number; title: string; when: string }[];
+	assert.deepEqual(listed.map((j) => [j.title, j.when]), [["Briefing", "at 08:00, weekdays"]]);
+	assert.deepEqual(await (await post("/api/jobs/cancel", { id: listed[0]!.taskId })).json(), { ok: true });
+	assert.deepEqual(await (await call("/api/jobs")).json(), []);
+});

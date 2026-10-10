@@ -13,7 +13,7 @@ import { type AgentEvent, type EntryId, watchEvents } from "@earendil-works/pi-d
 import type { Config } from "./config.ts";
 import { assistantText, context, openHost } from "./host.ts";
 import { ReminderFired } from "./reminders.ts";
-import { createSlackSurface, slackApi, slackPoster, socketMode } from "./slack.ts";
+import { createSlackSurface, recordPosted, slackApi, slackPoster, socketMode } from "./slack.ts";
 import { createSlackApprovals } from "./slack-approvals.ts";
 import { stamp } from "./time.ts";
 import { createWebServer } from "./web.ts";
@@ -56,7 +56,7 @@ export async function serve(config: Config) {
 		process.exit(1);
 	}
 
-	const { harness, root, switchable, approvals } = await openHost({ config });
+	const { harness, root, switchable, approvals, setDeliver } = await openHost({ config });
 
 	let slack: { stop(): void } | undefined;
 	if (config.slack !== undefined) {
@@ -67,6 +67,12 @@ export async function serve(config: Config) {
 		void surface.recover();
 		approvalButtons.recover().catch((error) => console.error("[slack] approvals:", error));
 		slack = socketMode(appToken, { event: surface.receive, action: approvalButtons.action });
+		// Job reports go to the channel; a thread on one continues that run's conversation.
+		const post = slackPoster(api);
+		setDeliver(async (report) => {
+			const posted = await post(channel, `*${report.title}*\n\n${report.text}`);
+			if (report.answer !== undefined) await recordPosted(root, posted, report.answer, report.conversationId);
+		});
 		console.error(`gaidin on Slack in ${channel}`);
 	}
 

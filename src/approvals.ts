@@ -12,6 +12,7 @@ import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
 import type { ToolCall } from "@earendil-works/pi-ai";
 import { defineDoc, defineExtension, type Harness, hook, type TaskId, ToolTask } from "@earendil-works/pi-durable";
+import { describeSchedule, parseSchedule } from "./jobs.ts";
 
 export type Decision = "once" | "always" | "deny";
 export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
@@ -67,6 +68,17 @@ export const defaultPolicy: Policy = (call, state, conversationId) => {
 			: call.name === "workspace_edit" ? `edit ${String(a.path)} on ${workspace} (${Array.isArray(a.edits) ? a.edits.length : 0} changes)`
 			: `read ${String(a.path)} on ${workspace}`;
 		return { summary, always: { kind: "workspace-hour", value: workspace, label: `Allow ${workspace} for an hour here`, done: `Allowed ${workspace} for an hour` } };
+	}
+	// A job acts later, without the owner there, so every new one asks. A bad schedule is reported by the tool.
+	if (call.name === "schedule_job") {
+		const a = call.arguments;
+		let when: string;
+		try {
+			when = describeSchedule(parseSchedule(a as Parameters<typeof parseSchedule>[0]));
+		} catch {
+			return undefined;
+		}
+		return { summary: `schedule "${String(a.title)}", ${when}${a.mode === "watch" ? " (a watch)" : ""}: ${clip(String(a.instruction))}` };
 	}
 	if (call.name === "fetch_url") {
 		let host: string;

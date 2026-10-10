@@ -152,3 +152,22 @@ test("an answer that wasn't posted before a restart is posted by the next proces
 	await until(() => posts.length === 2);
 	assert.equal(posts[1]!.text, "a / b");
 });
+
+test("a thread on a job's report forks the run's conversation, not the root", async (t) => {
+	const { recordPosted } = await import("../src/slack.ts");
+	const host = await openHost({ dataDir: tempDir(t), ...echoModels() });
+	t.after(() => host.harness.close(context));
+	const { posts, post } = recorder();
+	const slack = createSlackSurface({ harness: host.harness, root: host.root, post, channel: CHANNEL, user: BRAD });
+
+	// A job run: its own conversation, with its own history.
+	const run = await host.harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model: { provider: "faux", modelId: "faux-1" } } }, context);
+	const settled = await (await run.submit({ type: "input", content: "job prompt" }, context)).wait(context);
+	assert.equal(settled.status, "done");
+	if (settled.status !== "done" || settled.type !== "input") throw new Error("the run didn't finish");
+	await recordPosted(host.root, ["job.1"], settled.answer, run.id as number);
+
+	await slack.receive(message("2.0", "about that", { thread_ts: "job.1" }));
+	await until(() => posts.length === 1);
+	assert.deepEqual([posts[0]!.text, posts[0]!.threadTs], ["job prompt / about that", "job.1"]);
+});

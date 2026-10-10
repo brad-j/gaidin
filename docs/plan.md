@@ -16,13 +16,15 @@
 2. Slack, with threads as forks, and the web view over Tailscale, both on the same conversation.
 3. Redaction, the sandbox, `fetch_url`, the approval hook, read-only homelab tools, container logs, and workspaces, with egwene the first.
 4. The foundation for features and a release: one settings file checked at start, the `gaidin` command with `doctor`, the owner's name as a setting, and the homelab tools as an optional extension.
+5. Scheduled jobs: briefings, repeating checks, watches that report only when something needs attention, and follow-ups gaidin sets for itself, each run in its own conversation.
 
 ## Next
 
-5. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
+6. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
 
 Candidates after that:
 
-- Scheduled jobs, such as a morning briefing, as durable tasks like reminders. This is the largest gap compared with Hermes.
+- Longer waits: approvals and questions that wait days, not 30 minutes.
+- Branching from any message in the web view, and a timeline of what gaidin did and who approved it.
 - Release polish: a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
 - Push-to-talk in the web view. That would need more memory on the VM.

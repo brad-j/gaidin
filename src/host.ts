@@ -11,7 +11,8 @@ import { ApprovalService, approvalExtension } from "./approvals.ts";
 import { type Config, configFor, secretsOf } from "./config.ts";
 import { createHomelab, type HomelabOptions } from "./extensions/homelab/index.ts";
 import { createFetch, type FetchOptions } from "./fetch.ts";
-import { ntfyNotifier } from "./ntfy.ts";
+import { createJobs, type Deliver } from "./jobs.ts";
+import { ntfyNotifier, ntfyReporter } from "./ntfy.ts";
 import { type Redactor, redactionExtension, redactorFor } from "./redact.ts";
 import { createReminders, type Notify } from "./reminders.ts";
 import { findBwrap, SandboxEnv } from "./sandbox.ts";
@@ -63,7 +64,9 @@ function persona(owner: string) {
 				() =>
 					`You are gaidin, ${owner}'s personal agent. Be brief and direct. ` +
 					`Each of ${owner}'s messages starts with the local time in brackets, in the ${timeZone()} time zone. ` +
-					`Use the reminder tools for anything ${owner} wants to be reminded of, and read back the time the tool reports.`,
+					`Use the reminder tools for anything ${owner} wants to be reminded of, and read back the time the tool reports. ` +
+					`Use schedule_job for work to do later or on a schedule: briefings, regular checks, and watches. ` +
+					`When you tell ${owner} you'll check on something later, schedule it, so it happens.`,
 				{ tag: false },
 			),
 		],
@@ -78,6 +81,8 @@ export type HostOptions = {
 	models?: Models;
 	model?: ModelRef;
 	notify?: Notify;
+	/** Where scheduled jobs' reports go. Default: ntfy, or the server's output. The server sends them to Slack with `setDeliver`. */
+	deliver?: Deliver;
 	/** Default: the secrets in the settings. */
 	redactor?: Redactor;
 	/** Replaces how the homelab extension reaches its feeds and hosts. */
@@ -113,6 +118,9 @@ export async function openHost(options: HostOptions = {}) {
 	registry.install(persona(owner));
 	registry.install(CodingTools);
 	registry.install(reminders.extension);
+	let deliver: Deliver = options.deliver ?? ntfyReporter(config.ntfy);
+	const jobs = createJobs({ deliver: () => deliver, owner });
+	registry.install(jobs.extension);
 	if (config.homelab !== undefined) registry.install(createHomelab(config.homelab, owner, config.keysDir, options.homelab));
 	const web = createFetch(options.fetch, owner);
 	registry.install(web.extension);
@@ -145,5 +153,8 @@ export async function openHost(options: HostOptions = {}) {
 	harness.resume();
 	// The tools the web view can switch off: the coding tools, fetch_url (gaidin's only way to the internet) and the workspace tools.
 	const switchable = [...(CodingTools.tools ?? []), web.tool, ...workspaces.tools];
-	return { harness, root, reminders, switchable, approvals, config };
+	const setDeliver = (next: Deliver) => {
+		deliver = next;
+	};
+	return { harness, root, reminders, jobs, setDeliver, switchable, approvals, config };
 }
