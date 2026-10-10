@@ -5,10 +5,10 @@ import { createModels, type Models } from "@earendil-works/pi-ai/models";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { AssistantEntry, createRegistry, defineExtension, type EntryRecord, Harness, type ModelRef, section } from "@earendil-works/pi-durable";
-import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { ntfyNotifier } from "./ntfy.ts";
+import { RedactingEnv, type Redactor, redactionExtension, redactorFromEnv } from "./redact.ts";
 import { createReminders, type Notify } from "./reminders.ts";
 import { timeZone } from "./time.ts";
 
@@ -70,6 +70,8 @@ export type HostOptions = {
 	models?: Models;
 	model?: ModelRef;
 	notify?: Notify;
+	/** Defaults to the credentials in the environment. */
+	redactor?: Redactor;
 };
 
 export async function openHost(options: HostOptions = {}) {
@@ -82,16 +84,19 @@ export async function openHost(options: HostOptions = {}) {
 		? { models: options.models, model: options.model }
 		: modelFromEnv();
 	const reminders = createReminders(options.notify ?? ntfyNotifier());
+	const redactor = options.redactor ?? redactorFromEnv();
 	const registry = createRegistry();
 	registry.install(Persona);
 	registry.install(CodingTools);
 	registry.install(reminders.extension);
+	// Last, so its afterTool sees what every other hook left.
+	registry.install(redactionExtension(redactor));
 	const harness = await Harness.open(
 		await openNodeSqliteStorage(resolve(dir, "gaidin.sqlite")),
 		{
 			models,
 			registry,
-			env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? sandbox }),
+			env: ({ cwd }) => new RedactingEnv({ cwd: cwd ?? sandbox, redactor }),
 			onReport: (error) => console.error("[report]", error),
 		},
 		context,

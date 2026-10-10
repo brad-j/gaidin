@@ -43,6 +43,7 @@ Setup:
 2. Basic Information > App-Level Tokens: generate one with the `connections:write` scope. That (`xapp-`) is `SLACK_APP_TOKEN`.
 3. Create the channel and `/invite @gaidin`. Its ID, at the bottom of the channel details, is `SLACK_CHANNEL_ID`.
 4. Your member ID (profile > ⋯ > Copy member ID) is `SLACK_USER_ID`.
+5. Basic Information > Display Information: upload `assets/logo-1024.png` as the app icon. The manifest can't set it.
 
 `test/slack.test.ts` covers forking, redelivery, ignored events and an answer owed across a restart, with a fake Slack. The Socket Mode client is only exercised against the real thing.
 
@@ -79,6 +80,6 @@ Pinned to `@earendil-works/pi-durable` 1.1.0. The API is experimental and change
 
 ## Rules from the start
 
-- Transcripts and tool output are kept forever, compaction included. An `afterTool` redaction hook goes in before any tool can see credentials. The July Pi audit found secrets in retained session files.
+- Transcripts and tool output are kept forever, compaction included. The July Pi audit found secrets in retained session files, so `src/redact.ts` keeps the credentials in `SECRET_NAMES` out of them: bash children don't inherit them, shell output is redacted as it streams, and an `afterTool` hook redacts every tool's result. It matches the values as they are, so a command that encodes them or sends them somewhere gets past it. Tools run as the server's user; they get a sandbox before any of them reads untrusted input. Add a new credential's variable to `SECRET_NAMES`.
 - Homelab tools stay read-only until the approval hook exists.
 - Mark a tool `replay: "safe"` only when rerunning it after a crash is harmless.
