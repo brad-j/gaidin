@@ -51,8 +51,8 @@ apparmor_parser -r /etc/apparmor.d/bwrap
 # `gaidin ...` on this VM runs as the service does: as gaidin, with its settings.
 cat > /usr/local/bin/gaidin <<'EOF'
 #!/bin/sh
-cd /var/lib/gaidin/app || exit 1
-exec sudo -u gaidin env GAIDIN_CONFIG=/etc/gaidin/config.json /usr/local/bin/node --no-warnings src/main.ts "$@"
+# The directory change happens as gaidin; other users can't enter its home.
+exec sudo -u gaidin sh -c 'cd /var/lib/gaidin/app && exec env GAIDIN_CONFIG=/etc/gaidin/config.json /usr/local/bin/node --no-warnings src/main.ts "$@"' gaidin "$@"
 EOF
 chmod 755 /usr/local/bin/gaidin
 
