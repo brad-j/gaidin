@@ -61,6 +61,12 @@ No network means the agent can't `curl` anything; `fetch_url` and the homelab to
 
 On the VM, `setup.sh` installs bubblewrap and `deploy/vm/bwrap.apparmor`, which lets bwrap create user namespaces under Ubuntu's restriction. `test/sandbox.test.ts` runs the real thing where `bwrap` is installed and skips otherwise.
 
+## Container logs
+
+`src/logs.ts` gives the model `container_logs`: the container list, or one container's latest lines, from apps-01 and infra-01. The server runs `ssh` with a key in `/var/lib/gaidin/keys`, out of the sandbox's reach. On each host the key belongs to `gaidin-logs`, is only accepted from gaidin's address, can't open a shell or forward ports, and only runs a root script that lists containers or prints one's logs, checking every argument. The homelab repo holds that script (`scripts/docker-logs.py`) and its installer (`scripts/install-gaidin-docker-logs.sh`). Without the key there's no tool.
+
+Log lines are labelled as other programs' text, and values that look like secrets (`password=`, `token:`, bearer tokens, passwords in URLs, JWTs) are scrubbed before they reach the transcript. The scrub is a heuristic and misses unlabelled secrets.
+
 ## Fetching
 
 `src/fetch.ts` gives the model `fetch_url`: a GET of a public web page or API, returned as text (HTML is reduced to its main content, with headings, lists and links kept), labelled as coming from the web and not from Brad. It runs in the server, since the shell has no network. Every address a name resolves to is checked when the connection is made, and again after each redirect, so DNS can't point it at the LAN; private, CGNAT (which covers the tailnet and `*.half.black`), loopback, link-local and other reserved ranges are refused. It sends no cookies or auth headers, downloads stop at 2 MB after decompression, and the text is cut to 20,000 characters unless the model asks for more.
@@ -111,7 +117,7 @@ Pinned to `@earendil-works/pi-durable` 1.1.0. The API is experimental and change
 
 1. One long-lived process, SQLite storage, one root conversation, reminders through ntfy (done). VM 104 on `think-1` is set up by `deploy/vm/setup.sh`, operator notes in the homelab repo's `docs/gaidin.md`. A Slack bot in its own Tar Valon channel, with each thread a fork of the channel conversation (live in `#warder` since 2026-10-10).
 2. A second surface on the same conversation: a small web view over Tailscale (written 2026-10-10). This is the part Hermes can't do.
-3. Approval hook, stored in a memo so a restart doesn't ask twice (done 2026-10-10), read-only homelab tools (Kuma, Beszel, Docker and backup snapshots done 2026-10-10; container logs, which are text from anywhere, can come now that the sandbox is in), a sandbox for the tools (done 2026-10-10), and a remote execution environment on egwene. Hindsight (retired 2026-09-30) and Dozzle (retired 2026-10-10) are no longer part of the plan.
+3. Approval hook, stored in a memo so a restart doesn't ask twice (done 2026-10-10), read-only homelab tools (Kuma, Beszel, Docker and backup snapshots, and container logs, done 2026-10-10), a sandbox for the tools (done 2026-10-10), and a remote execution environment on egwene. Hindsight (retired 2026-09-30) and Dozzle (retired 2026-10-10) are no longer part of the plan.
 4. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
 
 ## Rules from the start

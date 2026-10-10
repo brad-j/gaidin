@@ -10,6 +10,7 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { ApprovalService, approvalExtension } from "./approvals.ts";
 import { createFetch, type FetchOptions } from "./fetch.ts";
 import { createHomelab, type FetchJson } from "./homelab.ts";
+import { createLogs, type RunRemote, sshRunner } from "./logs.ts";
 import { ntfyNotifier } from "./ntfy.ts";
 import { type Redactor, redactionExtension, redactorFromEnv } from "./redact.ts";
 import { findBwrap, SandboxEnv } from "./sandbox.ts";
@@ -80,6 +81,8 @@ export type HostOptions = {
 	homelabFetch?: FetchJson;
 	/** How fetch_url resolves names and which addresses it refuses; tests replace them. */
 	fetch?: FetchOptions;
+	/** How container_logs reaches the hosts. Defaults to ssh with the key in /var/lib/gaidin/keys; without one there's no tool. */
+	logs?: RunRemote | null;
 	/** How long a request for approval waits for Brad. Default 30 minutes. */
 	approvalTimeoutMs?: number;
 	/** "none" runs shell commands without bubblewrap. Defaults to GAIDIN_SANDBOX, then "bwrap". */
@@ -106,6 +109,7 @@ export async function openHost(options: HostOptions = {}) {
 	registry.install(CodingTools);
 	registry.install(reminders.extension);
 	registry.install(createHomelab(options.homelabFetch));
+	registry.install(createLogs(options.logs === null ? undefined : (options.logs ?? sshRunner())));
 	const web = createFetch(options.fetch);
 	registry.install(web.extension);
 	// The service needs the Harness, which needs the registry; the hook reads it once calls start.
