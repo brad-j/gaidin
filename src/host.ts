@@ -7,6 +7,7 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@ear
 import { AssistantEntry, createRegistry, defineExtension, type EntryRecord, Harness, type ModelRef, section } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { createHomelab, type FetchJson } from "./homelab.ts";
 import { ntfyNotifier } from "./ntfy.ts";
 import { RedactingEnv, type Redactor, redactionExtension, redactorFromEnv } from "./redact.ts";
 import { createReminders, type Notify } from "./reminders.ts";
@@ -72,6 +73,8 @@ export type HostOptions = {
 	notify?: Notify;
 	/** Defaults to the credentials in the environment. */
 	redactor?: Redactor;
+	/** How the homelab tool fetches its feeds; tests replace it. */
+	homelabFetch?: FetchJson;
 };
 
 export async function openHost(options: HostOptions = {}) {
@@ -89,6 +92,7 @@ export async function openHost(options: HostOptions = {}) {
 	registry.install(Persona);
 	registry.install(CodingTools);
 	registry.install(reminders.extension);
+	registry.install(createHomelab(options.homelabFetch));
 	// Last, so its afterTool sees what every other hook left.
 	registry.install(redactionExtension(redactor));
 	const harness = await Harness.open(
