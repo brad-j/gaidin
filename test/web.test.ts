@@ -50,6 +50,12 @@ test("only Brad's tailnet login gets in", async (t) => {
 		assert.equal(icon.headers.get("content-type"), "image/svg+xml");
 		assert.match(await icon.text(), /<title>gaidin<\/title>/);
 	}
+	const manifest = await (await call("/manifest.webmanifest")).json();
+	for (const path of ["/apple-touch-icon.png", ...manifest.icons.map((icon: { src: string }) => icon.src)]) {
+		const png = await call(path);
+		assert.equal(png.headers.get("content-type"), "image/png", path);
+		assert.deepEqual([...new Uint8Array(await png.arrayBuffer()).subarray(1, 4)], [0x50, 0x4e, 0x47], path);
+	}
 });
 
 test("a post from another site is refused", async (t) => {

@@ -140,3 +140,13 @@ test("the gaidin command prints help and the settings", (t) => {
 	const unknown = spawnSync(process.execPath, ["--no-warnings", main, "frobnicate"], { encoding: "utf8" });
 	assert.equal(unknown.status, 1);
 });
+
+test("ntfy.icon is read, kept when masked, and must be a URL", (t) => {
+	const icon = "https://gaidin.example.ts.net/icon-192.png";
+	const { config, errors } = loadConfig({ file: file(t, { model: { apiKey: KEY }, ntfy: { url: "https://ntfy.sh/gaidin-abc123def456", icon } }), env: {} });
+	assert.deepEqual(errors, []);
+	assert.equal(config.ntfy?.icon, icon);
+	assert.equal(maskedConfig(config).ntfy?.icon, icon);
+	const bad = loadConfig({ file: file(t, { model: { apiKey: KEY }, ntfy: { url: "https://ntfy.sh/gaidin-abc123def456", icon: "icon.png" } }), env: {} });
+	assert.ok(bad.errors.some((error) => /ntfy.icon must be the URL/.test(error)));
+});

@@ -3,7 +3,8 @@
 // Tailscale-User-Login, and only GAIDIN_WEB_USER is let in.
 //
 // The page is web/index.html and web/app.ts, with its types stripped as it's served. Its icon is assets/logo.svg,
-// and the header shows assets/logo-transparent.svg.
+// and the header shows assets/logo-transparent.svg. The PNG icons, for phone home screens and ntfy.icon, are
+// renders of the same two files.
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -49,8 +50,16 @@ export function createWebServer(options: {
 	});
 	const page = readFileSync(resolve(WEB_DIR, "index.html"));
 	const script = stripTypeScriptTypes(readFileSync(resolve(WEB_DIR, "app.ts"), "utf8"));
-	const icon = readFileSync(resolve(import.meta.dirname, "../assets/logo.svg"));
-	const logo = readFileSync(resolve(import.meta.dirname, "../assets/logo-transparent.svg"));
+	const asset = (name: string, type: string) => ({ body: readFileSync(resolve(import.meta.dirname, "..", name)), type });
+	const files = new Map([
+		["/favicon.svg", asset("assets/logo.svg", "image/svg+xml")],
+		["/logo.svg", asset("assets/logo-transparent.svg", "image/svg+xml")],
+		["/apple-touch-icon.png", asset("assets/icon-180.png", "image/png")],
+		["/icon-192.png", asset("assets/icon-192.png", "image/png")],
+		["/icon-512.png", asset("assets/icon-512.png", "image/png")],
+		["/icon-maskable-512.png", asset("assets/icon-maskable-512.png", "image/png")],
+		["/manifest.webmanifest", asset("web/manifest.webmanifest", "application/manifest+json")],
+	]);
 
 	async function settings(): Promise<Settings> {
 		const agent = await root.agent(context);
@@ -110,8 +119,8 @@ export function createWebServer(options: {
 		const get = request.method === "GET";
 		if (get && url.pathname === "/") return reply(response, 200, page, "text/html; charset=utf-8");
 		if (get && url.pathname === "/app.js") return reply(response, 200, script, "text/javascript; charset=utf-8");
-		if (get && url.pathname === "/favicon.svg") return reply(response, 200, icon, "image/svg+xml");
-		if (get && url.pathname === "/logo.svg") return reply(response, 200, logo, "image/svg+xml");
+		const file = get ? files.get(url.pathname) : undefined;
+		if (file !== undefined) return reply(response, 200, file.body, file.type);
 		if (get && url.pathname === "/events") return events(response);
 		if (get && url.pathname === "/api/settings") return json(response, await settings());
 		if (get && url.pathname === "/api/reminders") {

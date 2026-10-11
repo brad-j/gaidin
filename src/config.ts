@@ -27,7 +27,8 @@ export type Config = {
 	timeZone: string;
 	dataDir: string;
 	model: { provider: "anthropic" | "faux"; id: string; apiKey?: string; choices: string[] };
-	ntfy?: { url: string; token?: string };
+	/** `icon` is the URL of a PNG or JPEG the ntfy app shows beside each push. */
+	ntfy?: { url: string; token?: string; icon?: string };
 	slack?: { botToken: string; appToken: string; channelId: string; userId: string };
 	web?: { user: string; port: number };
 	sandbox: "bwrap" | "none";
@@ -155,7 +156,9 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	const ntfySection = section("ntfy");
 	const ntfyUrl = e.ntfyUrl ?? text("ntfy.url", ntfySection.url);
 	const ntfyToken = e.ntfyToken ?? text("ntfy.token", ntfySection.token);
+	const ntfyIcon = text("ntfy.icon", ntfySection.icon);
 	if (ntfyUrl !== undefined && !/^https?:\/\/[^/]+\/[^/]+/.test(ntfyUrl)) errors.push("ntfy.url must be a topic URL, like https://ntfy.sh/<topic>");
+	if (ntfyIcon !== undefined && !/^https?:\/\/[^/]+\/./.test(ntfyIcon)) errors.push("ntfy.icon must be the URL of a PNG or JPEG");
 	if (ntfyUrl === undefined) warnings.push("No ntfy.url: reminders print to the server's output instead of pushing");
 
 	// Slack: all four or none
@@ -258,7 +261,9 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 		timeZone,
 		dataDir: path(e.data ?? text("data", raw.data) ?? "data"),
 		model: { provider: provider as Config["model"]["provider"], id: provider === "faux" ? "faux-1" : id, ...(apiKey === undefined ? {} : { apiKey }), choices },
-		...(ntfyUrl === undefined ? {} : { ntfy: { url: ntfyUrl, ...(ntfyToken === undefined ? {} : { token: ntfyToken }) } }),
+		...(ntfyUrl === undefined
+			? {}
+			: { ntfy: { url: ntfyUrl, ...(ntfyToken === undefined ? {} : { token: ntfyToken }), ...(ntfyIcon === undefined ? {} : { icon: ntfyIcon }) } }),
 		...(slackGiven.length === 4 ? { slack: slack as NonNullable<Config["slack"]> } : {}),
 		...(webUser === undefined ? {} : { web: { user: webUser, port } }),
 		sandbox: sandbox as Config["sandbox"],
@@ -295,7 +300,9 @@ export function maskedConfig(config: Config): Config {
 	return {
 		...config,
 		model: { ...config.model, ...(config.model.apiKey === undefined ? {} : { apiKey: mask(config.model.apiKey)! }) },
-		...(config.ntfy === undefined ? {} : { ntfy: { url: ntfyMask(config.ntfy.url), ...(config.ntfy.token === undefined ? {} : { token: mask(config.ntfy.token)! }) } }),
+		...(config.ntfy === undefined
+			? {}
+			: { ntfy: { ...config.ntfy, url: ntfyMask(config.ntfy.url), ...(config.ntfy.token === undefined ? {} : { token: mask(config.ntfy.token)! }) } }),
 		...(config.slack === undefined ? {} : { slack: { ...config.slack, botToken: mask(config.slack.botToken)!, appToken: mask(config.slack.appToken)! } }),
 		...(config.search === undefined ? {} : { search: { ...config.search, apiKey: mask(config.search.apiKey)! } }),
 	};

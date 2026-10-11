@@ -5,7 +5,7 @@ import type { Notify } from "./reminders.ts";
  * reminders are printed to stderr instead.
  */
 /** Sends a scheduled job's report as a notification, cut to fit; without ntfy, prints it. */
-export function ntfyReporter(ntfy: { url: string; token?: string } | undefined) {
+export function ntfyReporter(ntfy: { url: string; token?: string; icon?: string } | undefined) {
 	return async (report: { title: string; text: string }) => {
 		if (ntfy === undefined) {
 			console.error(`[job] ${report.title}: ${report.text}`);
@@ -20,6 +20,7 @@ export function ntfyReporter(ntfy: { url: string; token?: string } | undefined) 
 				Title: `gaidin: ${report.title}`.replace(/[^\x20-\x7e]/g, "?"),
 				Tags: "calendar",
 				Markdown: "yes",
+				...(ntfy.icon ? { Icon: ntfy.icon } : {}),
 				...(ntfy.token ? { Authorization: `Bearer ${ntfy.token}` } : {}),
 			},
 			signal: AbortSignal.timeout(15_000),
@@ -28,13 +29,13 @@ export function ntfyReporter(ntfy: { url: string; token?: string } | undefined) 
 	};
 }
 
-export function ntfyNotifier(ntfy: { url: string; token?: string } | undefined): Notify {
+export function ntfyNotifier(ntfy: { url: string; token?: string; icon?: string } | undefined): Notify {
 	if (ntfy === undefined) {
 		return async (reminder) => {
 			console.error(`[reminder] ${reminder.text} (no ntfy.url, not pushed)`);
 		};
 	}
-	const { url, token } = ntfy;
+	const { url, token, icon } = ntfy;
 	return async (reminder) => {
 		const response = await fetch(url, {
 			method: "POST",
@@ -42,6 +43,7 @@ export function ntfyNotifier(ntfy: { url: string; token?: string } | undefined):
 			headers: {
 				Title: "gaidin",
 				Tags: "alarm_clock",
+				...(icon ? { Icon: icon } : {}),
 				...(token ? { Authorization: `Bearer ${token}` } : {}),
 			},
 			signal: AbortSignal.timeout(15_000),

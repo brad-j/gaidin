@@ -8,7 +8,8 @@
     "apiKey": "sk-ant-..."
   },
   "ntfy": {
-    "url": "https://ntfy.sh/gaidin-<long random name>"
+    "url": "https://ntfy.sh/gaidin-<long random name>",
+    "icon": "https://gaidin.<your tailnet>.ts.net/icon-192.png"
   },
   "slack": {
     "botToken": "xoxb-...",

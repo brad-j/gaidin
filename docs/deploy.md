@@ -87,6 +87,7 @@ The settings file is JSON: the first of `--config`, `GAIDIN_CONFIG`, `./gaidin.j
 | `model.provider` | `GAIDIN_MODEL` | `anthropic` | `faux` runs a scripted model with no key or network, for testing. |
 | `ntfy.url` | `NTFY_URL` | | Full topic URL for reminders. Without it they print to the server's output. |
 | `ntfy.token` | `NTFY_TOKEN` | | Access token, if the topic needs one. |
+| `ntfy.icon` | | | URL of a PNG or JPEG the ntfy app shows beside each push. The phone fetches it, so the web view's `https://<gaidin's tailnet name>/icon-192.png` works while the phone is on the tailnet. |
 | `slack.botToken` | `SLACK_BOT_TOKEN` | | `xoxb-` token. All four Slack values or none. |
 | `slack.appToken` | `SLACK_APP_TOKEN` | | `xapp-` token with `connections:write`. |
 | `slack.channelId` | `SLACK_CHANNEL_ID` | | The one channel gaidin answers in. |
