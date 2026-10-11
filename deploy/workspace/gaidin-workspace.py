@@ -17,8 +17,8 @@ The operation is SSH_ORIGINAL_COMMAND; its request is the first line of stdin, a
   write  {path, content}          create or replace a file
   edit   {path, edits}            replace each oldText, which must occur exactly once
 
-Commands see the roots read-write, with secret files masked and every repo's .git/config and .git/hooks
-read-only, the readOnly directories, a scratch home of their own, and the network. Nothing else of the
+Commands see the roots read-write, with secret files masked and every repo's config and hooks read-only,
+submodules' and worktrees' included, the readOnly directories, a scratch home of their own, and the network. Nothing else of the
 user's home is there, so no SSH keys or tokens for pushing. The file operations refuse paths outside the
 roots, secret files and anything inside .git. Runs share a lock that file operations take alone, so no
 command can swap a path for a symlink mid-check.
@@ -91,13 +91,24 @@ def confine(path: str) -> str:
     return real
 
 
+def git_dirs(git: str) -> list:
+    """A repository's git directory and the ones inside it: its submodules' (modules/) and worktrees' (worktrees/)."""
+    found = [git]
+    for kind in ("modules", "worktrees"):
+        for directory, dirs, files in os.walk(os.path.join(git, kind)):
+            if "HEAD" in files:
+                found.append(directory)
+            dirs[:] = [d for d in dirs if d not in ("objects", "refs", "logs", "hooks", "info")]
+    return found
+
+
 def walk():
-    """Secret files to mask, and .git directories, under the roots."""
+    """Secret files to mask, and git directories, under the roots."""
     secrets, gits = [], []
     for root in ROOTS:
         for directory, dirs, files in os.walk(root):
             if ".git" in dirs:
-                gits.append(os.path.join(directory, ".git"))
+                gits += git_dirs(os.path.join(directory, ".git"))
             dirs[:] = [d for d in dirs if d not in SKIP and d != ".git"]
             secrets += [os.path.join(directory, f) for f in files if is_secret(f)]
     return secrets, gits
@@ -133,9 +144,11 @@ def bwrap_args(cwd: str) -> list:
     secrets, gits = walk()
     for path in secrets:
         args += ["--ro-bind", "/dev/null", path]
-    # Both can run commands the next time the user runs git, and a diff doesn't show them.
+    # Each can run commands the next time the user runs git, and a diff doesn't show them. A missing hooks
+    # directory is made first, so a command can't add one.
     for git in gits:
-        for name in ("config", "hooks"):
+        os.makedirs(os.path.join(git, "hooks"), exist_ok=True)
+        for name in ("config", "config.worktree", "hooks"):
             if os.path.exists(os.path.join(git, name)):
                 args += ["--ro-bind", os.path.join(git, name), os.path.join(git, name)]
     env = {
