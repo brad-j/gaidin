@@ -2,145 +2,325 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark">
 <title>gaidin</title>
 <style>
+/* Hallmark · redesign · genre: modern-minimal (app) · structure: console (horizon / log / dock / status line)
+ * tone: technical, utilitarian · palette: cool-neutral dark, hue 250 · accent: steel blue
+ * fonts: system mono for the console, system humanist sans for gaidin's prose
+ * pre-emit critique: P5 H4 E4 S5 R4 V5 */
 :root {
-	--bg: #0e1116;
-	--panel: #151a21;
-	--raised: #1b2129;
-	--line: #262d37;
-	--text: #d6dbe2;
-	--muted: #8b94a1;
-	--accent: #7fa6cc;
-	--ok: #79b494;
-	--warn: #d2a85e;
-	--bad: #d27474;
+	--color-paper: oklch(15.5% 0.008 250);
+	--color-paper-2: oklch(18.5% 0.009 250);
+	--color-paper-3: oklch(22.5% 0.011 250);
+	--color-rule: oklch(25.5% 0.011 250);
+	--color-rule-2: oklch(33% 0.013 250);
+	--color-ink: oklch(92% 0.006 250);
+	--color-ink-2: oklch(75% 0.012 250);
+	--color-ink-3: oklch(57% 0.012 250);
+	--color-accent: oklch(76% 0.075 240);
+	--color-accent-ink: oklch(18% 0.02 240);
+	--color-voice: oklch(78% 0.07 175);
+	--color-warn: oklch(82% 0.11 85);
+	--color-warn-wash: oklch(82% 0.11 85 / 0.07);
+	--color-bad: oklch(71% 0.13 22);
+	--color-bad-wash: oklch(71% 0.13 22 / 0.1);
+	--color-focus: oklch(80% 0.09 240);
+
+	--font-body: Seravek, "Gill Sans Nova", Ubuntu, "Noto Sans", "Open Sans", Calibri, "DejaVu Sans", sans-serif;
+	--font-mono: "SF Mono", ui-monospace, "JetBrains Mono", "Cascadia Mono", "Noto Sans Mono", "DejaVu Sans Mono", monospace;
+
+	--text-2xs: 0.6875rem;
+	--text-xs: 0.75rem;
+	--text-sm: 0.8125rem;
+	--text-md: 0.9375rem;
+
+	--space-3xs: 2px;
+	--space-2xs: 4px;
+	--space-xs: 8px;
+	--space-sm: 12px;
+	--space-md: 16px;
+	--space-lg: 24px;
+
+	--radius-sm: 4px;
+	--radius-md: 6px;
+
+	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+	--dur-short: 120ms;
+
+	/* The log's columns: time, label, body. The prompt and approvals use the same grid. */
+	--col-time: 6ch;
+	--col-label: 7ch;
+	--col-gap: 2ch;
+	--measure: 1080px;
+
 	color-scheme: dark;
-	font-family: Seravek, "Gill Sans Nova", Ubuntu, Calibri, "DejaVu Sans", source-sans-pro, sans-serif;
-	font-size: 15px;
-	line-height: 1.45;
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+	line-height: 1.55;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text); }
-button, select, textarea, input { font: inherit; color: inherit; }
+html, body { height: 100%; margin: 0; overflow: clip; }
+body { background: var(--color-paper); color: var(--color-ink); -webkit-font-smoothing: antialiased; }
+button, textarea, input { font: inherit; color: inherit; }
+pre { margin: 0; font-family: var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
 button {
-	background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px; cursor: pointer;
+	display: inline-flex; align-items: center; gap: var(--space-2xs); min-height: 26px; padding: 0 var(--space-xs);
+	white-space: nowrap; cursor: pointer; background: var(--color-paper-2); border: 1px solid var(--color-rule-2); border-radius: var(--radius-sm);
+	transition: background-color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
 }
-button:hover:not(:disabled) { border-color: var(--accent); }
-button:disabled { opacity: 0.45; cursor: default; }
-button.danger:not(:disabled) { color: var(--bad); }
-select, textarea {
-	background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%;
+@media (hover: hover) { button:hover:not(:disabled) { background: var(--color-paper-3); border-color: var(--color-ink-3); } }
+button:active:not(:disabled) { transform: translateY(1px); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-accent-ink); font-weight: 600; }
+@media (hover: hover) { button.primary:hover:not(:disabled) { background: var(--color-focus); border-color: var(--color-focus); } }
+button.danger { color: var(--color-bad); }
+@media (hover: hover) { button.danger:hover:not(:disabled) { background: var(--color-bad-wash); border-color: var(--color-bad); } }
+button.plain { background: transparent; border-color: transparent; color: var(--color-ink-3); }
+@media (hover: hover) { button.plain:hover:not(:disabled) { background: var(--color-paper-3); border-color: transparent; color: var(--color-ink); } }
+kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit; opacity: 0.75; }
+
+#app { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); height: 100dvh; }
+
+/* --- horizon: the next 24 hours ---------------------------------------------------------------- */
+
+#horizon {
+	display: flex; align-items: center; gap: var(--space-md); height: 44px; padding: 0 var(--space-md);
+	border-bottom: 1px solid var(--color-rule); font-size: var(--text-xs);
 }
-textarea { resize: vertical; }
-textarea:focus, select:focus { outline: none; border-color: var(--accent); }
-pre, code { font-family: ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", monospace; font-size: 13px; }
-pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-
-header {
-	display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--line);
-	position: sticky; top: 0; background: var(--bg); z-index: 1;
+#horizon h1 { margin: 0; font-size: var(--text-sm); font-weight: 700; letter-spacing: 0.04em; }
+#next-up { min-width: 0; max-width: 34ch; flex: none; color: var(--color-ink-2); }
+#next-up span { overflow: hidden; text-overflow: ellipsis; }
+#next-up .soon { color: var(--color-warn); }
+#track { position: relative; flex: 1; min-width: 0; height: 100%; }
+#track::before { content: ""; position: absolute; left: 0; right: 0; top: 60%; border-top: 1px dashed var(--color-rule-2); }
+#track .tick {
+	position: absolute; top: 4px; transform: translateX(-50%); color: var(--color-ink-3); font-size: var(--text-2xs);
+	font-variant-numeric: tabular-nums; pointer-events: none;
 }
-header h1 { font-size: 16px; margin: 0; font-weight: 600; }
-#status { color: var(--muted); font-size: 13px; }
-#status.running { color: var(--accent); }
-#status.problem { color: var(--warn); }
-#spend { margin-left: auto; color: var(--muted); font-size: 13px; }
+#track .tick::after { content: ""; position: absolute; left: 50%; top: calc(100% + 2px); height: 7px; border-left: 1px solid var(--color-rule-2); }
+#track .now { position: absolute; left: 0; top: 60%; width: 7px; height: 7px; transform: translate(-50%, -50%); border-radius: 50%; background: var(--color-accent); }
+#track .marker {
+	position: absolute; top: 60%; transform: translate(-50%, -50%); width: 20px; height: 20px; min-height: 0; padding: 0;
+	justify-content: center; background: transparent; border: 0; border-radius: 50%;
+}
+#track .marker::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--color-warn); }
+#track .marker.job::before { border-radius: 1px; transform: rotate(45deg); background: var(--color-accent); }
+#track .marker .tip {
+	display: none; position: absolute; top: calc(100% + 4px); left: 50%; transform: translateX(-50%); z-index: 4;
+	padding: var(--space-2xs) var(--space-xs); background: var(--color-paper-3); border: 1px solid var(--color-rule-2); border-radius: var(--radius-sm);
+	color: var(--color-ink); font-size: var(--text-xs); white-space: nowrap;
+}
+#track .marker:hover .tip, #track .marker:focus-visible .tip { display: block; }
+#track .empty { position: absolute; left: var(--space-md); top: 60%; transform: translateY(-50%); padding: 0 var(--space-xs); background: var(--color-paper); color: var(--color-ink-3); }
+#later { flex: none; }
+#later[hidden] { display: none; }
 
-#layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; padding: 16px; max-width: 1280px; margin: 0 auto; }
-@media (max-width: 860px) { #layout { grid-template-columns: minmax(0, 1fr); } }
+/* --- the log ----------------------------------------------------------------------------------- */
 
-#composer { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 8px; }
-#composer textarea { min-height: 44px; }
-#approvals { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+/* A short log sits against the prompt, as in a terminal. */
+#scroll { display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; scrollbar-color: var(--color-rule-2) transparent; }
+#log { width: 100%; max-width: var(--measure); margin: auto auto 0; padding: var(--space-md) var(--space-md) var(--space-lg); }
+.row {
+	display: grid; grid-template-columns: var(--col-time) var(--col-label) minmax(0, 1fr); column-gap: var(--col-gap);
+	align-items: baseline; padding: var(--space-3xs) 0;
+}
+.row.start { margin-top: var(--space-md); padding-top: var(--space-sm); border-top: 1px solid var(--color-rule); }
+#log > .row.start:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
+.row .t { color: var(--color-ink-3); font-size: var(--text-xs); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+.row .k { color: var(--color-ink-3); text-align: right; white-space: nowrap; }
+.row .b { min-width: 0; overflow-wrap: anywhere; }
+
+.row.you .k, .row.cmd .k { color: var(--color-accent); }
+.row.you .b { color: var(--color-ink); font-weight: 600; white-space: pre-wrap; }
+.row.cmd .b { color: var(--color-ink-2); white-space: pre-wrap; }
+.row.gaidin .k { color: var(--color-voice); }
+.row.remind .k, .row.job .k { color: var(--color-warn); }
+.row.remind .b, .row.job .b { color: var(--color-ink); font-weight: 600; }
+.row .why { margin-left: 1ch; color: var(--color-bad); font-weight: 400; }
+.row.err .k, .row.err .b { color: var(--color-bad); }
+.row.sys .b { color: var(--color-ink-2); }
+
+/* Thinking and tool calls: one line each, opened for the full text. */
+.row details summary { display: flex; gap: 1ch; align-items: baseline; cursor: pointer; list-style: none; border-radius: var(--radius-sm); }
+.row details summary::-webkit-details-marker { display: none; }
+@media (hover: hover) { .row details summary:hover { background: var(--color-paper-2); } }
+.row details summary::after { content: "+"; flex: none; color: var(--color-ink-3); }
+.row details[open] summary::after { content: "−"; }
+.row .name { flex: none; color: var(--color-accent); }
+.row.think .name { color: var(--color-ink-3); }
+.row .args { flex: 1; min-width: 0; color: var(--color-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row.think .args { font-family: var(--font-body); font-size: var(--text-sm); }
+.row .state { flex: none; color: var(--color-ink-3); font-size: var(--text-xs); }
+.row.s-running .state, .row.s-running .k { color: var(--color-accent); }
+.row.s-running .state::before { content: "● "; animation: pulse 1.2s var(--ease-out) infinite; }
+.row.s-waiting .state { color: var(--color-warn); }
+.row.s-error .state, .row.s-error .name, .row.s-no-result .state { color: var(--color-bad); }
+@keyframes pulse { 50% { opacity: 0.2; } }
+.fold { display: flex; flex-direction: column; gap: var(--space-2xs); margin: var(--space-2xs) 0 var(--space-xs); }
+.fold .label { color: var(--color-ink-3); font-size: var(--text-xs); }
+.fold pre, .tail { padding: var(--space-xs) var(--space-sm); max-height: 420px; overflow: auto; background: var(--color-paper-2); border: 1px solid var(--color-rule); border-radius: var(--radius-sm); color: var(--color-ink-2); font-size: var(--text-xs); }
+.row.think .fold pre { font-family: var(--font-body); font-size: var(--text-sm); }
+.tail { margin-top: var(--space-2xs); max-height: none; color: var(--color-ink-3); }
+
+/* gaidin's own words, in the humanist face. */
+.b.prose { font-family: var(--font-body); font-size: var(--text-md); line-height: 1.55; }
+.md { max-width: 76ch; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md blockquote, .md pre, .md .table { margin: 0 0 var(--space-sm); }
+.md h3, .md h4, .md h5 { margin: var(--space-md) 0 var(--space-xs); font-size: var(--text-md); font-weight: 600; }
+.md ul, .md ol { padding-left: var(--space-lg); }
+.md li { margin: var(--space-3xs) 0; }
+.md li > ul, .md li > ol { margin: var(--space-3xs) 0 0; }
+.md li::marker { color: var(--color-ink-3); }
+.md strong { font-weight: 600; }
+.md a { color: var(--color-accent); text-decoration: underline; text-decoration-color: var(--color-rule-2); text-underline-offset: 2px; }
+@media (hover: hover) { .md a:hover { text-decoration-color: currentColor; } }
+.md code { padding: 1px 5px; background: var(--color-paper-3); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 0.85em; }
+.md pre { padding: var(--space-sm) var(--space-md); overflow-x: auto; white-space: pre; overflow-wrap: normal; background: var(--color-paper-2); border: 1px solid var(--color-rule); border-radius: var(--radius-sm); }
+.md pre code { padding: 0; background: none; font-size: var(--text-xs); }
+.md blockquote { padding-left: var(--space-sm); border-left: 2px solid var(--color-rule-2); color: var(--color-ink-2); }
+.md hr { border: 0; border-top: 1px solid var(--color-rule); margin: var(--space-md) 0; }
+.md .table { overflow-x: auto; }
+.md table { border-collapse: collapse; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.md th, .md td { padding: var(--space-2xs) var(--space-md) var(--space-2xs) 0; border-bottom: 1px solid var(--color-rule); text-align: left; vertical-align: top; }
+.md th { color: var(--color-ink-2); font-weight: 600; border-bottom-color: var(--color-rule-2); }
+.md td:last-child, .md th:last-child { padding-right: 0; }
+
+/* Command output. */
+.out { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 0 2ch; align-items: baseline; }
+.out > * { padding: var(--space-3xs) 0; }
+.out .dim { color: var(--color-ink-3); }
+.out .on { color: var(--color-voice); }
+.out .off { color: var(--color-bad); }
+.out button { justify-self: end; }
+.help { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 0 2ch; }
+.help .c { color: var(--color-accent); }
+.help .a, .help .h { color: var(--color-ink-3); }
+.keys { margin-top: var(--space-xs); color: var(--color-ink-3); }
+
+/* --- the dock: approvals, prompt, status line ------------------------------------------------- */
+
+#dock { position: relative; border-top: 1px solid var(--color-rule); background: var(--color-paper); }
+#jump { position: absolute; bottom: calc(100% + var(--space-sm)); left: 50%; transform: translateX(-50%); background: var(--color-paper-3); }
+#jump[hidden] { display: none; }
+#dock-inner { position: relative; max-width: var(--measure); margin: 0 auto; padding: var(--space-xs) var(--space-md); }
+
 #approvals:empty { display: none; }
-.approval { border: 1px solid var(--warn); border-radius: 8px; padding: 10px 12px; background: var(--panel); }
-.approval .what { overflow-wrap: anywhere; margin: 2px 0 8px; }
-.approval .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
-#notice { color: var(--bad); font-size: 13px; min-height: 0; margin-bottom: 8px; }
-#notice:empty { display: none; }
+#approvals { display: flex; flex-direction: column; gap: var(--space-xs); margin-bottom: var(--space-xs); }
+.approval { padding: var(--space-xs) 0; background: var(--color-warn-wash); border: 1px solid var(--color-warn); border-radius: var(--radius-md); }
+.approval .k { color: var(--color-warn); font-weight: 600; }
+.approval .t { padding-left: var(--space-xs); }
+.approval .ask .tool { color: var(--color-warn); }
+.approval .ask .what { font-family: var(--font-body); font-size: var(--text-md); }
+.approval .buttons { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); margin: var(--space-xs) var(--space-sm) 0 0; }
+.approval .expires { color: var(--color-ink-3); font-size: var(--text-xs); margin-left: auto; }
 
-.exchange { border-top: 1px solid var(--line); padding: 12px 0; display: flex; flex-direction: column; gap: 8px; }
-.meta { color: var(--muted); font-size: 12px; }
-.user .text { color: var(--text); font-weight: 600; }
-.text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.note { color: var(--muted); font-size: 13px; }
-.note.bad { color: var(--bad); }
-.fired { color: var(--warn); }
+#prompt {
+	display: grid; grid-template-columns: var(--col-time) var(--col-label) minmax(0, 1fr) auto; column-gap: var(--col-gap); align-items: baseline;
+	padding: var(--space-xs) 0; background: var(--color-paper-2); border: 1px solid var(--color-rule-2); border-radius: var(--radius-md);
+	transition: border-color var(--dur-short) var(--ease-out);
+}
+#prompt:focus-within { border-color: var(--color-accent); }
+#prompt .k { color: var(--color-accent); text-align: right; font-weight: 600; }
+#prompt .t { padding-left: var(--space-xs); color: var(--color-ink-3); font-size: var(--text-xs); }
+#message {
+	display: block; width: 100%; min-height: 1.55em; max-height: 40vh; padding: 0; margin: 0; resize: none; overflow-y: auto;
+	background: transparent; border: 0; outline: none; color: var(--color-ink); line-height: 1.55;
+}
+#message::placeholder { color: var(--color-ink-3); }
+#send { display: none; margin-right: var(--space-xs); align-self: center; }
 
-details { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
-details summary { cursor: pointer; padding: 4px 8px; display: flex; gap: 8px; align-items: baseline; list-style: none; }
-details summary::-webkit-details-marker { display: none; }
-details summary::before { content: "▸"; color: var(--muted); }
-details[open] summary::before { content: "▾"; }
-details pre { padding: 6px 8px 8px; border-top: 1px solid var(--line); max-height: 420px; overflow: auto; }
-.tool .name { color: var(--accent); }
-.tool .args { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
-.tool .state { font-size: 12px; color: var(--muted); }
-.tool .state.running { color: var(--accent); }
-.tool.error .state { color: var(--bad); }
-.thinking summary { color: var(--muted); font-size: 13px; }
+#menu {
+	position: absolute; left: var(--space-md); right: var(--space-md); bottom: calc(100% - var(--space-xs)); z-index: 3;
+	max-height: 50vh; overflow-y: auto; padding: var(--space-2xs) 0; background: var(--color-paper-3); border: 1px solid var(--color-rule-2); border-radius: var(--radius-md);
+}
+#menu[hidden] { display: none; }
+#menu .item { display: grid; grid-template-columns: minmax(10ch, auto) minmax(0, 1fr); gap: 0 2ch; padding: var(--space-2xs) var(--space-sm); cursor: pointer; }
+#menu .item .v { color: var(--color-ink); white-space: nowrap; }
+#menu .item .v .a { color: var(--color-ink-3); }
+#menu .item .h { color: var(--color-ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#menu .item.active { background: var(--color-accent); }
+#menu .item.active .v, #menu .item.active .h, #menu .item.active .a { color: var(--color-accent-ink); }
 
-aside section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 16px; }
-aside h2 { font-size: 14px; margin: 0 0 8px; font-weight: 600; }
-#reminders, #jobs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-#reminders li, #jobs li { display: flex; gap: 8px; align-items: baseline; }
-#reminders li div, #jobs li div { flex: 1; min-width: 0; }
-#reminders .when, #jobs .when { color: var(--muted); font-size: 12px; display: block; }
-label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
-label.check { display: flex; gap: 6px; align-items: center; color: var(--text); margin: 4px 0; }
-#settings-tools { display: flex; flex-wrap: wrap; gap: 0 14px; }
-#settings-actions { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
-#settings-state { color: var(--muted); font-size: 12px; }
+#statusline {
+	display: flex; align-items: center; gap: var(--space-2xs); height: 28px; padding: 0 var(--space-xs);
+	background: var(--color-paper-2); border-top: 1px solid var(--color-rule); font-size: var(--text-xs); color: var(--color-ink-3);
+	overflow-x: auto; white-space: nowrap; scrollbar-width: none;
+}
+#statusline .seg { min-height: 22px; padding: 0 var(--space-xs); color: var(--color-ink-2); }
+#statusline .status { display: inline-flex; align-items: center; gap: var(--space-xs); padding: 0 var(--space-xs); }
+#statusline .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--color-ink-3); }
+#statusline .status.running { color: var(--color-accent); }
+#statusline .status.running::before { background: var(--color-accent); animation: pulse 1.2s var(--ease-out) infinite; }
+#statusline .status.problem { color: var(--color-warn); }
+#statusline .status.problem::before { background: var(--color-warn); }
+#statusline .seg.danger { color: var(--color-bad); }
+#statusline .spend { padding: 0 var(--space-xs); font-variant-numeric: tabular-nums; }
+#statusline .spacer { flex: 1; }
+
+/* --- narrow screens --------------------------------------------------------------------------- */
+
+@media (max-width: 760px) {
+	#track .tick.minor { display: none; }
+}
+@media (max-width: 600px) {
+	:root { --col-label: 6ch; --col-gap: 1.5ch; }
+	#horizon { gap: var(--space-sm); padding: 0 var(--space-sm); }
+	#track { display: none; }
+	#next-up { flex: 1; max-width: none; }
+	#log, #dock-inner { padding-left: var(--space-sm); padding-right: var(--space-sm); }
+	.row, #prompt { grid-template-columns: var(--col-label) minmax(0, 1fr); }
+	#prompt { grid-template-columns: var(--col-label) minmax(0, 1fr) auto; }
+	.row .t, #prompt .t { display: none; }
+	.row.start .t { display: none; }
+	#menu { left: var(--space-sm); right: var(--space-sm); }
+	.out { grid-template-columns: auto minmax(0, 1fr) auto; }
+	.out .when { grid-column: 2; }
+	.help { grid-template-columns: auto minmax(0, 1fr); }
+	.help .a { display: none; }
+}
+@media (pointer: coarse) {
+	#send { display: inline-flex; min-height: 36px; }
+	#statusline { height: 36px; }
+	#statusline .seg { min-height: 32px; }
+	#message { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+	*, *::before { transition-duration: 0s !important; animation: none !important; }
+	button:active:not(:disabled) { transform: none; }
+}
 </style>
 </head>
 <body>
-<header>
-	<h1>gaidin</h1>
-	<span id="status">connecting</span>
-	<span id="spend"></span>
-	<button id="stop" class="danger" disabled>Stop</button>
-</header>
-<div id="layout">
-	<main>
-		<div id="approvals"></div>
-		<form id="composer">
-			<textarea id="message" rows="2" placeholder="Message gaidin (Enter sends, Shift+Enter for a new line)"></textarea>
-			<button id="send" type="submit">Send</button>
-		</form>
-		<div id="notice"></div>
-		<div id="transcript"></div>
+<div id="app">
+	<header id="horizon">
+		<h1>gaidin</h1>
+		<button id="next-up" class="plain" type="button" title="Upcoming reminders and jobs (/next)"><span>…</span></button>
+		<div id="track" aria-label="The next 24 hours"></div>
+		<button id="later" class="plain" type="button" hidden></button>
+	</header>
+	<main id="scroll">
+		<div id="log" role="log" aria-live="polite" aria-relevant="additions"></div>
 	</main>
-	<aside>
-		<section>
-			<h2>Reminders</h2>
-			<ul id="reminders"></ul>
-		</section>
-		<section>
-			<h2>Scheduled</h2>
-			<ul id="jobs"></ul>
-		</section>
-		<section>
-			<h2>Settings</h2>
-			<form id="settings">
-				<label for="settings-model">Model</label>
-				<select id="settings-model"></select>
-				<label for="settings-thinking">Thinking</label>
-				<select id="settings-thinking">
-					<option>off</option><option>low</option><option>medium</option><option>high</option>
-				</select>
-				<label for="settings-instructions">Standing instructions</label>
-				<textarea id="settings-instructions" rows="4"></textarea>
-				<label>Tools</label>
-				<div id="settings-tools"></div>
-				<div id="settings-actions">
-					<button type="submit">Save</button>
-					<span id="settings-state">Applies from the next request.</span>
-				</div>
+	<footer id="dock">
+		<button id="jump" type="button" hidden>↓ new activity</button>
+		<div id="dock-inner">
+			<div id="approvals"></div>
+			<div id="menu" role="listbox" aria-label="Commands" hidden></div>
+			<form id="prompt">
+				<span class="t"></span>
+				<label class="k" for="message">you ›</label>
+				<textarea id="message" rows="1" placeholder="message gaidin · / for commands" aria-controls="menu" autocomplete="off" spellcheck="true"></textarea>
+				<button id="send" class="primary" type="submit">Send</button>
 			</form>
-		</section>
-	</aside>
+		</div>
+		<div id="statusline"></div>
+	</footer>
 </div>
 <script type="module" src="/app.js"></script>
 </body>

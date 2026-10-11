@@ -193,133 +193,514 @@ function splitStamp(text: string): { time?: string; text: string } {
 	return match ? { time: match[1], text: text.slice(match[0].length) } : { text };
 }
 
+/** "Sat 2026-10-10 19:31 GMT-4" (src/time.ts) as "19:31" today, or "Oct 10" another day. */
+function shortStamp(stamp: string): string {
+	const match = /^\w+ (\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})/.exec(stamp);
+	if (!match) return stamp;
+	const [, year, month, day, time] = match;
+	const now = new Date();
+	if (Number(year) === now.getFullYear() && Number(month) === now.getMonth() + 1 && Number(day) === now.getDate()) return time;
+	return new Date(Number(year), Number(month) - 1, Number(day)).toLocaleString(undefined, { month: "short", day: "numeric" });
+}
+
+const clock = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const when = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+
+/** "in 25 min", "in 3 h 10 min", "in 4 days". */
+function fromNow(at: number): string {
+	const minutes = Math.round((at - Date.now()) / 60_000);
+	if (minutes < 1) return "now";
+	if (minutes < 60) return `in ${minutes} min`;
+	if (minutes < 48 * 60) return `in ${Math.floor(minutes / 60)} h${minutes % 60 === 0 ? "" : ` ${minutes % 60} min`}`;
+	return `in ${Math.round(minutes / 1440)} days`;
+}
+
 function argsSummary(name: string, args: Record<string, unknown>): string {
 	if (name === "bash" && typeof args.command === "string") return args.command;
 	if (typeof args.path === "string") return args.path;
+	if (typeof args.url === "string") return args.url;
 	if (name === "remind") return `${args.text ?? ""} ${args.at ?? (args.inMinutes === undefined ? "" : `in ${args.inMinutes} min`)}`;
-	return JSON.stringify(args);
-}
-
-function collapsible(key: string, className: string, summary: HTMLElement[], body: string): HTMLDetailsElement {
-	const details = el("details", className);
-	details.open = opened.has(key);
-	details.addEventListener("toggle", () => (details.open ? opened.add(key) : opened.delete(key)));
-	const head = el("summary");
-	head.append(...summary);
-	details.append(head, el("pre", undefined, body));
-	return details;
-}
-
-function renderBlocks(blocks: Block[], key: string, results: Map<string, Extract<Message, { role: "toolResult" }>>, out: HTMLElement[]) {
-	blocks.forEach((block, index) => {
-		if (block.type === "text" && block.text.trim() !== "") out.push(el("div", "text", block.text));
-		else if (block.type === "thinking") {
-			const label = el("span", undefined, block.redacted ? "thinking (redacted)" : "thinking");
-			out.push(collapsible(`${key}:${index}`, "thinking", [label], block.redacted ? "" : block.thinking));
-		} else if (block.type === "toolCall") {
-			const result = results.get(block.id);
-			const slot = state.slots.get(block.id);
-			const status = result ? (result.isError ? "error" : "done") : slot ? "running" : state.running ? "waiting" : "no result";
-			const output = result ? textOf(result.content) : slot?.output ?? "";
-			const details = collapsible(block.id, `tool${result?.isError ? " error" : ""}`, [
-				el("span", "name", block.name),
-				el("span", "args", argsSummary(block.name, block.arguments ?? {})),
-				el("span", `state ${status}`, status),
-			], output || JSON.stringify(block.arguments, null, 2));
-			out.push(details);
-		}
-	});
-}
-
-function render() {
-	const status = $("status");
-	status.className = "";
-	if (!state.connected) {
-		status.textContent = "reconnecting";
-		status.className = "problem";
-	} else if (state.retry) {
-		status.textContent = state.retry;
-		status.className = "problem";
-	} else if (state.running) {
-		status.textContent = "working";
-		status.className = "running";
-	} else status.textContent = "idle";
-	($("stop") as HTMLButtonElement).disabled = !state.running;
-
-	const here = state.usage
-		? [...Object.values(state.usage.models), ...Object.values(state.usage.tools)].reduce((sum, u) => sum + (u.cost?.total ?? 0), 0)
-		: undefined;
-	const parts = [];
-	if (here !== undefined) parts.push(`${money(here)} this conversation`);
-	if (state.allSpend !== undefined) parts.push(`${money(state.allSpend)} all`);
-	$("spend").textContent = parts.join(" · ");
-
-	const entries = [...state.entries.values()].sort((a, b) => a.id - b.id);
-	const results = new Map<string, Extract<Message, { role: "toolResult" }>>();
-	for (const entry of entries) for (const m of entry.model ?? []) if (m.role === "toolResult") results.set(m.toolCallId, m);
-
-	// One group per message, fired reminder or job report, oldest first inside, newest group on top.
-	const groups: HTMLElement[][] = [];
-	for (const entry of entries) {
-		const out: HTMLElement[] = [];
-		let starts = false;
-		if (entry.kind === "gaidin.reminder-fired") {
-			const data = entry.data ?? {};
-			starts = true;
-			out.push(el("div", "fired", `Reminder: ${data.text}${data.delivered ? "" : ` (push failed: ${data.error})`}`));
-		}
-		if (entry.kind === "gaidin.job-reported") {
-			const data = entry.data ?? {};
-			starts = true;
-			out.push(el("div", "fired", `Scheduled: ${data.title}${data.delivered ? "" : ` (not delivered: ${data.error})`}`));
-			out.push(el("div", "text", String(data.text ?? "")));
-		}
-		for (const message of entry.model ?? []) {
-			if (message.role === "user") {
-				const { time, text } = splitStamp(textOf(message.content));
-				if (entry.kind === "pi.user") {
-					starts = true;
-					const block = el("div", "user");
-					if (time) block.append(el("div", "meta", time));
-					block.append(el("div", "text", text));
-					out.push(block);
-				} else out.push(el("div", "note", `${entry.kind}: ${text}`));
-			} else if (message.role === "assistant") {
-				renderBlocks(message.content, String(entry.id), results, out);
-				if (message.stopReason === "error") out.push(el("div", "note bad", message.errorMessage ?? "The model returned an error."));
-				if (message.stopReason === "aborted") out.push(el("div", "note", "Stopped."));
-			}
-		}
-		if (out.length === 0) continue;
-		if (starts || groups.length === 0) groups.push(out);
-		else groups.at(-1)!.push(...out);
-	}
-	if (state.partial !== undefined) {
-		const out: HTMLElement[] = [];
-		renderBlocks(state.partial.content, "partial", results, out);
-		if (groups.length === 0) groups.push(out);
-		else groups.at(-1)!.push(...out);
-	}
-
-	const transcript = $("transcript");
-	transcript.replaceChildren(
-		...groups.reverse().map((group) => {
-			const node = el("section", "exchange");
-			node.append(...group);
-			return node;
-		}),
-	);
-	if (groups.length === 0) transcript.append(el("div", "note", "No messages yet."));
+	if (typeof args.title === "string") return args.title;
+	const json = JSON.stringify(args);
+	return json === "{}" ? "" : json;
 }
 
 function money(dollars: number): string {
 	return `$${dollars.toFixed(dollars < 1 ? 3 : 2)}`;
 }
 
+// --- markdown ---------------------------------------------------------------------------------
+// Enough Markdown for model answers: fences, headings, lists, quotes, tables, rules, and inline code,
+// emphasis and links. It builds DOM nodes, never HTML strings, so nothing in a message can inject markup.
+
+const INLINE = /(`+)([\s\S]*?[^`])\1(?!`)|\*\*([^*][\s\S]*?)\*\*|__([^_][\s\S]*?)__|~~([\s\S]+?)~~|!?\[([^\]]+)\]\(<?((?:[^()\s<>]|\([^()\s]*\))+)>?\)|<?(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"\]])>?|\*([^*\s](?:[^*]*[^*\s])?)\*|(?<![\w])_([^_\s](?:[^_]*[^_\s])?)_(?![\w])/g;
+
+function inline(text: string, parent: HTMLElement) {
+	let last = 0;
+	for (const m of text.matchAll(INLINE)) {
+		const index = m.index ?? 0;
+		if (index > last) parent.append(text.slice(last, index));
+		last = index + m[0].length;
+		if (m[1] !== undefined) parent.append(el("code", undefined, m[2].replace(/^ (.*) $/, "$1")));
+		else if (m[3] !== undefined || m[4] !== undefined) inline(m[3] ?? m[4], parent.appendChild(el("strong")));
+		else if (m[5] !== undefined) inline(m[5], parent.appendChild(el("s")));
+		else if (m[6] !== undefined) parent.append(link(m[7], m[6]));
+		else if (m[8] !== undefined) parent.append(link(m[8]));
+		else inline(m[9] ?? m[10], parent.appendChild(el("em")));
+	}
+	if (last < text.length) parent.append(text.slice(last));
+}
+
+/** A link to an http(s) or mailto address; anything else is shown as its label. A label holding a URL stays plain, so links don't nest. */
+function link(href: string, label?: string): Node {
+	if (!/^(https?:|mailto:)/i.test(href)) return document.createTextNode(label ?? href);
+	const a = el("a");
+	a.href = href;
+	a.target = "_blank";
+	a.rel = "noopener noreferrer";
+	if (label === undefined || /https?:\/\//.test(label)) a.textContent = label ?? href;
+	else inline(label, a);
+	return a;
+}
+
+const FENCE = /^ {0,3}(`{3,}|~{3,})\s*([\w+-]*)/;
+const HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
+const RULE = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
+const ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+const QUOTE = /^ {0,3}> ?(.*)$/;
+const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+
+function markdown(source: string): HTMLElement {
+	const root = el("div", "md");
+	blocks(source.replace(/\r\n?/g, "\n").split("\n"), root);
+	return root;
+}
+
+function cells(row: string): string[] {
+	return row.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
+}
+
+function isTable(lines: string[], i: number): boolean {
+	return lines[i].includes("|") && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1]);
+}
+
+function startsBlock(lines: string[], i: number): boolean {
+	const line = lines[i];
+	return FENCE.test(line) || HEADING.test(line) || RULE.test(line) || ITEM.test(line) || QUOTE.test(line) || isTable(lines, i);
+}
+
+function blocks(lines: string[], parent: HTMLElement) {
+	let i = 0;
+	while (i < lines.length) {
+		const line = lines[i];
+		if (line.trim() === "") {
+			i++;
+			continue;
+		}
+		const fence = FENCE.exec(line);
+		if (fence) {
+			// An unclosed fence runs to the end, which is what a streaming answer looks like mid-block.
+			const close = new RegExp(`^ {0,3}${fence[1][0]}{${fence[1].length},}\\s*$`);
+			const body: string[] = [];
+			for (i++; i < lines.length && !close.test(lines[i]); i++) body.push(lines[i]);
+			i++;
+			const pre = el("pre");
+			const code = el("code", undefined, body.join("\n"));
+			if (fence[2]) code.dataset.lang = fence[2];
+			pre.append(code);
+			parent.append(pre);
+			continue;
+		}
+		const heading = HEADING.exec(line);
+		if (heading) {
+			const level = heading[1].length;
+			const h = el(level <= 2 ? "h3" : level === 3 ? "h4" : "h5");
+			inline(heading[2], h);
+			parent.append(h);
+			i++;
+			continue;
+		}
+		if (RULE.test(line)) {
+			parent.append(el("hr"));
+			i++;
+			continue;
+		}
+		if (QUOTE.test(line)) {
+			const body: string[] = [];
+			for (; i < lines.length && lines[i].trim() !== "" && QUOTE.test(lines[i]); i++) body.push(QUOTE.exec(lines[i])![1]);
+			const quote = el("blockquote");
+			blocks(body, quote);
+			parent.append(quote);
+			continue;
+		}
+		if (isTable(lines, i)) {
+			const align = cells(lines[i + 1]).map((c) => (c.endsWith(":") ? (c.startsWith(":") ? "center" : "right") : ""));
+			const table = el("table");
+			const head = table.createTHead().insertRow();
+			for (const [n, text] of cells(line).entries()) {
+				const th = el("th");
+				if (align[n]) th.style.textAlign = align[n];
+				inline(text, th);
+				head.append(th);
+			}
+			const body = table.createTBody();
+			for (i += 2; i < lines.length && lines[i].includes("|") && lines[i].trim() !== ""; i++) {
+				const row = body.insertRow();
+				for (const [n, text] of cells(lines[i]).entries()) {
+					const td = row.insertCell();
+					if (align[n]) td.style.textAlign = align[n];
+					inline(text, td);
+				}
+			}
+			const wrap = el("div", "table");
+			wrap.append(table);
+			parent.append(wrap);
+			continue;
+		}
+		const item = ITEM.exec(line);
+		if (item) {
+			i = list(lines, i, item[1].length, parent);
+			continue;
+		}
+		// Line breaks inside a paragraph are kept: answers use them on purpose.
+		const paragraph = el("p");
+		for (let first = true; i < lines.length && lines[i].trim() !== "" && (first || !startsBlock(lines, i)); i++, first = false) {
+			if (!first) paragraph.append(el("br"));
+			inline(lines[i].trim(), paragraph);
+		}
+		parent.append(paragraph);
+	}
+}
+
+/** A list at `indent`; lines indented further belong to the item above them. Returns the next line. */
+function list(lines: string[], i: number, indent: number, parent: HTMLElement): number {
+	const first = ITEM.exec(lines[i])!;
+	const ordered = /\d/.test(first[2]);
+	const node = el(ordered ? "ol" : "ul");
+	if (ordered && parseInt(first[2]) !== 1) (node as HTMLOListElement).start = parseInt(first[2]);
+	while (i < lines.length) {
+		const item = ITEM.exec(lines[i]);
+		if (!item || item[1].length !== indent || /\d/.test(item[2]) !== ordered) break;
+		const body = [item[3]];
+		let loose = false;
+		for (i++; i < lines.length; i++) {
+			const line = lines[i];
+			const leading = line.length - line.trimStart().length;
+			if (line.trim() === "") {
+				// A blank line ends the item; the list goes on if the next text is another item or indented under this one.
+				const next = lines.slice(i + 1).find((l) => l.trim() !== "");
+				if (next === undefined || next.length - next.trimStart().length <= indent) break;
+				body.push("");
+				loose = true;
+			} else if (leading > indent) body.push(line.slice(Math.min(leading, indent + 2)));
+			else if (ITEM.test(line) || startsBlock(lines, i)) break;
+			else body.push(line.trim());
+		}
+		const li = el("li");
+		if (body.length === 1) inline(body[0], li);
+		else {
+			blocks(body, li);
+			// A tight item's first paragraph sits inline, so the bullet lines up with its text.
+			const lead = li.firstElementChild;
+			if (!loose && lead?.tagName === "P") lead.replaceWith(...lead.childNodes);
+		}
+		node.append(li);
+		if (lines[i]?.trim() === "") {
+			let next = i;
+			while (next < lines.length && lines[next].trim() === "") next++;
+			const following = next < lines.length ? ITEM.exec(lines[next]) : null;
+			if (following && following[1].length === indent) i = next;
+		}
+	}
+	parent.append(node);
+	return i;
+}
+
+/** Rendered answers by key, so a re-render while text streams in only re-parses the block that changed. */
+let rendered = new Map<string, { text: string; node: HTMLElement }>();
+let nextRendered = new Map<string, { text: string; node: HTMLElement }>();
+
+function answer(key: string, text: string): HTMLElement {
+	const cached = rendered.get(key);
+	const node = cached !== undefined && cached.text === text ? cached.node : markdown(text);
+	nextRendered.set(key, { text, node });
+	return node;
+}
+
+// --- the log ----------------------------------------------------------------------------------
+// Everything on screen is a row: the time on the first row of an exchange, a label saying what kind of
+// line it is, and the body. Command output lives here too, between the entries it followed.
+
+function row(kind: string, label: string, ...body: (Node | string)[]): HTMLElement {
+	const node = el("div", `row ${kind}`);
+	const b = el("div", "b");
+	b.append(...body);
+	node.append(el("span", "t"), el("span", "k", label), b);
+	return node;
+}
+
+function fold(key: string, summary: HTMLElement[], sections: [string | undefined, string][]): HTMLDetailsElement {
+	const details = el("details");
+	details.open = opened.has(key);
+	const head = el("summary");
+	head.append(...summary);
+	details.append(head);
+	// The body is built on first open; most folds are never opened.
+	const fill = () => {
+		if (!details.open || details.childElementCount > 1) return;
+		const body = el("div", "fold");
+		for (const [label, text] of sections) {
+			if (label) body.append(el("div", "label", label));
+			body.append(el("pre", undefined, text));
+		}
+		details.append(body);
+	};
+	details.addEventListener("toggle", () => {
+		if (details.open) opened.add(key);
+		else opened.delete(key);
+		fill();
+	});
+	fill();
+	return details;
+}
+
+function lastLines(text: string, count: number): string {
+	return text.replace(/\s+$/, "").split("\n").slice(-count).join("\n");
+}
+
+function renderBlocks(blocks: Block[], key: string, results: Map<string, Extract<Message, { role: "toolResult" }>>, out: HTMLElement[]) {
+	blocks.forEach((block, index) => {
+		if (block.type === "text" && block.text.trim() !== "") {
+			const line = row("gaidin", "gaidin", answer(`${key}:${index}`, block.text));
+			line.lastElementChild!.classList.add("prose");
+			out.push(line);
+		} else if (block.type === "thinking") {
+			// A model with thinking off can still send an empty block.
+			if (!block.redacted && block.thinking.trim() === "") return;
+			const preview = block.redacted ? "redacted" : block.thinking.replace(/\s+/g, " ").trim();
+			out.push(row("think", "think", fold(`${key}:${index}`, [el("span", "args", preview)], [[undefined, block.redacted ? "Redacted by the provider." : block.thinking]])));
+		} else if (block.type === "toolCall") {
+			const result = results.get(block.id);
+			const slot = state.slots.get(block.id);
+			const status = result ? (result.isError ? "error" : "done") : slot ? "running" : state.running ? "waiting" : "no result";
+			const output = result ? textOf(result.content) : slot?.output ?? "";
+			const args = block.arguments ?? {};
+			const sections: [string | undefined, string][] = [["input", block.name === "bash" && typeof args.command === "string" ? args.command : JSON.stringify(args, null, 2)]];
+			if (result || slot) sections.push(["output", output || "(no output)"]);
+			const details = fold(block.id, [el("span", "name", block.name), el("span", "args", argsSummary(block.name, args)), el("span", "state", status)], sections);
+			const line = row(`tool s-${status.replace(" ", "-")}`, "tool", details);
+			// A running tool shows the end of its output without being opened.
+			if (status === "running" && output.trim() !== "" && !details.open) line.lastElementChild!.append(el("pre", "tail", lastLines(output, 6)));
+			out.push(line);
+		}
+	});
+}
+
+/** Command output and errors, kept on screen until the page reloads or /clear. */
+const local: { after: number; row: HTMLElement }[] = [];
+let stick = false;
+
+function lastEntryId(): number {
+	let last = 0;
+	for (const id of state.entries.keys()) if (id > last) last = id;
+	return last;
+}
+
+function say(kind: "sys" | "err" | "cmd", ...body: (Node | string)[]) {
+	const line = row(kind, kind === "err" ? "error" : kind === "cmd" ? "you" : "sys", ...body);
+	const previous = local.at(-1)?.row;
+	if (kind === "err" && previous?.classList.contains("err") && previous.textContent === line.textContent) return;
+	local.push({ after: lastEntryId(), row: line });
+	stick = true;
+	schedule();
+}
+
+let lastHeight = 0;
+
+function render() {
+	renderStatusline();
+	document.title = approvals.length > 0 ? `(${approvals.length}) approval · gaidin` : state.running ? "working · gaidin" : "gaidin";
+
+	const scroller = $("scroll");
+	const atBottom = stick || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48;
+
+	const entries = [...state.entries.values()].sort((a, b) => a.id - b.id);
+	const results = new Map<string, Extract<Message, { role: "toolResult" }>>();
+	for (const entry of entries) for (const m of entry.model ?? []) if (m.role === "toolResult") results.set(m.toolCallId, m);
+
+	const rows: HTMLElement[] = [];
+	let shown = 0;
+	const flush = (upTo: number) => {
+		while (shown < local.length && local[shown].after <= upTo) rows.push(local[shown++].row);
+	};
+	for (const entry of entries) {
+		const out: HTMLElement[] = [];
+		let starts = false;
+		let time: string | undefined;
+		if (entry.kind === "gaidin.reminder-fired") {
+			const data = entry.data ?? {};
+			starts = true;
+			const line = row("remind", "remind", String(data.text ?? ""));
+			if (!data.delivered) line.lastElementChild!.append(el("span", "why", `push failed: ${data.error}`));
+			out.push(line);
+		}
+		if (entry.kind === "gaidin.job-reported") {
+			const data = entry.data ?? {};
+			starts = true;
+			const line = row("job", "job", String(data.title ?? ""));
+			if (!data.delivered) line.lastElementChild!.append(el("span", "why", `not delivered: ${data.error}`));
+			const report = row("gaidin", "gaidin", answer(`${entry.id}:report`, String(data.text ?? "")));
+			report.lastElementChild!.classList.add("prose");
+			out.push(line, report);
+		}
+		for (const message of entry.model ?? []) {
+			if (message.role === "user") {
+				const split = splitStamp(textOf(message.content));
+				if (entry.kind === "pi.user") {
+					starts = true;
+					time = split.time;
+					out.push(row("you", "you", split.text));
+				} else out.push(row("sys", "note", `${entry.kind}: ${split.text}`));
+			} else if (message.role === "assistant") {
+				renderBlocks(message.content, String(entry.id), results, out);
+				if (message.stopReason === "error") out.push(row("err", "error", message.errorMessage ?? "The model returned an error."));
+				if (message.stopReason === "aborted") out.push(row("sys", "sys", "Stopped."));
+			}
+		}
+		if (out.length > 0) {
+			if (starts) {
+				out[0].classList.add("start");
+				if (time) {
+					const stamp = out[0].firstElementChild as HTMLElement;
+					stamp.textContent = shortStamp(time);
+					stamp.title = time;
+				}
+			}
+			rows.push(...out);
+		}
+		flush(entry.id);
+	}
+	if (state.partial !== undefined) renderBlocks(state.partial.content, "partial", results, rows);
+	flush(Infinity);
+	if (rows.length === 0) rows.push(row("sys", "gaidin", "No messages yet. Type below, or / for commands."));
+
+	$("log").replaceChildren(...rows);
+	rendered = nextRendered;
+	nextRendered = new Map();
+
+	if (atBottom) scroller.scrollTop = scroller.scrollHeight;
+	else if (scroller.scrollHeight > lastHeight) $("jump").hidden = false;
+	lastHeight = scroller.scrollHeight;
+	stick = false;
+}
+
+// --- status line ------------------------------------------------------------------------------
+
+let current: Settings | undefined;
+let statusSignature = "";
+
+function segment(label: string, title: string, action: () => void, className = ""): HTMLButtonElement {
+	const button = el("button", `plain seg ${className}`, label);
+	button.type = "button";
+	button.title = title;
+	button.addEventListener("click", action);
+	return button;
+}
+
+function renderStatusline() {
+	let label = "idle";
+	let tone = "";
+	if (!state.connected) [label, tone] = ["reconnecting", "problem"];
+	else if (state.retry) [label, tone] = [state.retry, "problem"];
+	else if (state.running) [label, tone] = ["working", "running"];
+	const here = state.usage
+		? [...Object.values(state.usage.models), ...Object.values(state.usage.tools)].reduce((sum, u) => sum + (u.cost?.total ?? 0), 0)
+		: undefined;
+	const spend = [here === undefined ? "" : `${money(here)} conversation`, state.allSpend === undefined ? "" : `${money(state.allSpend)} all`].filter(Boolean).join(" · ");
+	const signature = JSON.stringify([label, tone, spend, current]);
+	// Rebuilt only when something in it changed, so a button under the pointer stays put while text streams.
+	if (signature === statusSignature) return;
+	statusSignature = signature;
+
+	const segs: HTMLElement[] = [el("span", `status ${tone}`, label)];
+	if (state.running) segs.push(segment("esc stop", "Stop the run (Esc or Ctrl+C)", () => void stop(), "danger"));
+	if (current) {
+		const settings = current;
+		segs.push(segment(settings.model, "Switch the model (/model)", () => prefill("/model ")));
+		segs.push(segment(`thinking ${settings.thinkingLevel}`, "Change the thinking level (/thinking)", () => prefill("/thinking ")));
+		const off = settings.tools.filter((t) => !t.enabled).map((t) => t.name);
+		segs.push(segment(off.length === 0 ? `tools ${settings.tools.length}/${settings.tools.length}` : `${off.join(" ")} off`, "Switch tools on and off (/tools)", () => void runCommand("/tools")));
+		if (settings.instructions !== "") segs.push(segment("instructions", "Standing instructions (/instructions)", () => void runCommand("/instructions")));
+	}
+	if (spend !== "") segs.push(el("span", "spend", spend));
+	segs.push(el("span", "spacer"), segment("/ commands", "Show the commands", () => prefill("/")));
+	$("statusline").replaceChildren(...segs);
+}
+
+// --- horizon ----------------------------------------------------------------------------------
+// The next 24 hours as a line: reminders as dots, scheduled job runs as diamonds.
+
+const HORIZON = 24 * 3_600_000;
+let reminders: Reminder[] = [];
+let jobs: Job[] = [];
+
+type Upcoming = { ref: string; kind: "reminder" | "job"; text: string; at?: number; detail: string };
+
+function upcoming(): Upcoming[] {
+	return [
+		...reminders.map((r): Upcoming => ({ ref: `r${r.taskId}`, kind: "reminder", text: r.text, at: r.at, detail: "reminder" })),
+		...jobs.map((j): Upcoming => ({ ref: `j${j.taskId}`, kind: "job", text: j.title, at: j.nextAt, detail: `${j.mode === "watch" ? "watch, " : ""}${j.when}` })),
+	].sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity));
+}
+
+function renderHorizon() {
+	const now = Date.now();
+	const items = upcoming();
+	const track = $("track");
+	const nodes: HTMLElement[] = [el("span", "now")];
+	const tick = new Date(now);
+	tick.setMinutes(0, 0, 0);
+	do tick.setHours(tick.getHours() + 1);
+	while (tick.getHours() % 3 !== 0);
+	for (; tick.getTime() < now + HORIZON; tick.setHours(tick.getHours() + 3)) {
+		const mark = el("span", `tick${tick.getHours() % 6 === 0 ? "" : " minor"}`, clock.format(tick));
+		mark.style.left = `${((tick.getTime() - now) / HORIZON) * 100}%`;
+		nodes.push(mark);
+	}
+	const soon = items.filter((i) => i.at !== undefined && i.at < now + HORIZON);
+	for (const item of soon) {
+		const marker = el("button", `marker ${item.kind}`);
+		marker.type = "button";
+		marker.style.left = `${Math.max(0, ((item.at! - now) / HORIZON) * 100)}%`;
+		const label = `${item.text} · ${clock.format(item.at!)} · ${fromNow(item.at!)}`;
+		marker.setAttribute("aria-label", label);
+		marker.append(el("span", "tip", label));
+		marker.addEventListener("click", () => void runCommand("/next"));
+		nodes.push(marker);
+	}
+	if (items.length === 0) nodes.push(el("span", "empty", "nothing scheduled"));
+	track.replaceChildren(...nodes);
+
+	const later = items.length - soon.length;
+	const laterButton = $("later") as HTMLButtonElement;
+	laterButton.hidden = later === 0;
+	laterButton.textContent = `+${later} later`;
+
+	const next = items[0];
+	const nextUp = $("next-up");
+	const text = el("span");
+	if (next?.at === undefined) text.textContent = items.length === 0 ? "nothing coming up" : `next: ${next.text}`;
+	else {
+		text.textContent = `next: ${next.text} · ${fromNow(next.at)}`;
+		if (next.at - now < 3_600_000) text.className = "soon";
+	}
+	nextUp.replaceChildren(text);
+}
+
 // --- requests ---------------------------------------------------------------------------------
 
 function notice(text: string) {
-	$("notice").textContent = text;
+	if (text !== "") say("err", text);
 }
 
 async function post(path: string, body: unknown): Promise<any> {
@@ -348,32 +729,10 @@ async function loadSpend() {
 	}
 }
 
-const when = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-
 async function loadReminders() {
 	try {
-		const reminders = await load<Reminder[]>("/api/reminders");
-		const list = $("reminders");
-		list.replaceChildren(
-			...reminders.map((r) => {
-				const item = el("li");
-				const body = el("div");
-				body.append(el("span", "when", when.format(r.at)), el("span", undefined, r.text));
-				const cancel = el("button", "danger", "Cancel");
-				cancel.addEventListener("click", async () => {
-					cancel.disabled = true;
-					try {
-						await post("/api/reminders/cancel", { id: r.taskId });
-					} catch (error) {
-						notice(String(error));
-					}
-					await loadReminders();
-				});
-				item.append(body, cancel);
-				return item;
-			}),
-		);
-		if (reminders.length === 0) list.append(el("li", "note", "None open."));
+		reminders = await load<Reminder[]>("/api/reminders");
+		renderHorizon();
 	} catch (error) {
 		notice(String(error));
 	}
@@ -381,151 +740,484 @@ async function loadReminders() {
 
 async function loadJobs() {
 	try {
-		const jobs = await load<Job[]>("/api/jobs");
-		const list = $("jobs");
-		list.replaceChildren(
-			...jobs.map((job) => {
-				const item = el("li");
-				const body = el("div");
-				const next = job.nextAt === undefined ? "" : `next ${when.format(job.nextAt)}`;
-				const last = job.lastAt === undefined ? "" : `, last ${when.format(job.lastAt)} (${job.lastResult})`;
-				body.append(el("span", undefined, `${job.title}${job.mode === "watch" ? " (watch)" : ""}`), el("span", "when", `${job.when}; ${next}${last}`));
-				const cancel = el("button", "danger", "Cancel");
-				cancel.addEventListener("click", async () => {
-					cancel.disabled = true;
-					try {
-						await post("/api/jobs/cancel", { id: job.taskId });
-					} catch (error) {
-						notice(String(error));
-					}
-					await loadJobs();
-				});
-				item.append(body, cancel);
-				return item;
-			}),
-		);
-		if (jobs.length === 0) list.append(el("li", "note", "Nothing scheduled."));
+		jobs = await load<Job[]>("/api/jobs");
+		renderHorizon();
 	} catch (error) {
 		notice(String(error));
 	}
-}
-
-async function loadApprovals() {
-	try {
-		const pending = await load<Approval[]>("/api/approvals");
-		$("approvals").replaceChildren(
-			...pending.map((request) => {
-				const card = el("section", "approval");
-				card.append(
-					el("div", "meta", `gaidin wants to use ${request.tool}. Waits until ${when.format(request.expiresAt)}.`),
-					el("div", "what", request.summary),
-				);
-				const buttons = el("div", "buttons");
-				const choices: [string, string, string?][] = [["once", "Allow once"]];
-				if (request.always !== undefined) choices.push(["always", request.always.label]);
-				choices.push(["deny", "Deny", "danger"]);
-				for (const [decision, label, className] of choices) {
-					const button = el("button", className, label);
-					button.addEventListener("click", async () => {
-						for (const b of buttons.querySelectorAll("button")) b.disabled = true;
-						try {
-							await post("/api/approvals/decide", { id: request.id, decision });
-						} catch (error) {
-							notice(String(error));
-						}
-						await loadApprovals();
-					});
-					buttons.append(button);
-				}
-				card.append(buttons);
-				return card;
-			}),
-		);
-	} catch (error) {
-		notice(String(error));
-	}
-}
-
-function showSettings(settings: Settings) {
-	const model = $("settings-model") as HTMLSelectElement;
-	model.replaceChildren(...settings.models.map((id) => el("option", undefined, id)));
-	model.value = settings.model;
-	($("settings-thinking") as HTMLSelectElement).value = settings.thinkingLevel;
-	($("settings-instructions") as HTMLTextAreaElement).value = settings.instructions;
-	$("settings-tools").replaceChildren(
-		...settings.tools.map((tool) => {
-			const label = el("label", "check");
-			const box = el("input");
-			box.type = "checkbox";
-			box.name = tool.name;
-			box.checked = tool.enabled;
-			label.append(box, tool.name);
-			return label;
-		}),
-	);
 }
 
 async function loadSettings() {
 	try {
-		showSettings(await load<Settings>("/api/settings"));
+		current = await load<Settings>("/api/settings");
+		schedule();
 	} catch (error) {
 		notice(String(error));
 	}
 }
 
-// --- controls ---------------------------------------------------------------------------------
+/** Saves the settings with `change` applied; the server wants all of them every time. */
+async function configure(change: { model?: string; thinkingLevel?: string; instructions?: string; disabledTools?: string[] }) {
+	const settings = current ?? (await load<Settings>("/api/settings"));
+	current = await post("/api/settings", {
+		model: settings.model,
+		thinkingLevel: settings.thinkingLevel,
+		instructions: settings.instructions,
+		disabledTools: settings.tools.filter((t) => !t.enabled).map((t) => t.name),
+		...change,
+	});
+	schedule();
+}
 
-const input = $("message") as HTMLTextAreaElement;
-const send = $("send") as HTMLButtonElement;
+// --- approvals --------------------------------------------------------------------------------
+// A request for approval docks above the prompt, like sudo asking first. ⌥Y, ⌥A and ⌥N answer the oldest.
 
-$("composer").addEventListener("submit", async (event) => {
-	event.preventDefault();
-	const content = input.value.trim();
-	if (content === "") return;
-	send.disabled = true;
+let approvals: Approval[] = [];
+const alt = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌥" : "Alt+";
+
+async function loadApprovals() {
 	try {
-		await post("/api/message", { content, requestId: crypto.randomUUID() });
-		input.value = "";
-		notice("");
+		approvals = await load<Approval[]>("/api/approvals");
+		renderApprovals();
+		schedule();
 	} catch (error) {
 		notice(String(error));
-	} finally {
-		send.disabled = false;
-		input.focus();
 	}
-});
+}
 
-input.addEventListener("keydown", (event) => {
-	if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-		event.preventDefault();
-		($("composer") as HTMLFormElement).requestSubmit();
+function renderApprovals() {
+	$("approvals").replaceChildren(
+		...approvals.map((request, n) => {
+			const ask = el("div", "ask");
+			ask.append(el("span", "tool", request.tool), " ", el("span", "what", request.summary));
+			const buttons = el("div", "buttons");
+			const choices: [Decision, string, string, string][] = [["once", "Allow once", "primary", "Y"]];
+			if (request.always !== undefined) choices.push(["always", request.always.label, "", "A"]);
+			choices.push(["deny", "Deny", "danger", "N"]);
+			for (const [decision, label, className, letter] of choices) {
+				const button = el("button", className, label);
+				button.type = "button";
+				if (n === 0) button.append(el("kbd", undefined, `${alt}${letter}`));
+				button.addEventListener("click", () => void decide(decision, request));
+				buttons.append(button);
+			}
+			buttons.append(el("span", "expires", `waits until ${clock.format(request.expiresAt)}`));
+			const b = el("div", "b");
+			b.append(ask, buttons);
+			const node = el("div", "row approval");
+			node.append(el("span", "t", clock.format(Date.now())), el("span", "k", "allow?"), b);
+			return node;
+		}),
+	);
+}
+
+type Decision = "once" | "always" | "deny";
+
+async function decide(decision: Decision, request = approvals[0]) {
+	if (request === undefined) return say("sys", "Nothing is waiting for approval.");
+	if (decision === "always" && request.always === undefined) return say("err", `${request.tool} has no "always" choice.`);
+	for (const b of $("approvals").querySelectorAll("button")) b.disabled = true;
+	try {
+		await post("/api/approvals/decide", { id: request.id, decision });
+	} catch (error) {
+		notice(String(error));
 	}
-});
+	await loadApprovals();
+}
 
-$("stop").addEventListener("click", async () => {
+// --- commands ---------------------------------------------------------------------------------
+
+type Choice = { value: string; hint?: string };
+type Command = { name: string; args?: string; help: string; run: (arg: string) => unknown; complete?: () => Choice[] };
+
+const LEVELS = ["off", "low", "medium", "high"];
+
+async function stop(echo?: string) {
+	if (echo) say("cmd", echo);
+	if (!state.running) return say("sys", "Nothing is running.");
 	try {
 		await post("/api/abort", {});
 	} catch (error) {
 		notice(String(error));
 	}
+}
+
+async function cancel(ref: string) {
+	const match = /^([rj])(\d+)$/.exec(ref);
+	if (!match) throw new Error(`Give a reference from /next, like r12 or j3, not "${ref}".`);
+	const [, kind, id] = match;
+	const path = kind === "r" ? "/api/reminders/cancel" : "/api/jobs/cancel";
+	const { ok } = await post(path, { id: Number(id) });
+	await (kind === "r" ? loadReminders() : loadJobs());
+	say(ok ? "sys" : "err", ok ? `Cancelled ${kind === "r" ? "reminder" : "job"} ${id}.` : `No open ${kind === "r" ? "reminder" : "job"} ${id}.`);
+}
+
+function showUpcoming() {
+	const items = upcoming();
+	if (items.length === 0) return say("sys", "Nothing coming up. Ask gaidin for a reminder or a scheduled job.");
+	const out = el("div", "out");
+	for (const item of items) {
+		const button = el("button", "plain", "cancel");
+		button.type = "button";
+		button.addEventListener("click", () => void cancel(item.ref).catch((error) => notice(String(error))));
+		out.append(
+			el("span", "dim", item.ref),
+			el("span", "when", item.at === undefined ? "no next run" : `${when.format(item.at)} · ${fromNow(item.at)}`),
+			el("span", undefined, `${item.text}${item.kind === "job" ? ` (${item.detail})` : ""}`),
+			button,
+		);
+	}
+	say("sys", out);
+}
+
+async function showTools() {
+	const settings = current ?? (await load<Settings>("/api/settings"));
+	const out = el("div", "out");
+	for (const tool of settings.tools) {
+		const button = el("button", "plain", tool.enabled ? "turn off" : "turn on");
+		button.type = "button";
+		button.addEventListener("click", () => void runCommand(`/tool ${tool.name} ${tool.enabled ? "off" : "on"}`));
+		out.append(el("span", tool.enabled ? "on" : "off", tool.enabled ? "on" : "off"), el("span", undefined, tool.name), el("span"), button);
+	}
+	say("sys", out);
+}
+
+function showHelp() {
+	const help = el("div", "help");
+	for (const c of commands) help.append(el("span", "c", `/${c.name}`), el("span", "a", c.args ?? ""), el("span", "h", c.help));
+	const keys = el("div", "keys", `Enter sends · Shift+Enter new line · ↑ ↓ history · Tab completes · Esc or Ctrl+C stops a run · ${alt}Y ${alt}A ${alt}N answer an approval · start with // to send a message beginning with /`);
+	const body = el("div");
+	body.append(help, keys);
+	say("sys", body);
+}
+
+const commands: Command[] = [
+	{ name: "help", help: "Commands and keys", run: showHelp },
+	{ name: "next", help: "Upcoming reminders and scheduled jobs", run: showUpcoming },
+	{
+		name: "cancel",
+		args: "<ref>",
+		help: "Cancel a reminder or job by its /next reference",
+		complete: () => upcoming().map((i) => ({ value: i.ref, hint: `${i.text}${i.at === undefined ? "" : ` · ${fromNow(i.at)}`}` })),
+		run: (arg) => cancel(arg),
+	},
+	{ name: "stop", help: "Stop the current run (Esc, Ctrl+C)", run: () => stop() },
+	{
+		name: "model",
+		args: "[id]",
+		help: "Show or switch the model",
+		complete: () => (current?.models ?? []).map((m) => ({ value: m, hint: m === current?.model ? "current" : undefined })),
+		run: async (arg) => {
+			if (arg === "") return say("sys", `Model ${current?.model ?? "unknown"}. Choices: ${current?.models.join(", ") ?? "none"}.`);
+			await configure({ model: arg });
+			say("sys", `Model set to ${arg}. Applies from the next request.`);
+		},
+	},
+	{
+		name: "thinking",
+		args: "[level]",
+		help: "Show or set the thinking level",
+		complete: () => LEVELS.map((l) => ({ value: l, hint: l === current?.thinkingLevel ? "current" : undefined })),
+		run: async (arg) => {
+			if (arg === "") return say("sys", `Thinking ${current?.thinkingLevel ?? "unknown"}. Levels: ${LEVELS.join(", ")}.`);
+			await configure({ thinkingLevel: arg });
+			say("sys", `Thinking set to ${arg}. Applies from the next request.`);
+		},
+	},
+	{ name: "tools", help: "The tools you can switch off", run: showTools },
+	{
+		name: "tool",
+		args: "<name> [on|off]",
+		help: "Switch a tool on or off",
+		complete: () => (current?.tools ?? []).map((t) => ({ value: `${t.name} ${t.enabled ? "off" : "on"}`, hint: t.enabled ? "on now" : "off now" })),
+		run: async (arg) => {
+			const [name, setting] = arg.split(/\s+/);
+			const settings = current ?? (await load<Settings>("/api/settings"));
+			const tool = settings.tools.find((t) => t.name === name);
+			if (!tool) throw new Error(`No switchable tool "${name}". /tools lists them.`);
+			const on = setting === undefined ? !tool.enabled : setting === "on";
+			const disabled = new Set(settings.tools.filter((t) => !t.enabled).map((t) => t.name));
+			if (on) disabled.delete(name);
+			else disabled.add(name);
+			await configure({ disabledTools: [...disabled] });
+			say("sys", `${name} ${on ? "on" : "off"}. Applies from the next request.`);
+		},
+	},
+	{
+		name: "instructions",
+		args: "[text | clear]",
+		help: "Show or replace the standing instructions",
+		run: async (arg) => {
+			if (arg === "") return say("sys", current?.instructions ? current.instructions : "No standing instructions.");
+			await configure({ instructions: arg === "clear" ? "" : arg });
+			say("sys", arg === "clear" ? "Standing instructions cleared." : "Standing instructions saved. They apply from the next request.");
+		},
+	},
+	{ name: "allow", help: `Allow the waiting request once (${alt}Y)`, run: () => decide("once") },
+	{ name: "always", help: `Allow it from now on, where offered (${alt}A)`, run: () => decide("always") },
+	{ name: "deny", help: `Deny the waiting request (${alt}N)`, run: () => decide("deny") },
+	{
+		name: "clear",
+		help: "Clear command output from the screen",
+		run: () => {
+			local.length = 0;
+			schedule();
+		},
+	},
+];
+
+async function runCommand(line: string) {
+	say("cmd", line);
+	const [, name = "", arg = ""] = /^\/(\S*)\s*([\s\S]*)$/.exec(line) ?? [];
+	const command = commands.find((c) => c.name === name);
+	if (command === undefined) return say("err", `Unknown command /${name}. /help lists them.`);
+	try {
+		await command.run(arg.trim());
+	} catch (error) {
+		say("err", error instanceof Error ? error.message : String(error));
+	}
+}
+
+// --- completion menu --------------------------------------------------------------------------
+
+type Suggestion = { value: string; label: string; args?: string; hint?: string; run: boolean };
+let menuItems: Suggestion[] = [];
+let menuIndex = 0;
+let dismissed: string | undefined;
+
+function suggestions(text: string): Suggestion[] {
+	if (!text.startsWith("/") || text.startsWith("//") || text.includes("\n")) return [];
+	const body = text.slice(1);
+	const space = body.indexOf(" ");
+	if (space < 0) {
+		return commands
+			.filter((c) => c.name.startsWith(body))
+			.map((c) => ({ value: c.args ? `/${c.name} ` : `/${c.name}`, label: `/${c.name}`, args: c.args, hint: c.help, run: c.args === undefined }));
+	}
+	const name = body.slice(0, space);
+	const arg = body.slice(space + 1);
+	const command = commands.find((c) => c.name === name);
+	if (command?.complete === undefined) return [];
+	return command
+		.complete()
+		.filter((o) => o.value.startsWith(arg) && o.value !== arg)
+		.map((o) => ({ value: `/${name} ${o.value}`, label: o.value, hint: o.hint, run: true }));
+}
+
+function updateMenu() {
+	const text = input.value;
+	menuItems = text === dismissed ? [] : suggestions(text);
+	menuIndex = Math.min(menuIndex, Math.max(0, menuItems.length - 1));
+	const menu = $("menu");
+	menu.hidden = menuItems.length === 0;
+	menu.replaceChildren(
+		...menuItems.map((item, n) => {
+			const option = el("div", `item${n === menuIndex ? " active" : ""}`);
+			option.id = `menu-${n}`;
+			option.setAttribute("role", "option");
+			option.setAttribute("aria-selected", String(n === menuIndex));
+			const value = el("span", "v", item.label);
+			if (item.args) value.append(" ", el("span", "a", item.args));
+			option.append(value, el("span", "h", item.hint ?? ""));
+			option.addEventListener("mousedown", (e) => e.preventDefault());
+			option.addEventListener("click", () => accept(item, true));
+			return option;
+		}),
+	);
+	if (menuItems.length > 0) input.setAttribute("aria-activedescendant", `menu-${menuIndex}`);
+	else input.removeAttribute("aria-activedescendant");
+	$(`menu-${menuIndex}`)?.scrollIntoView({ block: "nearest" });
+}
+
+function accept(item: Suggestion, submitIfReady: boolean) {
+	input.value = item.value;
+	fit();
+	menuIndex = 0;
+	input.focus();
+	input.setSelectionRange(input.value.length, input.value.length);
+	if (submitIfReady && item.run) void submit();
+	else updateMenu();
+}
+
+// --- controls ---------------------------------------------------------------------------------
+
+const input = $("message") as HTMLTextAreaElement;
+
+/** The prompt grows with its text, up to the CSS max-height, keeping the log pinned if it was. */
+function fit() {
+	const scroller = $("scroll");
+	const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48;
+	input.style.height = "auto";
+	input.style.height = `${input.scrollHeight}px`;
+	if (atBottom) scroller.scrollTop = scroller.scrollHeight;
+}
+
+function prefill(text: string) {
+	input.value = text;
+	dismissed = undefined;
+	fit();
+	input.focus();
+	input.setSelectionRange(text.length, text.length);
+	updateMenu();
+}
+
+/** Earlier prompts from the log, then commands typed since the page opened. */
+const typed: string[] = [];
+let historyList: string[] = [];
+let historyAt = -1;
+let draft = "";
+
+function history(): string[] {
+	const prompts = [...state.entries.values()]
+		.sort((a, b) => a.id - b.id)
+		.filter((e) => e.kind === "pi.user")
+		.flatMap((e) => (e.model ?? []).filter((m) => m.role === "user").map((m) => splitStamp(textOf(m.content as string | Part[])).text));
+	return [...prompts, ...typed].filter((text, i, all) => text !== all[i - 1]);
+}
+
+function recall(step: number) {
+	if (historyAt === -1) {
+		historyList = history();
+		historyAt = historyList.length;
+		draft = input.value;
+	}
+	historyAt = Math.max(0, Math.min(historyList.length, historyAt + step));
+	const text = historyAt === historyList.length ? draft : historyList[historyAt];
+	if (historyAt === historyList.length) historyAt = -1;
+	input.value = text;
+	dismissed = text;
+	fit();
+	updateMenu();
+	input.setSelectionRange(text.length, text.length);
+}
+
+/** randomUUID exists only on secure pages (HTTPS or localhost); getRandomValues works on plain http too. */
+function requestId(): string {
+	if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+	return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function submit() {
+	const text = input.value;
+	const content = text.trim();
+	if (content === "") return;
+	historyAt = -1;
+	dismissed = undefined;
+	input.value = "";
+	fit();
+	updateMenu();
+	if (content.startsWith("/") && !content.startsWith("//")) {
+		typed.push(content);
+		return runCommand(content);
+	}
+	stick = true;
+	try {
+		await post("/api/message", { content: content.startsWith("//") ? content.slice(1) : content, requestId: requestId() });
+	} catch (error) {
+		// Put the message back so it isn't lost.
+		if (input.value === "") {
+			input.value = text;
+			fit();
+		}
+		notice(String(error));
+	}
+}
+
+$("prompt").addEventListener("submit", (e) => {
+	e.preventDefault();
+	void submit();
 });
 
-$("settings").addEventListener("submit", async (event) => {
-	event.preventDefault();
-	const stateText = $("settings-state");
-	const disabledTools = [...document.querySelectorAll<HTMLInputElement>("#settings-tools input")].filter((b) => !b.checked).map((b) => b.name);
-	try {
-		showSettings(await post("/api/settings", {
-			model: ($("settings-model") as HTMLSelectElement).value,
-			thinkingLevel: ($("settings-thinking") as HTMLSelectElement).value,
-			instructions: ($("settings-instructions") as HTMLTextAreaElement).value,
-			disabledTools,
-		}));
-		stateText.textContent = "Saved. Applies from the next request.";
-	} catch (error) {
-		stateText.textContent = String(error);
+input.addEventListener("input", () => {
+	historyAt = -1;
+	dismissed = undefined;
+	fit();
+	updateMenu();
+});
+
+input.addEventListener("keydown", (press) => {
+	const { key, shiftKey, isComposing } = press;
+	if (isComposing) return;
+	if (menuItems.length > 0) {
+		const handled = () => {
+			press.preventDefault();
+			press.stopPropagation();
+		};
+		if (key === "ArrowDown" || key === "ArrowUp") {
+			handled();
+			menuIndex = (menuIndex + (key === "ArrowDown" ? 1 : -1) + menuItems.length) % menuItems.length;
+			return updateMenu();
+		}
+		if (key === "Tab") {
+			handled();
+			return accept(menuItems[menuIndex], false);
+		}
+		if (key === "Escape") {
+			handled();
+			dismissed = input.value;
+			return updateMenu();
+		}
+		// Enter takes the highlighted suggestion, unless a whole command is already typed.
+		if (key === "Enter" && !shiftKey && !commands.some((c) => input.value === `/${c.name}`)) {
+			handled();
+			return accept(menuItems[menuIndex], true);
+		}
+	}
+	if (key === "Enter" && !shiftKey) {
+		press.preventDefault();
+		void submit();
+		return;
+	}
+	const caret = input.selectionStart;
+	if (key === "ArrowUp" && input.selectionEnd === caret && !input.value.slice(0, caret).includes("\n")) {
+		press.preventDefault();
+		recall(-1);
+	} else if (key === "ArrowDown" && historyAt !== -1 && input.selectionEnd === caret && !input.value.slice(caret).includes("\n")) {
+		press.preventDefault();
+		recall(1);
 	}
 });
+
+document.addEventListener("keydown", (press) => {
+	const { key, code, altKey, ctrlKey, metaKey } = press;
+	if (altKey && !ctrlKey && !metaKey && approvals.length > 0) {
+		const decision = ({ KeyY: "once", KeyA: "always", KeyN: "deny" } as Record<string, Decision>)[code];
+		if (decision !== undefined) {
+			press.preventDefault();
+			void decide(decision);
+			return;
+		}
+	}
+	if (key === "Escape" && state.running) {
+		press.preventDefault();
+		void stop();
+		return;
+	}
+	// Ctrl+C stops a run, as in a terminal, unless there's a selection to copy.
+	if (ctrlKey && !metaKey && !altKey && (key === "c" || key === "C")) {
+		const selected = (window.getSelection()?.toString() ?? "") !== "" || input.selectionStart !== input.selectionEnd;
+		if (selected) return;
+		press.preventDefault();
+		if (state.running) void stop("^C");
+		else if (input.value !== "") prefill("");
+		return;
+	}
+	// Typing anywhere goes to the prompt.
+	const target = press.target as HTMLElement;
+	const typing = target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+	if (!typing && !ctrlKey && !metaKey && !altKey && key.length === 1) input.focus();
+});
+
+const scroller = $("scroll");
+scroller.addEventListener("scroll", () => {
+	if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48) $("jump").hidden = true;
+});
+$("jump").addEventListener("click", () => {
+	scroller.scrollTop = scroller.scrollHeight;
+	$("jump").hidden = true;
+});
+$("next-up").addEventListener("click", () => void runCommand("/next"));
+$("later").addEventListener("click", () => void runCommand("/next"));
 
 connect();
 void loadReminders();
@@ -536,3 +1228,4 @@ setInterval(() => {
 	void loadReminders();
 	void loadJobs();
 }, 60_000);
+input.focus();
