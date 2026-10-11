@@ -31,11 +31,8 @@ export function findBwrap(path = process.env.PATH ?? ""): string | undefined {
 	return undefined;
 }
 
-/**
- * bwrap's arguments for a command run in `cwd`, with `root` the only writable place. Files in `hide`, such
- * as a settings file holding secrets under /etc, are covered with /dev/null, which reads as permission denied.
- */
-export async function bwrapArgs(root: string, cwd: string, hide: readonly string[] = []): Promise<string[]> {
+/** The system part of every box: read-only /usr, /etc and /opt, its own /proc, /dev and /tmp, nothing shared. */
+async function systemArgs(): Promise<string[]> {
 	const args = ["--unshare-all", "--die-with-parent", "--new-session", "--ro-bind", "/usr", "/usr"];
 	// Merged-/usr systems make these symlinks into /usr; keep them as they are on the host.
 	for (const top of ["/bin", "/sbin", "/lib", "/lib64"]) {
@@ -43,15 +40,33 @@ export async function bwrapArgs(root: string, cwd: string, hide: readonly string
 		if (info?.isSymbolicLink()) args.push("--symlink", await readlink(top), top);
 		else if (info?.isDirectory()) args.push("--ro-bind", top, top);
 	}
-	// The tmpfs comes before the sandbox's bind, so a sandbox under /tmp (as in tests) still shows.
+	// The tmpfs comes before any bind that follows, so a sandbox under /tmp (as in tests) still shows.
 	args.push("--ro-bind", "/etc", "/etc", "--ro-bind-try", "/opt", "/opt", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp");
-	args.push("--bind", root, root, "--chdir", cwd, "--setenv", "HOME", root);
-	// Only files inside what's mounted; bwrap can't mask a path that isn't there.
+	return args;
+}
+
+/** Covers each file in `hide` that is inside a mounted directory with /dev/null; bwrap can't mask one that isn't there. */
+async function hideArgs(hide: readonly string[], mounted: readonly string[]): Promise<string[]> {
+	const args: string[] = [];
 	for (const file of hide) {
 		const real = await realpath(file).catch(() => undefined);
-		if (real !== undefined && ["/usr", "/etc", "/opt", root].some((top) => inside(real, top))) args.push("--ro-bind", "/dev/null", real);
+		if (real !== undefined && ["/usr", "/etc", "/opt", ...mounted].some((top) => inside(real, top))) args.push("--ro-bind", "/dev/null", real);
 	}
 	return args;
+}
+
+/**
+ * bwrap's arguments for a command run in `cwd`, with `root` the only writable place. Files in `hide`, such
+ * as a settings file holding secrets under /etc, are covered with /dev/null, which reads as permission denied.
+ */
+export async function bwrapArgs(root: string, cwd: string, hide: readonly string[] = []): Promise<string[]> {
+	return [...(await systemArgs()), "--bind", root, root, "--chdir", cwd, "--setenv", "HOME", root, ...(await hideArgs(hide, [root]))];
+}
+
+/** bwrap's arguments for a box where only its own /tmp is writable and `readOnly` is visible at the same paths. */
+export async function boxArgs(cwd: string, readOnly: readonly string[], hide: readonly string[] = []): Promise<string[]> {
+	const binds = readOnly.flatMap((path) => ["--ro-bind", path, path]);
+	return [...(await systemArgs()), ...binds, "--chdir", cwd, "--setenv", "HOME", "/tmp", ...(await hideArgs(hide, readOnly))];
 }
 
 /**

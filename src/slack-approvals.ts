@@ -66,10 +66,16 @@ export function blocksFor(request: ApprovalRequest): { text: string; blocks: unk
 		buttons.push({ type: "button", action_id: "gaidin-approve-always", text: { type: "plain_text", text: request.always.label.slice(0, 75) }, value: value("always") });
 	}
 	buttons.push({ type: "button", action_id: "gaidin-deny", style: "danger", text: { type: "plain_text", text: "Deny" }, value: value("deny") });
+	// A section holds 3000 characters, so a long detail is cut and the web view has the rest.
+	const detail = request.detail === undefined ? [] : [{
+		type: "section",
+		text: { type: "mrkdwn", text: request.detail.length > 2600 ? `\`\`\`${escape(request.detail.slice(0, 2600))}\`\`\`\n_Cut here; the web view shows all of it._` : `\`\`\`${escape(request.detail)}\`\`\`` },
+	}];
 	return {
 		text: `gaidin wants to ${request.summary}`,
 		blocks: [
 			{ type: "section", text: { type: "mrkdwn", text: `gaidin wants to ${what}\n_Waits until ${formatTime(request.expiresAt)}._` } },
+			...detail,
 			{ type: "actions", block_id: "gaidin-approval", elements: buttons },
 		],
 	};

@@ -53,7 +53,7 @@ test("the agent's web_search returns labelled results", async (t) => {
 	assert.match(result, /not from Brad/);
 	assert.match(result, /1\. Pi Durable\\n   https:\/\/example\.com\/pi/);
 	assert.ok(UNTRUSTED_TOOLS.has("web_search"));
-	assert.ok(h.switchable.some((tool) => tool.name === "web_search"));
+	assert.ok(h.switchable().some((tool) => tool.name === "web_search"));
 });
 
 test("without a search backend there's no web_search", async (t) => {

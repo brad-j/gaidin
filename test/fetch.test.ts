@@ -122,5 +122,5 @@ test("the agent can call fetch_url, and an error status is an error result", asy
 	const results = (await host.root.context(context)).messages.filter((m) => m.role === "toolResult");
 	assert.match(JSON.stringify(results[0]), /Batter - light/);
 	assert.equal((results[1] as { isError?: boolean }).isError, true);
-	assert.ok(host.switchable.some((tool) => tool.name === "fetch_url"));
+	assert.ok(host.switchable().some((tool) => tool.name === "fetch_url"));
 });

@@ -34,8 +34,8 @@ export function createWebServer(options: {
 	harness: Harness;
 	root: Conversation;
 	user: string;
-	/** Tools the page can switch off. The reminder and homelab tools stay on. */
-	switchable: readonly ToolRegistration[];
+	/** Tools the page can switch off, as of now. The reminder and homelab tools stay on. */
+	switchable: () => readonly ToolRegistration[];
 	approvals: ApprovalService;
 	/** Model ids the page offers, from the settings' model.choices. */
 	models?: readonly string[];
@@ -70,7 +70,7 @@ export function createWebServer(options: {
 			models: [...new Set([...choices, model.modelId])],
 			thinkingLevel: agent.thinkingLevel,
 			instructions: agent.instructions ?? "",
-			tools: switchable.map((t) => ({ name: t.name, enabled: offered.has(t.name) })),
+			tools: switchable().map((t) => ({ name: t.name, enabled: offered.has(t.name) })),
 		};
 	}
 
@@ -81,7 +81,7 @@ export function createWebServer(options: {
 		const thinkingLevel = String(body.thinkingLevel ?? current.thinkingLevel);
 		if (!(THINKING as readonly string[]).includes(thinkingLevel)) throw new HttpError(400, `Unknown thinking level ${thinkingLevel}`);
 		const disabled = new Set(Array.isArray(body.disabledTools) ? body.disabledTools.map(String) : []);
-		const remove = switchable.filter((t) => disabled.has(t.name));
+		const remove = switchable().filter((t) => disabled.has(t.name));
 		const instructions = typeof body.instructions === "string" ? body.instructions.trim() : current.instructions;
 		const provider = (await root.agent(context)).model?.provider ?? "anthropic";
 		const model: ModelRef = { provider, modelId };

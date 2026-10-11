@@ -26,6 +26,8 @@ export type ApprovalRequest = {
 	tool: string;
 	/** One line for the owner: what the call does, or for a question, the question. */
 	summary: string;
+	/** More than a line can hold, such as the diff of a self-written extension. */
+	detail?: string;
 	/** A question from ask_owner rather than a request to allow a call. */
 	kind?: "question";
 	/** Answers offered as buttons. */
@@ -181,7 +183,7 @@ export class ApprovalService {
 	}
 
 	/** Records a request under `id` unless it exists, and returns it as stored. */
-	async open(id: string, at: { conversationId: number; taskId: number }, tool: string, ask: Pick<ApprovalRequest, "summary" | "always" | "kind" | "choices">): Promise<ApprovalRequest> {
+	async open(id: string, at: { conversationId: number; taskId: number }, tool: string, ask: Pick<ApprovalRequest, "summary" | "detail" | "always" | "kind" | "choices">): Promise<ApprovalRequest> {
 		const now = Date.now();
 		const { request, created } = await this.#commit((doc) => {
 			for (const [key, old] of Object.entries(doc.requests)) {
@@ -325,7 +327,11 @@ export class ApprovalService {
 	}
 }
 
-/** The hook. `service` is read lazily, because the Harness that the service needs is opened after the registry. */
+/** Fires when the call is stopped and when the Harness closes; the tool runtime carries the second signal. */
+export function signalOf(api: object, context: Context): AbortSignal {
+	return AbortSignal.any([context.abortSignal, (api as { signal?: AbortSignal }).signal].filter((s) => s !== undefined));
+}
+
 /**
  * The untrusted tools whose results are in the conversation since its last user message. The hook's api is
  * the tool task's runtime, which can read the conversation's context.
@@ -343,6 +349,7 @@ export async function untrustedSince(api: unknown, context: Context): Promise<st
 	return [...found];
 }
 
+/** The hook. `service` is read lazily, because the Harness that the service needs is opened after the registry. */
 export function approvalExtension(service: () => ApprovalService, owner: string, policy: Policy = defaultPolicy) {
 	const askOwner = defineTool({
 		name: "ask_owner",
@@ -364,8 +371,7 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 				kind: "question",
 				...(choices.length === 0 ? {} : { choices }),
 			});
-			const signals = [context.abortSignal, (api as { signal?: AbortSignal }).signal].filter((s) => s !== undefined);
-			const done = await approvals.wait(request, signals.length === 0 ? undefined : AbortSignal.any(signals));
+			const done = await approvals.wait(request, signalOf(api, context));
 			const text = done.status === "answered" ? `${owner} answered: ${done.answer}`
 				: done.status === "expired" ? `${owner} didn't answer in time.`
 				: "No answer: the run was stopped.";
@@ -384,9 +390,7 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 					// The same id for every run of this call's phase, so a restart doesn't ask twice.
 					const id = await api.memo<string>("gaidin.approval", randomUUID(), context);
 					const request = await approvals.open(id, { conversationId: api.conversationId as number, taskId: api.taskId as number }, call.name, ask);
-					// The hook's api is the tool task's runtime, whose signal also fires when the Harness closes.
-					const signals = [context.abortSignal, (api as { signal?: AbortSignal }).signal].filter((s) => s !== undefined);
-					const done = await approvals.wait(request, AbortSignal.any(signals));
+					const done = await approvals.wait(request, signalOf(api, context));
 					if (done.status === "approved") return undefined;
 					const why = done.status === "denied" ? `${owner} said no`
 						: done.status === "expired" ? `${owner} didn't answer in time`

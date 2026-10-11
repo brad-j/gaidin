@@ -27,6 +27,12 @@ The server won't start without `bwrap` on PATH unless `GAIDIN_SANDBOX=none` is s
 
 The VM's systemd unit adds a layer around the server itself: the app checkout is read-only, the deploy key's directory is hidden, and only the gaidin home is writable.
 
+## Self-written tools
+
+Tools gaidin writes for itself ([Tools](tools.md#self-written-tools)) never run in the server process, where they could read the settings and send the keys anywhere. `src/self/` runs each extension in its own bubblewrap box: no network, its own process tree, no environment variables, the settings file covered, nothing writable but its own `/tmp`, and nothing of the app's mounted but `src/self/` and the extension's approved copy, read-only. The server reads only JSON messages from it, on a channel of their own. The checks before approval run in the same kind of box, with the app's `node_modules` added read-only.
+
+The draft is copied out of the sandbox through the sandbox's own file operations, so a symlink can't pull in a file from outside. The approved copy lives outside the sandbox, so gaidin can't change running code without asking again.
+
 ## Network access
 
 The sandbox has none. The server reaches the network for `fetch_url`, the homelab tools, the workspaces, Slack, ntfy and the model provider. `fetch_url` refuses every private, CGNAT, loopback, link-local and reserved address, checked at connect time and after each redirect ([Tools](tools.md#fetch_url)).
@@ -76,6 +82,7 @@ The web view trusts the identity header Tailscale Serve adds, and listens only o
 - Anything gaidin writes into a project can run later as you.
 - The tools that don't ask (sandbox, reminders, homelab reads) can still be steered: a manipulated model could set reminders or fill the sandbox. Any steered run also spends money, which the [spend limits](deploy.md#spend-limits) cap.
 - A note the owner approves, or one written before any outside text was read, goes into every later prompt. The web view shows them all, and deleting one takes it out.
+- A self-written tool's fetch to a host you've always allowed can carry data in its URL without asking, as `fetch_url` can.
 - An approved job runs its instruction later with the tools of an ordinary run. Its own calls to workspaces or new hosts still ask, but the instruction itself isn't checked again.
 
 ## Rules

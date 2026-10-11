@@ -9,6 +9,8 @@
 | `schedule_job`, `list_jobs`, `cancel_job` | in the server; each run is a new conversation | what the run's tools reach | every new job |
 | `fetch_url` | in the server | the public internet only | for a host not allowed for good |
 | `web_search` | in the server | the configured search backend | no |
+| `load_extension`, `remove_extension` | in the server | the sandbox's `extensions/`, the owner | every load and removal |
+| tools gaidin wrote | in a box of their own | their fetches, through the server | for a host not allowed for good |
 | `workspace_run`, `workspace_read`, `workspace_write`, `workspace_edit` | on a workspace, under bubblewrap | that machine's project roots, and the network | every call |
 | `homelab_status` | in the server | the homelab's monitoring feeds | no |
 | `container_logs` | in the server, over SSH | Docker logs on two hosts | no |
@@ -77,6 +79,22 @@ A workspace is another machine where gaidin works on projects as that machine's 
 - `workspace_edit` replaces each `oldText` with `newText`; each must occur exactly once.
 
 Commands run under bubblewrap on that machine with the project roots writable, secret files hidden, and network on, but without the user's SSH keys or tokens, so `git push` fails and stays with you. Commits made there are authored by gaidin and committed as you. Every call asks first; you can allow a workspace for an hour in one conversation. [Security](security.md#workspaces) has the details and [Deploying](deploy.md#adding-a-workspace) the setup. With no workspaces configured, these tools don't exist.
+
+## Self-written tools
+
+gaidin can write tools for itself. It drafts an extension in the sandbox, in `extensions/<name>/`: `index.ts` exports `tools`, and `test.ts` tests them with `node:test`. A tool has a name, a description, a JSON Schema for its arguments and an `execute` function that returns the result text. Its only way out is a `fetch(url)` it's handed, which goes through the server under `fetch_url`'s rules and asks before a host the owner hasn't allowed for good. An extension imports only Node's built-ins, its own files and the `Tool` type from `"gaidin"` (`src/self/api.ts`).
+
+`load_extension(name)` checks the draft before the owner sees it:
+
+- The type check: TypeScript in strict mode, failing on unused variables and parameters and on unreachable code.
+- The extension's own tests.
+- Oxlint, with its default rules and ten of the anti-slop rules (`src/self/oxlintrc.json`), warnings counted as failures.
+- No imports from outside, no comment that turns a check off, `.ts` files only, at most 200 KB.
+- A second model run that reviews the diff against a short guide: the least code that does the job, nothing nobody asked for, no helper used once, no comment that restates the code, no tool that duplicates another. gaidin fixes what it objects to, or loads anyway with `keep` and its reason, and the owner sees both.
+
+The approval request shows the lines added and removed, with the diff under "changes" in the web view and up to about 2,600 characters of it in Slack. Once approved, the copy that was checked goes to `<data>/extensions/<name>`, a Git repository the sandbox can't see, and its tools are in use from the next step, with no restart. Editing the draft afterwards changes nothing until it's approved again. `remove_extension(name)` takes the tools away after approval; the repository keeps the history. At start the server loads every approved extension again.
+
+Each extension runs in one Node process under bubblewrap ([Security](security.md#self-written-tools)). A call that takes over a minute is stopped and the process starts again on the next call. Self-written tools can be switched off in the web view, and their results count as outside text. Without bubblewrap there are no self-written tools.
 
 ## Homelab extension
 

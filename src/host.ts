@@ -19,6 +19,7 @@ import { type Redactor, redactionExtension, redactorFor } from "./redact.ts";
 import { createReminders, type Notify } from "./reminders.ts";
 import { findBwrap, SandboxEnv } from "./sandbox.ts";
 import { backendFor, type SearchBackend, webSearchTool } from "./search.ts";
+import { createSelf } from "./self/index.ts";
 import { setTimeZone, timeZone } from "./time.ts";
 import { createWorkspaces, readWorkspaces, type Remote, sshRemote, type Workspace } from "./workspaces.ts";
 
@@ -131,6 +132,8 @@ export async function openHost(options: HostOptions = {}) {
 	const bwrap = mode === "bwrap" ? findBwrap() : undefined;
 	// Fail closed: without bubblewrap, shell commands would reach everything the server can.
 	if (mode === "bwrap" && bwrap === undefined) throw new Error('bwrap isn\'t on PATH. Install bubblewrap, or set "sandbox": "none" to run tools unconfined.');
+	// The settings file can hold secrets; nothing in a box can read it.
+	const hide = config.file === undefined ? [] : [config.file];
 
 	const registry = createRegistry();
 	registry.install(persona(owner));
@@ -153,20 +156,23 @@ export async function openHost(options: HostOptions = {}) {
 		owner,
 	});
 	registry.install(workspaces.extension);
+	// Self-written tools only ever run in a box, so without bubblewrap there are none.
+	const self = bwrap === undefined ? undefined : createSelf({ dataDir: dir, sandbox, bwrap, hide, registry, approvals: () => approvals!, owner, fetch: options.fetch });
+	if (self !== undefined) registry.install(self.extension);
 	// The service needs the Harness, which needs the registry; the hook reads it once calls start.
 	let approvals: ApprovalService | undefined;
 	registry.install(approvalExtension(() => approvals!, owner));
 	// Last, so its afterTool sees what every other hook left.
 	registry.install(budget.extension);
 	registry.install(redactionExtension(redactor));
+	await self?.start();
 
 	const harness = await Harness.open(
 		await openNodeSqliteStorage(resolve(dir, "gaidin.sqlite")),
 		{
 			models,
 			registry,
-			// The settings file can hold secrets; commands can't read it.
-			env: ({ cwd }) => new SandboxEnv({ root: sandbox, cwd: cwd ?? sandbox, redactor, bwrap, hide: config.file === undefined ? [] : [config.file] }),
+			env: ({ cwd }) => new SandboxEnv({ root: sandbox, cwd: cwd ?? sandbox, redactor, bwrap, hide }),
 			onReport: (error) => console.error("[report]", error),
 		},
 		context,
@@ -176,8 +182,10 @@ export async function openHost(options: HostOptions = {}) {
 	// After the root exists: the guard's first read would otherwise create it without its agent.
 	await budget.attach(harness);
 	harness.resume();
-	// The tools the web view can switch off: the coding tools, fetch_url (gaidin's only way to the internet) and the workspace tools.
-	const switchable = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...workspaces.tools];
+	// The tools the web view can switch off: the coding tools, fetch_url (gaidin's only way to the internet), the workspace tools
+	// and the self-written ones.
+	const builtIn = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...workspaces.tools];
+	const switchable = () => [...builtIn, ...(self?.tools() ?? [])];
 	const setDeliver = (next: Deliver) => {
 		deliver = next;
 	};

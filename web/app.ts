@@ -15,7 +15,7 @@ type UsageState = { models: Record<string, Usage>; tools: Record<string, Usage> 
 type Slot = { callId: string; name: string; output: string };
 type Reminder = { taskId: number; text: string; at: number };
 type Job = { taskId: number; title: string; when: string; mode: string; nextAt?: number; lastAt?: number; lastResult?: string };
-type Approval = { id: string; summary: string; tool: string; expiresAt: number; kind?: string; choices?: string[]; always?: { kind: string; value: string; label: string } };
+type Approval = { id: string; summary: string; detail?: string; tool: string; expiresAt: number; kind?: string; choices?: string[]; always?: { kind: string; value: string; label: string } };
 type Note = { id: number; text: string; by: string; updatedAt: number };
 type Budget = { today: number; month: number; dailyLimit: number; monthlyLimit: number; stopped: boolean; reason?: string };
 type Settings = { model: string; models: string[]; thinkingLevel: string; instructions: string; tools: { name: string; enabled: boolean }[] };
@@ -843,6 +843,11 @@ function renderApprovals() {
 			if (request.kind === "question") return questionRow(request);
 			const ask = el("div", "ask");
 			ask.append(el("span", "tool", request.tool), " ", el("span", "what", request.summary));
+			if (request.detail !== undefined) {
+				const detail = el("details", "detail");
+				detail.append(el("summary", undefined, "changes"), el("pre", undefined, request.detail));
+				ask.append(detail);
+			}
 			const buttons = el("div", "buttons");
 			const choices: [Decision, string, string, string][] = [["once", "Allow once", "primary", "Y"]];
 			if (request.always !== undefined) choices.push(["always", request.always.label, "", "A"]);
