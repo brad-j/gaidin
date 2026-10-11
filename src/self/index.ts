@@ -10,7 +10,8 @@
 //
 // Each installed extension runs in one Node process in a box (runner.ts): no network, no settings, no data,
 // nothing writable but its own /tmp. Its fetches come back here and follow fetch_url's rules and the
-// owner's host approvals.
+// owner's host approvals. A tool can also serve as a scheduled job's gate (jobs.ts); then its fetches reach
+// only hosts the owner allowed for good, since a gate has no one to ask.
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -25,6 +26,7 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { type ApprovalService, signalOf, UNTRUSTED_TOOLS } from "../approvals.ts";
 import { type FetchOptions, fetchPublic } from "../fetch.ts";
 import { assistantText } from "../host.ts";
+import type { Gate, GateResult } from "../jobs.ts";
 import { boxArgs } from "../sandbox.ts";
 import type { Fetched } from "./api.ts";
 
@@ -77,6 +79,21 @@ const REVIEW =
 type Described = { name: string; description: string; parameters: Record<string, unknown> };
 type Reply = { result: string } | { error: string };
 type Call = { process: ChildProcess; settle: (reply: Reply) => void; fetch: (url: string) => Promise<Fetched> };
+const GATE_CALL_MS = 30_000;
+
+/** A tool's answer as a gate: JSON {"wake": boolean, "data"?: anything, "topic"?: string}. */
+function gateResult(reply: Reply, tool: string): GateResult {
+	if ("error" in reply) throw new Error(reply.error);
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(reply.result);
+	} catch {
+		throw new Error(`${tool} didn't answer with JSON`);
+	}
+	const { wake, data, topic } = (typeof parsed === "object" && parsed !== null ? parsed : {}) as Record<string, unknown>;
+	if (typeof wake !== "boolean") throw new Error(`${tool}'s answer has no "wake": true or false`);
+	return { wake, ...(data === undefined ? {} : { data: typeof data === "string" ? data : JSON.stringify(data) }), ...(typeof topic === "string" ? { topic } : {}) };
+}
 
 /** What a failed command printed, cut to its end, or nothing if it succeeded. */
 async function failure([command = "", ...rest]: string[], timeout: number): Promise<string | undefined> {
@@ -336,6 +353,17 @@ export function createSelf(options: {
 			const done = await approvals.wait(request, signal);
 			if (done.status !== "approved") throw new Error(`${owner} didn't allow fetching from ${host}`);
 		}
+		return fetchPage(url);
+	}
+
+	/** A gate's fetch, which can't ask: only hosts allowed for good. */
+	async function fetchAllowed(url: string): Promise<Fetched> {
+		const host = new URL(url).hostname;
+		if (!(await options.approvals().state()).fetchHosts.includes(host)) throw new Error(`${owner} hasn't allowed ${host} for good, and a gate can't ask`);
+		return fetchPage(url);
+	}
+
+	async function fetchPage(url: string): Promise<Fetched> {
 		const page = await fetchPublic(url, options.fetch);
 		return { url: page.url, status: page.status, contentType: page.contentType, text: page.body.toString("utf8") };
 	}
@@ -379,6 +407,8 @@ export function createSelf(options: {
 			"execute gets arguments that match `parameters` and returns the result text, or throws. Write `satisfies Tool` as above, so a test " +
 			"can call execute with the arguments alone; with `: Tool<Args>` instead, a test passes a second argument too. That argument has fetch(url), " +
 			`a GET of a public URL that returns { url, status, contentType, text }; a host ${owner} hasn't allowed waits for approval. ` +
+			'A tool can also be a scheduled job\'s gate: it then returns JSON {"wake": true or false, "data": what it found, "topic": what that is about}, ' +
+			`and its fetches reach only hosts ${owner} has allowed for good. ` +
 			'An extension imports only node: built-ins, its own ./ files and types from "gaidin". It has no network but fetch, and no files but /tmp. ' +
 			"Before asking, the server runs a strict type check that fails on unused code, the tests, and lint rules against shortcuts such as a type " +
 			"assertion without a SAFETY: comment. Comments that turn a check off aren't allowed. Then a reviewer checks the change against this guide:\n" +
@@ -488,5 +518,15 @@ export function createSelf(options: {
 		start,
 		/** The self-written tools, which the web view can switch off. */
 		tools: () => [...runners.keys()].flatMap((name) => registry.snapshot().extension(`self-${name}`)?.tools ?? []),
+		/** The self-written tools as gates for scheduled jobs. */
+		gates: (): Gate[] =>
+			[...runners].flatMap(([name, runner]) =>
+				(registry.snapshot().extension(`self-${name}`)?.tools ?? []).map((tool) => ({
+					name: tool.name,
+					description: tool.description,
+					tool: true,
+					check: async (args: Record<string, unknown>, signal: AbortSignal) => gateResult(await runner.call(tool.name, args, fetchAllowed, signal, GATE_CALL_MS), tool.name),
+				})),
+			),
 	};
 }

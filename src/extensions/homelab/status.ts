@@ -5,6 +5,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
 import type { HomelabConfig } from "../../config.ts";
+import type { Gate } from "../../jobs.ts";
 
 export const DISK_WARNING = 85;
 export const DISK_CRITICAL = 95;
@@ -19,7 +20,8 @@ const BESZEL_STALE_AFTER_MS = 180_000;
 const BACKUP_STALE_AFTER_MS = 45 * 60_000;
 
 export type Severity = "critical" | "warning" | "notice";
-export type Item = { severity: Severity; title: string; detail: string };
+/** `topic` names what the item is about without numbers that drift, such as a disk's percentage, so a gate can tell a new problem from the same one. */
+export type Item = { severity: Severity; title: string; detail: string; topic: string };
 
 type KumaMonitor = { name: string; status: string; message: string; uptime24: number | null };
 type BeszelSystem = { name: string; status: string; updatedAt: string; cpu: number | null; memory: number | null; disk: number | null; temperature: number | null };
@@ -99,7 +101,7 @@ function stale(generatedAt: string | undefined, maxAgeMs: number, now: number): 
 /** Everything that needs attention, most severe first. */
 export function collectAttention(feeds: FetchedFeeds, now = Date.now()): Item[] {
 	const items: Item[] = [];
-	const add = (severity: Severity, title: string, detail: string) => items.push({ severity, title, detail });
+	const add = (severity: Severity, title: string, detail: string, topic = title) => items.push({ severity, title, detail, topic });
 	const { kuma, beszel, docker, backups } = feeds;
 
 	if (kuma.error) add("warning", "Uptime Kuma feed unavailable", kuma.error);
@@ -127,10 +129,10 @@ export function collectAttention(feeds: FetchedFeeds, now = Date.now()): Item[] 
 			continue;
 		}
 		if (s.disk !== null && s.disk >= DISK_WARNING) {
-			add(s.disk >= DISK_CRITICAL ? "critical" : "warning", `${s.name} disk ${Math.round(s.disk)}% full`, `Warning at ${DISK_WARNING}%, critical at ${DISK_CRITICAL}%.`);
+			add(s.disk >= DISK_CRITICAL ? "critical" : "warning", `${s.name} disk ${Math.round(s.disk)}% full`, `Warning at ${DISK_WARNING}%, critical at ${DISK_CRITICAL}%.`, `${s.name} disk`);
 		}
-		if (s.memory !== null && s.memory >= MEMORY_WARNING) add("warning", `${s.name} memory at ${Math.round(s.memory)}%`, `Warning at ${MEMORY_WARNING}%.`);
-		if (s.temperature !== null && s.temperature >= TEMPERATURE_WARNING) add("warning", `${s.name} at ${Math.round(s.temperature)}°C`, `Warning at ${TEMPERATURE_WARNING}°C.`);
+		if (s.memory !== null && s.memory >= MEMORY_WARNING) add("warning", `${s.name} memory at ${Math.round(s.memory)}%`, `Warning at ${MEMORY_WARNING}%.`, `${s.name} memory`);
+		if (s.temperature !== null && s.temperature >= TEMPERATURE_WARNING) add("warning", `${s.name} at ${Math.round(s.temperature)}°C`, `Warning at ${TEMPERATURE_WARNING}°C.`, `${s.name} temperature`);
 	}
 
 	if (backups.error) add("warning", "Backup snapshot unavailable", backups.error);
@@ -145,7 +147,7 @@ export function collectAttention(feeds: FetchedFeeds, now = Date.now()): Item[] 
 			if (!storage.active) add("critical", `Backup storage ${job.storage} is offline`, `${node} can't reach it.`);
 			else if (storage.totalBytes && storage.usedBytes !== null) {
 				const used = (storage.usedBytes / storage.totalBytes) * 100;
-				if (used >= BACKUP_STORAGE_WARNING) add("warning", `Backup storage ${job.storage} ${Math.round(used)}% full`, `Warning at ${BACKUP_STORAGE_WARNING}%.`);
+				if (used >= BACKUP_STORAGE_WARNING) add("warning", `Backup storage ${job.storage} ${Math.round(used)}% full`, `Warning at ${BACKUP_STORAGE_WARNING}%.`, `Backup storage ${job.storage} full`);
 			}
 			for (const guest of job.guests) {
 				const name = guest.name ?? `VM ${guest.vmid}`;
@@ -155,7 +157,7 @@ export function collectAttention(feeds: FetchedFeeds, now = Date.now()): Item[] 
 				}
 				const hours = (now - Date.parse(guest.latestAt)) / 3_600_000;
 				if (hours >= BACKUP_WARNING_HOURS) {
-					add(hours >= BACKUP_CRITICAL_HOURS ? "critical" : "warning", `${name} last backed up ${Math.floor(hours)} hours ago`, `Warning after ${BACKUP_WARNING_HOURS} hours, critical after ${BACKUP_CRITICAL_HOURS}.`);
+					add(hours >= BACKUP_CRITICAL_HOURS ? "critical" : "warning", `${name} last backed up ${Math.floor(hours)} hours ago`, `Warning after ${BACKUP_WARNING_HOURS} hours, critical after ${BACKUP_CRITICAL_HOURS}.`, `${name} backup age`);
 				}
 			}
 		}
@@ -226,4 +228,24 @@ export function homelabStatusTool(config: HomelabConfig, owner: string, get: Fet
 			return { content: [{ type: "text", text: config.dashboard === undefined ? text : `${text}\n\nDashboard: ${config.dashboard}` }] };
 		},
 	});
+}
+
+/**
+ * The homelab gate for scheduled jobs (jobs.ts): wakes a run when something needs attention, with the items as what
+ * it found. With `severity: "critical"`, only critical items count.
+ */
+export function homelabGate(config: HomelabConfig, get: FetchJson = fetchJson): Gate {
+	return {
+		name: "homelab",
+		description: 'wakes the run when homelab_status finds something that needs attention; args { severity: "critical" } counts only critical items',
+		check: async (args) => {
+			const items = collectAttention(await fetchFeeds(config, get)).filter((i) => args.severity !== "critical" || i.severity === "critical");
+			if (items.length === 0) return { wake: false };
+			return {
+				wake: true,
+				data: items.map((i) => `${i.severity.toUpperCase()}: ${i.title}. ${i.detail}`).join("\n"),
+				topic: items.map((i) => `${i.severity} ${i.topic}`).sort().join("\n"),
+			};
+		},
+	};
 }

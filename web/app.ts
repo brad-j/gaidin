@@ -14,7 +14,7 @@ type Usage = { cost: { total: number } };
 type UsageState = { models: Record<string, Usage>; tools: Record<string, Usage> };
 type Slot = { callId: string; name: string; output: string };
 type Reminder = { taskId: number; text: string; at: number };
-type Job = { taskId: number; title: string; when: string; mode: string; nextAt?: number; lastAt?: number; lastResult?: string; paused?: { at: number; reason: string } };
+type Job = { taskId: number; title: string; when: string; mode: string; nextAt?: number; lastAt?: number; lastResult?: string; paused?: { at: number; reason: string }; gate?: { name: string } };
 type Approval = { id: string; summary: string; detail?: string; tool: string; expiresAt: number; kind?: string; choices?: string[]; always?: { kind: string; value: string; label: string } };
 type Note = { id: number; text: string; by: string; updatedAt: number };
 type Budget = { today: number; month: number; dailyLimit: number; monthlyLimit: number; stopped: boolean; reason?: string };
@@ -673,7 +673,7 @@ function upcoming(): Upcoming[] {
 			text: j.title,
 			// A paused job's runs are skipped, so it has no next run to show.
 			at: j.paused === undefined ? j.nextAt : undefined,
-			detail: `${j.mode === "watch" ? "watch, " : ""}${j.when}${j.paused === undefined ? "" : `, paused: ${j.paused.reason}`}`,
+			detail: `${j.mode === "watch" ? "watch, " : ""}${j.when}${j.gate === undefined ? "" : `, gated by ${j.gate.name}`}${j.paused === undefined ? "" : `, paused: ${j.paused.reason}`}`,
 			paused: j.paused !== undefined,
 		})),
 	].sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity));

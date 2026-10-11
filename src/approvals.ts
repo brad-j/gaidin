@@ -12,7 +12,7 @@ import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
 import { type Message, type ToolCall, Type } from "@earendil-works/pi-ai";
 import { type ConversationId, defineDoc, defineEntry, defineExtension, defineTool, type Harness, hook, type TaskId, ToolTask, type Tx } from "@earendil-works/pi-durable";
-import { describeSchedule, parseSchedule } from "./jobs.ts";
+import { describeSchedule, GATE_FINDINGS, parseSchedule } from "./jobs.ts";
 
 export type Decision = "once" | "always" | "deny";
 /** "superseded": the owner sent a new message in the conversation instead of answering. */
@@ -102,13 +102,15 @@ export const defaultPolicy: Policy = async (call, state, conversationId, untrust
 	// A job acts later, without the owner there, so every new one asks. A bad schedule is reported by the tool.
 	if (call.name === "schedule_job") {
 		const a = call.arguments;
+		const gate = a.gate as { name?: unknown; args?: unknown } | undefined;
 		let when: string;
 		try {
-			when = describeSchedule(parseSchedule(a as Parameters<typeof parseSchedule>[0]));
+			when = describeSchedule(parseSchedule(a as Parameters<typeof parseSchedule>[0], gate !== undefined));
 		} catch {
 			return undefined;
 		}
-		return { summary: `schedule "${String(a.title)}", ${when}${a.mode === "watch" ? " (a watch)" : ""}: ${clip(String(a.instruction))}` };
+		const gated = gate === undefined ? "" : `, gated by ${String(gate.name)}${gate.args === undefined ? "" : ` ${JSON.stringify(gate.args)}`}`;
+		return { summary: `schedule "${String(a.title)}", ${when}${a.mode === "watch" ? " (a watch)" : ""}${gated}: ${clip(String(a.instruction))}` };
 	}
 	if (call.name === "fetch_url") {
 		let host: string;
@@ -348,8 +350,8 @@ export function signalOf(api: object, context: Context): AbortSignal {
 }
 
 /**
- * The untrusted tools whose results are in the conversation since its last user message. The hook's api is
- * the tool task's runtime, which can read the conversation's context.
+ * The untrusted tools whose results are in the conversation since its last user message, and the job's gate when that
+ * message holds what a gate found. The hook's api is the tool task's runtime, which can read the conversation's context.
  */
 export async function untrustedSince(api: unknown, context: Context): Promise<string[]> {
 	const runtime = api as { conversationId: ConversationId; context?: (id: ConversationId, context: Context) => Promise<{ messages: readonly Message[] }> };
@@ -358,7 +360,11 @@ export async function untrustedSince(api: unknown, context: Context): Promise<st
 	const found = new Set<string>();
 	for (let i = messages.length - 1; i >= 0; i -= 1) {
 		const message = messages[i]!;
-		if (message.role === "user") break;
+		if (message.role === "user") {
+			// A job run a gate woke starts with what the gate found.
+			if (JSON.stringify(message.content).includes(GATE_FINDINGS)) found.add("the job's gate");
+			break;
+		}
 		if (message.role === "toolResult" && UNTRUSTED_TOOLS.has(message.toolName)) found.add(message.toolName);
 	}
 	return [...found];

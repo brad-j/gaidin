@@ -54,7 +54,7 @@ A request waits up to `approvals.waitHours` (7 days by default); the run is stor
 
 Each request's outcome (allowed once or always, denied, answered, no answer in time, stopped, skipped) and where it was given is also written into its conversation as an entry the model doesn't see. The web view's `/timeline` lists these outcomes with the tool calls, job reports and reminders around them, from the transcript index ([Tools](tools.md#past-conversations)), so the record outlives the request, which is dropped a week after it's decided. The timeline leaves out the sandbox's coding tools and the tools that only read gaidin's own state.
 
-The policy can also see which tools that return outside text (`UNTRUSTED_TOOLS`: `fetch_url`, `web_search`, `container_logs`, `workspace_read`, `workspace_run`) the run has used since the owner's last message; memory writes use that. A tool that changes anything outside the sandbox should go through this policy ([Extending](extending.md#tools-that-reach-outside)).
+The policy can also see which tools that return outside text (`UNTRUSTED_TOOLS`: `fetch_url`, `web_search`, `container_logs`, `workspace_read`, `workspace_run`) the run has used since the owner's last message, plus self-written tools and, in a job run a [gate](tools.md#gates) woke, what the gate found; memory writes use that. A tool that changes anything outside the sandbox should go through this policy ([Extending](extending.md#tools-that-reach-outside)).
 
 ## Workspaces
 
@@ -85,6 +85,7 @@ The web view trusts the identity header Tailscale Serve adds, and listens only o
 - The tools that don't ask (sandbox, reminders, homelab reads) can still be steered: a manipulated model could set reminders or fill the sandbox. Any steered run also spends money, which the [spend limits](deploy.md#spend-limits) cap.
 - A note the owner approves, or one written before any outside text was read, goes into every later prompt. The web view shows them all, and deleting one takes it out.
 - A self-written tool's fetch to a host you've always allowed can carry data in its URL without asking, as `fetch_url` can.
+- A job's gate runs without asking at every check. The homelab gate only reads the monitoring feeds; a self-written gate fetches only from hosts you've allowed for good, with whatever arguments the approved job gave it.
 - Alert text comes from monitoring systems, and the run that investigates it has only read-only tools, so it can't write notes, set reminders or jobs, use a workspace or load tools. Its `fetch_url` calls still ask for a new host.
 - An approved job runs its instruction later with the tools of an ordinary run. Its own calls to workspaces or new hosts still ask, but the instruction itself isn't checked again.
 - A job's runs see its last three reports, which can repeat text an earlier run read from outside. They're labelled as gaidin's own earlier answers, not instructions.

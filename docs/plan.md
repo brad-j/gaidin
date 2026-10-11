@@ -30,13 +30,13 @@
 16. Package versions wait 3 days before pnpm installs them (`minimumReleaseAge: 4320`, up from pnpm's default of 1 day), Pi Durable included.
 17. A job's runs see its last 3 delivered reports and how many quiet runs followed, and a watch is told to repeat a finding only when it has got worse ([Tools](tools.md#scheduled-jobs)).
 18. Failure streaks: a run that didn't finish delays the next by 15 minutes doubled per failure, up to 4 hours, and the job pauses after 5 in a row; the owner hears about the first failure and the pause, and resumes it from Slack or the web view ([Tools](tools.md#scheduled-jobs)). Deliveries that fail every retry don't count, so a Slack or ntfy outage doesn't pause every job.
+19. Gates: a check before each run, without the model, that wakes it only for something new: the homelab extension's, or a self-written tool's that fetches only from hosts allowed for good. A job without a gate repeats at most every 6 hours; with one, every 15 minutes ([Tools](tools.md#gates)).
 
 ## Next
 
-More for jobs, from what NanoClaw does with scheduled tasks, in this order:
+One more for jobs, from NanoClaw:
 
-1. Gates: a check in the server that decides whether a run wakes the model, from the homelab extension (`collectAttention`) or a self-written tool that only reaches hosts allowed for good. A gate that wakes with the same findings as last time doesn't wake it again, and a gate that fails counts as a failed run. A job without a gate runs at most 4 times a day (`every` at least 6 hours); with one, every 15 minutes. Existing jobs keep their schedules.
-2. The approval policy can refuse a call that can't succeed rather than ask (`schedule_job` with 20 jobs or an unknown gate, `load_extension` with self-written tools off, an unknown workspace), and checks again for a refusal after the owner approves. A job run whose gate or tools are gone counts as a failure.
+1. The approval policy can refuse a call that can't succeed rather than ask (`schedule_job` with 20 jobs or an unknown gate, `load_extension` with self-written tools off, an unknown workspace), and checks again for a refusal after the owner approves. A job run whose tools are gone counts as a failure, as one whose gate is gone already does.
 
 Other candidates:
 

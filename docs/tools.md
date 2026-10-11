@@ -56,16 +56,25 @@ The same index holds the web view's [timeline](surfaces.md#web-view): tool calls
 `schedule_job` sets up work for later: a morning briefing, a check every few hours, or a follow-up gaidin promised ("I'll look again on Friday"). It takes a `title`, an `instruction`, and one schedule:
 
 - `at`: once, at an ISO 8601 time with a UTC offset
-- `every`: repeating, like `30m`, `6h` or `1d`, at least 15 minutes apart
+- `every`: repeating, like `6h` or `1d`, at least 6 hours apart, or 15 minutes with a [gate](#gates)
 - `time` and `days`: at a local time (`08:00`), on `daily`, `weekdays`, `weekends` or a list like `mon, thu`, in the configured time zone, across daylight saving changes
 
 With `mode: "watch"`, a run reports only when something needs the owner and otherwise ends quietly; the run answers `NOTHING_TO_REPORT` to stay silent. `list_jobs` shows each job's next and last run, and `cancel_job` takes an id. The web view lists them too, with Cancel.
 
 Each job is a durable background task ([Concepts](concepts.md#durability)). At its time it starts a new conversation with the agent settings of the conversation it was made in, so the run doesn't carry that conversation's history and its instruction has to stand alone. It does get the job's last three reports, each cut to 800 characters, and how many runs since had nothing to report, and a watch is told not to report again what those covered unless it has got worse. A report counts once it's delivered. The run has every tool except the job tools, so a job can't create jobs. Its answer goes to Slack as a message of its own (a reply in its thread continues that run's conversation), or to ntfy without Slack, and a "Scheduled" entry in the conversation records it. A failed delivery is retried up to five times. A run due while the server was down happens when it starts, and a repeating job then carries on from the next time after that.
 
-A run that fails (the model errors or the run breaks off) delays the next one by at least 15 minutes, doubled for each failure in a row up to 4 hours. You're told about the first failure in a row, not the ones after it. After five in a row the job pauses: its runs are skipped until you resume it, from the button on the message saying it paused in Slack or with `/resume` in the web view, and it then runs at its next scheduled time. `/pause` pauses a job by hand. A run the [spend limits](deploy.md#spend-limits) stopped, one you stopped, and a report that couldn't be delivered don't count as failures, so an outage of Slack or ntfy doesn't pause every job. An answer ends the streak. `list_jobs` shows a job's failures and whether it's paused.
+A run that fails (the model errors, the run breaks off, or its gate fails) delays the next one by at least 15 minutes, doubled for each failure in a row up to 4 hours. You're told about the first failure in a row, not the ones after it. After five in a row the job pauses: its runs are skipped until you resume it, from the button on the message saying it paused in Slack or with `/resume` in the web view, and it then runs at its next scheduled time. `/pause` pauses a job by hand. A run the [spend limits](deploy.md#spend-limits) stopped, one you stopped, and a report that couldn't be delivered don't count as failures, so an outage of Slack or ntfy doesn't pause every job. An answer, or a gate check that finds nothing new, ends the streak. `list_jobs` shows a job's failures and whether it's paused.
 
-Creating a job always asks the owner ([Security](security.md#approvals)), because it acts later without them. There can be at most 20 jobs. Each run is a full model request, so a frequent job costs accordingly, and its transcript is kept like any other.
+Creating a job always asks the owner ([Security](security.md#approvals)), because it acts later without them, and the request shows its gate. There can be at most 20 jobs. Each run is a full model request, so a frequent job costs accordingly, and its transcript is kept like any other.
+
+### Gates
+
+A gate is a check that runs before each of a job's runs, in the server and without the model, and decides whether the run happens. `schedule_job` takes it as `gate: { name, args }`. It answers whether to wake the run, what it found, and a topic: what the findings are about, without numbers that drift. The run wakes only when the topic differs from the one the gate found the last time it woke a run that answered and reached you; the run's prompt starts with what the gate found. When the gate finds nothing, it forgets the topic, so the same problem coming back is new. A check that ends without a run costs no model request, which is why a gated job can run every 15 minutes and a job without one at most every 6 hours, 4 times a day. `list_jobs` shows how many checks found nothing new. A gate that throws, answers something else or takes over 30 seconds fails the run.
+
+- `homelab`, with the [homelab extension](#homelab-extension) on, checks what `homelab_status` lists as needing attention, and wakes the run when there's anything. `args: { severity: "critical" }` counts only critical items. Its topic is each item's severity and what it's about, so a disk going from 87% to 88% isn't new, and one going from warning to critical is.
+- A [self-written tool](#self-written-tools) is a gate when it answers JSON: `{"wake": true or false, "data": what it found, "topic": what that is about}`. `data` can be any JSON; `topic` defaults to `data`. It runs in its box as usual, but a gate has no one to ask, so its fetches reach only hosts you've allowed for good, and any other fails the check. While the tool is switched off in the web view, the check fails.
+
+What a gate found counts as outside text, so in a run it woke, writing a note asks first ([Security](security.md#approvals)).
 
 ## Alerts
 
@@ -116,7 +125,7 @@ gaidin can write tools for itself. It drafts an extension in the sandbox, in `ex
 
 The approval request shows the lines added and removed, with the diff under "changes" in the web view and up to about 2,600 characters of it in Slack. Once approved, the copy that was checked goes to `<data>/extensions/<name>`, a Git repository the sandbox can't see, and its tools are in use from the next step, with no restart. Editing the draft afterwards changes nothing until it's approved again. `remove_extension(name)` takes the tools away after approval; the repository keeps the history. At start the server loads every approved extension again.
 
-Each extension runs in one Node process under bubblewrap ([Security](security.md#self-written-tools)). A call that takes over a minute is stopped and the process starts again on the next call. Self-written tools can be switched off in the web view, and their results count as outside text. Without bubblewrap there are no self-written tools.
+Each extension runs in one Node process under bubblewrap ([Security](security.md#self-written-tools)). A call that takes over a minute is stopped and the process starts again on the next call. Self-written tools can be switched off in the web view, and their results count as outside text. A tool can also be a scheduled job's [gate](#gates). Without bubblewrap there are no self-written tools.
 
 ## Homelab extension
 
@@ -132,7 +141,7 @@ Reads the feeds behind a homelab dashboard: an Uptime Kuma public status page (`
 - a failed backup run, a disabled job, offline or 85%-full backup storage, guests last backed up 26 hours ago (critical at 50)
 - snapshots that have gone stale
 
-A feed that's down is reported and the rest are still read. `details: true` adds every monitor, host, container and backup.
+A feed that's down is reported and the rest are still read. `details: true` adds every monitor, host, container and backup. The same checks are a scheduled job's `homelab` [gate](#gates).
 
 ### container_logs
 

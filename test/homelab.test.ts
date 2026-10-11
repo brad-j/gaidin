@@ -6,8 +6,9 @@ import test from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { configFor, type HomelabConfig } from "../src/config.ts";
-import { collectAttention, fetchFeeds, type FetchJson, report } from "../src/extensions/homelab/status.ts";
+import { collectAttention, fetchFeeds, type FetchJson, homelabGate, report } from "../src/extensions/homelab/status.ts";
 import { context, openHost } from "../src/host.ts";
+import { Jobs, type Report } from "../src/jobs.ts";
 
 const HOMELAB: HomelabConfig = { feeds: "http://feeds.test/data", kuma: { url: "https://kuma.test", page: "homelab" }, dashboard: "https://dash.test", logHosts: {} };
 
@@ -134,4 +135,102 @@ test("the agent can call homelab_status", async (t) => {
 	const result = (await host.root.context(context)).messages.find((m) => m.role === "toolResult");
 	assert.match(JSON.stringify(result), /Nothing needs attention\./);
 	assert.match(JSON.stringify(result), /dash\.test/);
+});
+
+async function until(check: () => boolean | Promise<boolean>, timeoutMs = 10_000) {
+	const end = Date.now() + timeoutMs;
+	while (!(await check())) {
+		if (Date.now() > end) throw new Error("timed out");
+		await new Promise((r) => setTimeout(r, 20));
+	}
+}
+
+test("the homelab gate wakes on a new or worse problem, not on numbers that drift", async () => {
+	let feeds: any;
+	const gate = homelabGate(HOMELAB, fixtures((f) => void (feeds = f), Date.now()));
+	const signal = new AbortController().signal;
+	assert.deepEqual(await gate.check({}, signal), { wake: false });
+	feeds.beszel.systems[1].disk = 87;
+	const warning = await gate.check({}, signal);
+	assert.equal(warning.wake, true);
+	assert.match(warning.data!, /^WARNING: think-01 disk 87% full\./);
+	feeds.beszel.systems[1].disk = 88;
+	assert.equal((await gate.check({}, signal)).topic, warning.topic, "the same problem");
+	assert.deepEqual(await gate.check({ severity: "critical" }, signal), { wake: false });
+	feeds.beszel.systems[1].disk = 96;
+	const critical = await gate.check({ severity: "critical" }, signal);
+	assert.equal(critical.wake, true);
+	assert.notEqual(critical.topic, warning.topic, "worse is new");
+});
+
+test("a gated job wakes the model only for something new, and what the gate found counts as outside text", async (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	let feeds: any;
+	const get = fixtures((f) => {
+		feeds = f;
+		f.beszel.systems[1].disk = 87;
+	}, Date.now());
+	const prompts: string[] = [];
+	const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
+	faux.setResponses([
+		(ctx) => {
+			prompts.push(JSON.stringify(ctx.messages.find((m) => m.role === "user")));
+			return fauxAssistantMessage(fauxToolCall("remember", { text: "think-01 fills up" }), { stopReason: "toolUse" });
+		},
+		fauxAssistantMessage(fauxText("think-01's disk is at 87%.")),
+		(ctx) => {
+			prompts.push(JSON.stringify(ctx.messages.find((m) => m.role === "user")));
+			return fauxAssistantMessage(fauxText("think-01's disk is critical."));
+		},
+	]);
+	const models = createModels();
+	models.setProvider(faux.provider);
+	const reports: Report[] = [];
+	const host = await openHost({
+		config: configFor({ homelab: HOMELAB }),
+		dataDir: dir,
+		models,
+		model: { provider: "faux", modelId: "faux-1" },
+		homelab: { fetch: get },
+		notify: async () => {},
+		deliver: async (r) => void reports.push(r),
+	});
+	t.after(() => host.harness.close(context));
+	const asked: string[] = [];
+	host.approvals.onChange((r) => {
+		if (r.status !== "pending") return;
+		asked.push(r.summary);
+		void host.approvals.decide(r.id, "once", "test");
+	});
+	const firstAt = Date.now() + 200;
+	const taskId = await host.root.commit(async (tx) => {
+		const id = await tx.createTask(host.jobs.JobTask, { title: "Disks", firstAt }, { ownership: { kind: "conversation" }, background: true });
+		const fields = { instruction: "Check the disks.", schedule: { kind: "every" as const, minutes: 0.01, from: firstAt }, mode: "watch" as const, gate: { name: "homelab" } };
+		(await tx.doc(Jobs)).items.push({ taskId: id as number, title: "Disks", ...fields, createdAt: Date.now(), nextAt: firstAt, runs: 0 });
+		return id as number;
+	}, context);
+	const job = async () => (await host.harness.snapshot(Jobs, context))!.items.find((j) => j.taskId === taskId)!;
+
+	await until(() => reports.length === 1);
+	assert.match(prompts[0]!, /\[gate findings\] The gate homelab woke this run.*WARNING: think-01 disk 87% full/);
+	assert.match(asked[0]!, /^remember "think-01 fills up", after reading outside text \(the job's gate\)$/);
+	// The disk drifts to 88%: the same problem, so no run.
+	feeds.beszel.systems[1].disk = 88;
+	const skipped = (await job()).skipped ?? 0;
+	await until(async () => ((await job()).skipped ?? 0) >= skipped + 2);
+	assert.equal(reports.length, 1);
+	// It gets worse.
+	feeds.beszel.systems[1].disk = 96;
+	await until(() => reports.length === 2);
+	assert.match(prompts[1]!, /CRITICAL: think-01 disk 96% full/);
+	assert.deepEqual(reports.map((r) => r.text), ["think-01's disk is at 87%.", "think-01's disk is critical."]);
+	// Fixed: the gate finds nothing, and forgets what it found.
+	feeds.beszel.systems[1].disk = 40;
+	await until(async () => (await job()).gateTopic === undefined);
+	assert.equal((await job()).failures, 0);
+	await host.root.commit(async (tx) => {
+		const doc = await tx.doc(Jobs);
+		doc.items = doc.items.filter((j) => j.taskId !== taskId);
+	}, context);
 });

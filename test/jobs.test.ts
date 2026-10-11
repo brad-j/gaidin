@@ -46,14 +46,16 @@ async function start(t: TestContext, steps: Steps, data = dir(t)) {
 
 test("schedules are parsed and described", () => {
 	const now = Date.parse("2026-10-10T12:00:00Z");
-	assert.deepEqual(parseSchedule({ every: "6h" }, now), { kind: "every", minutes: 360, from: now + 360 * 60_000 });
-	assert.deepEqual(parseSchedule({ time: "8:05", days: "weekdays" }, now), { kind: "daily", time: "08:05", days: [1, 2, 3, 4, 5] });
-	assert.deepEqual(parseSchedule({ time: "21:00", days: "Mon, thursday" }, now), { kind: "daily", time: "21:00", days: [1, 4] });
-	assert.throws(() => parseSchedule({ every: "5m" }, now), /at most every 15 minutes/);
-	assert.throws(() => parseSchedule({ at: "2026-10-09T12:00:00Z" }, now), /in the past/);
-	assert.throws(() => parseSchedule({ every: "1h", time: "08:00" }, now), /exactly one/);
-	assert.throws(() => parseSchedule({ time: "25:00" }, now), /HH:MM/);
-	assert.throws(() => parseSchedule({ time: "08:00", days: "someday" }, now), /Unknown day/);
+	assert.deepEqual(parseSchedule({ every: "6h" }, false, now), { kind: "every", minutes: 360, from: now + 360 * 60_000 });
+	assert.deepEqual(parseSchedule({ time: "8:05", days: "weekdays" }, false, now), { kind: "daily", time: "08:05", days: [1, 2, 3, 4, 5] });
+	assert.deepEqual(parseSchedule({ time: "21:00", days: "Mon, thursday" }, false, now), { kind: "daily", time: "21:00", days: [1, 4] });
+	assert.throws(() => parseSchedule({ every: "5m" }, true, now), /at most every 15 minutes/);
+	assert.throws(() => parseSchedule({ every: "1h" }, false, now), /without a gate runs at most every 6 hours/);
+	assert.deepEqual(parseSchedule({ every: "15m" }, true, now), { kind: "every", minutes: 15, from: now + 15 * 60_000 });
+	assert.throws(() => parseSchedule({ at: "2026-10-09T12:00:00Z" }, false, now), /in the past/);
+	assert.throws(() => parseSchedule({ every: "1h", time: "08:00" }, false, now), /exactly one/);
+	assert.throws(() => parseSchedule({ time: "25:00" }, false, now), /HH:MM/);
+	assert.throws(() => parseSchedule({ time: "08:00", days: "someday" }, false, now), /Unknown day/);
 	assert.equal(describeSchedule({ kind: "daily", time: "08:00", days: [1, 2, 3, 4, 5] }), "at 08:00, weekdays");
 	assert.equal(describeSchedule({ kind: "every", minutes: 30, from: 0 }), "every 30 minutes");
 });
@@ -322,4 +324,20 @@ test("a paused job skips its runs until it's resumed", async (t) => {
 	assert.equal(await host.root.commit((tx) => resumeJob(tx, id), context), undefined, "it isn't paused any more");
 	await until(() => (reports.length > 0 ? true : undefined));
 	assert.equal(reports[0]!.text, "Ran.");
+});
+
+test("a job without a gate repeats at most every 6 hours, and a gate has to exist", async (t) => {
+	const { host } = await start(t, [
+		fauxAssistantMessage(fauxToolCall("schedule_job", { title: "Often", instruction: "x", every: "1h" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxToolCall("schedule_job", { title: "Gated", instruction: "x", every: "15m", gate: { name: "nope", args: { severity: "critical" } } }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxText("ok")),
+	]);
+	t.after(() => host.harness.close(context));
+	const asked: string[] = [];
+	host.approvals.onChange((r) => void (r.status === "pending" && asked.push(r.summary)));
+	await (await host.root.submit({ type: "input", content: "check often" }, context)).wait(context);
+	const results = (await host.root.context(context)).messages.flatMap((m) => (m.role === "toolResult" ? [JSON.stringify(m.content)] : []));
+	assert.match(results[0]!, /without a gate runs at most every 6 hours/);
+	assert.deepEqual(asked, ['schedule "Gated", every 15 minutes, gated by nope {"severity":"critical"}: x']);
+	assert.match(results[1]!, /There's no gate nope\. Gates: none\./);
 });

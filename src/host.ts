@@ -13,7 +13,7 @@ import { type Config, configFor, secretsOf } from "./config.ts";
 import { createHomelab, type HomelabOptions } from "./extensions/homelab/index.ts";
 import { createFetch, type FetchOptions } from "./fetch.ts";
 import { createHistory } from "./history.ts";
-import { createJobs, type Deliver } from "./jobs.ts";
+import { createJobs, type Deliver, type Gate } from "./jobs.ts";
 import { createMemory } from "./memory.ts";
 import { ntfyNotifier, ntfyReporter } from "./ntfy.ts";
 import { type Redactor, redactionExtension, redactorFor } from "./redact.ts";
@@ -150,9 +150,12 @@ export async function openHost(options: HostOptions = {}) {
 	registry.install(reminders.extension);
 	registry.install(createMemory(owner));
 	let deliver: Deliver = options.deliver ?? ntfyReporter(config.ntfy);
-	const jobs = createJobs({ deliver: () => deliver, owner, explain });
+	const homelab = config.homelab === undefined ? undefined : createHomelab(config.homelab, owner, config.keysDir, options.homelab);
+	// Self-written tools are gates too, once they're loaded.
+	let selfGates = (): Gate[] => [];
+	const jobs = createJobs({ deliver: () => deliver, owner, explain, gates: () => [...(homelab === undefined ? [] : [homelab.gate]), ...selfGates()] });
 	registry.install(jobs.extension);
-	if (config.homelab !== undefined) registry.install(createHomelab(config.homelab, owner, config.keysDir, options.homelab));
+	if (homelab !== undefined) registry.install(homelab.extension);
 	const web = createFetch(options.fetch, owner);
 	registry.install(web.extension);
 	const searchBackend = options.search ?? backendFor(config.search);
@@ -169,7 +172,10 @@ export async function openHost(options: HostOptions = {}) {
 	registry.install(history.extension);
 	// Self-written tools only ever run in a box, so without bubblewrap there are none.
 	const self = bwrap === undefined ? undefined : createSelf({ dataDir: dir, sandbox, bwrap, hide, registry, approvals: () => approvals!, owner, fetch: options.fetch });
-	if (self !== undefined) registry.install(self.extension);
+	if (self !== undefined) {
+		registry.install(self.extension);
+		selfGates = self.gates;
+	}
 	// The service needs the Harness, which needs the registry; the hook reads it once calls start.
 	let approvals: ApprovalService | undefined;
 	registry.install(approvalExtension(() => approvals!, owner));

@@ -9,7 +9,9 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type FauxResponseFactory } from "@earendil-works/pi-ai/providers/faux";
 import { blockedRanges } from "../src/fetch.ts";
 import { configFor } from "../src/config.ts";
+import { Approvals } from "../src/approvals.ts";
 import { context, openHost } from "../src/host.ts";
+import { Jobs } from "../src/jobs.ts";
 import { findBwrap } from "../src/sandbox.ts";
 
 const skip = findBwrap() === undefined ? "needs bubblewrap" : false;
@@ -56,7 +58,7 @@ test("checks a path", async () => {
 });
 `;
 
-type Step = () => ReturnType<typeof fauxAssistantMessage>;
+type Step = (ctx: Parameters<FauxResponseFactory>[0]) => ReturnType<typeof fauxAssistantMessage>;
 
 /** The main conversation's steps in order; the reviewer answers `verdict`. */
 async function start(t: TestContext, steps: Step[], verdict = "OK", dir = mkdtempSync(join(tmpdir(), "gaidin-self-"))) {
@@ -68,7 +70,7 @@ async function start(t: TestContext, steps: Step[], verdict = "OK", dir = mkdtem
 		// The reviewer's conversation starts with the diff.
 		const first = ctx.messages.find((m) => m.role === "user");
 		if (JSON.stringify(first?.content).includes("diff --git")) return fauxAssistantMessage(fauxText(verdict));
-		return steps.shift()?.() ?? fauxAssistantMessage(fauxText("Done."));
+		return steps.shift()?.(ctx) ?? fauxAssistantMessage(fauxText("Done."));
 	};
 	const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
 	faux.setResponses(Array.from({ length: 30 }, () => step));
@@ -155,4 +157,75 @@ test("the reviewer's objections go back to gaidin, and with keep they go to Brad
 	const request = Object.values((await host.approvals.state()).requests)[0]!;
 	assert.match(request.detail!, /The reviewer objected:\n- index\.ts: can_read isn't needed\n\ngaidin kept it because: can_read is what Brad asked for$/);
 	assert.match(loaded!, /^Loaded kit\./);
+});
+
+const GATE_INDEX = `import type { Tool } from "gaidin";
+
+export const pageGate = {
+	name: "page_gate",
+	description: "Wake a job when a page has text.",
+	parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+	execute: async (args: { url: string }, api: Parameters<Tool["execute"]>[1]) => {
+		const page = await api.fetch(args.url);
+		return JSON.stringify({ wake: page.text.length > 0, data: page.text, topic: page.text });
+	},
+} satisfies Tool;
+
+export const tools = [pageGate];
+`;
+
+const GATE_TEST = `import assert from "node:assert/strict";
+import test from "node:test";
+import { pageGate } from "./index.ts";
+
+test("wakes when the page has text", async () => {
+	const fetch = async (url: string) => ({ url, status: 200, contentType: "text/plain", text: "news" });
+	assert.equal(await pageGate.execute({ url: "https://x.test/" }, { fetch }), '{"wake":true,"data":"news","topic":"news"}');
+});
+`;
+
+async function until(check: () => Promise<boolean>, timeoutMs = 20_000) {
+	const end = Date.now() + timeoutMs;
+	while (!(await check())) {
+		if (Date.now() > end) throw new Error("timed out");
+		await new Promise((r) => setTimeout(r, 50));
+	}
+}
+
+test("a self-written tool is a gate, and its fetches reach only hosts allowed for good", { skip, timeout: 120_000 }, async (t) => {
+	const steps = [call("load_extension", { name: "kit" })];
+	const { host, dir, port } = await start(t, steps);
+	draft(dir, { "index.ts": GATE_INDEX, "test.ts": GATE_TEST });
+	await runApproving(host, "load the gate");
+	assert.match((await results(host))[0]!, /^Loaded kit\./);
+
+	const url = `http://a.test:${port}/`;
+	const addJob = (title: string) =>
+		host.root.commit(async (tx) => {
+			const firstAt = Date.now() + 200;
+			const id = await tx.createTask(host.jobs.JobTask, { title, firstAt }, { ownership: { kind: "conversation" }, background: true });
+			const fields = { instruction: "Read the page.", schedule: { kind: "every" as const, minutes: 0.01, from: firstAt }, mode: "report" as const, gate: { name: "page_gate", args: { url } } };
+			(await tx.doc(Jobs)).items.push({ taskId: id as number, title, ...fields, createdAt: Date.now(), nextAt: firstAt, runs: 0 });
+			return id as number;
+		}, context);
+	const job = async (id: number) => (await host.harness.snapshot(Jobs, context))!.items.find((j) => j.taskId === id)!;
+	const cancel = (id: number) =>
+		host.root.commit(async (tx) => {
+			const doc = await tx.doc(Jobs);
+			doc.items = doc.items.filter((j) => j.taskId !== id);
+		}, context);
+
+	// a.test isn't allowed for good, and a gate can't ask, so the check fails.
+	const blocked = await addJob("Blocked");
+	await until(async () => (await job(blocked)).failures === 1);
+	assert.equal((await host.approvals.pending()).length, 0);
+	await cancel(blocked);
+
+	await host.root.commit(async (tx) => void (await tx.doc(Approvals)).fetchHosts.push("a.test"), context);
+	steps.push((ctx) => fauxAssistantMessage(fauxText(/\[gate findings\][^]*page text/.test(JSON.stringify(ctx.messages)) ? "The page says page text." : "no findings")));
+	const open = await addJob("Open");
+	await until(async () => (await job(open)).recent?.length === 1);
+	assert.equal((await job(open)).recent![0]!.text, "The page says page text.");
+	await until(async () => ((await job(open)).skipped ?? 0) >= 1);
+	await cancel(open);
 });
