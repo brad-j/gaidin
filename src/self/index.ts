@@ -376,7 +376,8 @@ export function createSelf(options: {
 			`Check the extension drafted in extensions/<name>/ in the sandbox and, once ${owner} approves it, start using its tools. ` +
 			"Write it with the file tools first: index.ts exports `tools`, and test.ts tests each one with node:test. A tool looks like this:\n" +
 			`${EXAMPLE}\n` +
-			"execute gets arguments that match `parameters` and returns the result text, or throws. Its second argument has fetch(url), " +
+			"execute gets arguments that match `parameters` and returns the result text, or throws. Write `satisfies Tool` as above, so a test " +
+			"can call execute with the arguments alone; with `: Tool<Args>` instead, a test passes a second argument too. That argument has fetch(url), " +
 			`a GET of a public URL that returns { url, status, contentType, text }; a host ${owner} hasn't allowed waits for approval. ` +
 			'An extension imports only node: built-ins, its own ./ files and types from "gaidin". It has no network but fetch, and no files but /tmp. ' +
 			"Before asking, the server runs a strict type check that fails on unused code, the tests, and lint rules against shortcuts such as a type " +

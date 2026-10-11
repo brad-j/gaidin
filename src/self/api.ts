@@ -9,11 +9,12 @@ export type ToolApi = {
 	fetch: (url: string) => Promise<Fetched>;
 };
 
-export type Tool = {
+/** `Args` is the type of the arguments `parameters` describes. */
+export type Tool<Args = any> = {
 	name: string;
 	description: string;
 	/** A JSON Schema for the arguments. They're checked against it before `execute` runs. */
 	parameters: { type: "object"; properties: Record<string, object>; required?: string[] };
-	/** Returns the result text; a thrown error becomes an error result. `never` lets each tool type its own arguments. */
-	execute: (args: never, api: ToolApi) => Promise<string>;
+	/** Returns the result text; a thrown error becomes an error result. */
+	execute: (args: Args, api: ToolApi) => Promise<string>;
 };

@@ -48,6 +48,12 @@ command -v bwrap >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install -y
 install -m 644 "$app/deploy/vm/bwrap.apparmor" /etc/apparmor.d/bwrap
 apparmor_parser -r /etc/apparmor.d/bwrap
 
+# Oxlint, which checks self-written tools (src/self/), reserves 4 GiB of address space per thread for its
+# JavaScript plugins. The default overcommit rule refuses a reservation larger than memory and swap, which
+# this VM has less of, so allow it. Only the part Oxlint fills is ever used.
+echo "vm.overcommit_memory = 1" > /etc/sysctl.d/90-gaidin-overcommit.conf
+sysctl -q -p /etc/sysctl.d/90-gaidin-overcommit.conf
+
 # `gaidin ...` on this VM runs as the service does: as gaidin, with its settings.
 cat > /usr/local/bin/gaidin <<'EOF'
 #!/bin/sh

@@ -31,12 +31,12 @@ export const pageLength = {
 	execute: async (args: { url: string }, api: Parameters<Tool["execute"]>[1]) => String((await api.fetch(args.url)).text.length),
 } satisfies Tool;
 
-export const canRead = {
+export const canRead: Tool<{ path: string }> = {
 	name: "can_read",
 	description: "Whether a path exists.",
 	parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
-	execute: async (args: { path: string }) => String(existsSync(args.path)),
-} satisfies Tool;
+	execute: async (args) => String(existsSync(args.path)),
+};
 
 export const tools = [add, pageLength, canRead];
 `;
@@ -50,7 +50,10 @@ test("measures a page", async () => {
 	const fetch = async (url: string) => ({ url, status: 200, contentType: "text/plain", text: "abc" });
 	assert.equal(await pageLength.execute({ url: "https://x.test/" }, { fetch }), "3");
 });
-test("checks a path", async () => assert.equal(await canRead.execute({ path: "/nowhere" }), "false"));
+test("checks a path", async () => {
+	const fetch = async () => assert.fail("no fetch");
+	assert.equal(await canRead.execute({ path: "/nowhere" }, { fetch }), "false");
+});
 `;
 
 type Step = () => ReturnType<typeof fauxAssistantMessage>;
