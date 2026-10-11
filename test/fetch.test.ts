@@ -9,7 +9,7 @@ import { gzipSync } from "node:zlib";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { blockedRanges, fetchPublic, type FetchOptions, htmlToText, render } from "../src/fetch.ts";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 
 const PAGE = `<html><head><title>Fish &amp; Chips</title><script>alert("x")</script></head>
 <body><nav>Home | About</nav><main><h1>Recipe</h1><p>Batter &mdash; light.</p>
@@ -130,7 +130,7 @@ test("the agent can call fetch_url, and an error status is an error result", asy
 	]);
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const host = await openHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, fetch: options, notify: async () => {} });
+	const host = await startHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, fetch: options, adapters: { push: { send: async () => true } } });
 	t.after(() => host.harness.close(context));
 	// New hosts need approval (test/approvals.test.ts); say yes to each.
 	host.approvals.onChange((r) => void (r.status === "pending" && host.approvals.decide(r.id, "once", "test")));

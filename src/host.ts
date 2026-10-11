@@ -15,10 +15,11 @@ import { createFetch, type FetchOptions } from "./fetch.ts";
 import { createHistory } from "./history.ts";
 import { createJobs, type Deliver, type Gate } from "./jobs.ts";
 import { createMemory, refuseNote } from "./memory.ts";
-import { ntfyNotifier, ntfyReporter } from "./ntfy.ts";
-import { createPush, loadPushKeys, type Push, type PushMessage } from "./push.ts";
+import { type Adapter, type Adapters, createNotifications, type Notice, type Notifications } from "./notifications.ts";
+import { ntfyAdapter } from "./ntfy.ts";
+import { createPush, loadPushKeys, type Push, pushAdapter } from "./push.ts";
 import { type Redactor, redactionExtension, redactorFor } from "./redact.ts";
-import { createReminders, type Notify } from "./reminders.ts";
+import { createReminders } from "./reminders.ts";
 import { findBwrap, prepareServerDirs, SandboxEnv } from "./sandbox.ts";
 import { backendFor, type SearchBackend, webSearchTool } from "./search.ts";
 import { createSelf } from "./self/index.ts";
@@ -93,9 +94,8 @@ export type HostOptions = {
 	dataDir?: string;
 	models?: Models;
 	model?: ModelRef;
-	notify?: Notify;
-	/** Where scheduled jobs' reports go. Default: ntfy, or the server's output. The server sends them to Slack with `setDeliver`. */
-	deliver?: Deliver;
+	/** Replace the ways to reach the owner that the settings give; tests pass fakes that record what they're sent. */
+	adapters?: Adapters;
 	/** Replaces how the spend guard totals spend; tests use it. */
 	spend?: (harness: Harness) => Promise<number>;
 	/** Default: the secrets in the settings. */
@@ -128,45 +128,22 @@ export async function openHost(options: HostOptions = {}) {
 	await prepareServerDirs(sandbox);
 	const chosen = options.models && options.model ? { models: options.models, model: options.model } : modelFor(config);
 	const model = chosen.model;
-	// Notifications for the owner go through ntfy and by Web Push to the installed web view, whichever are set up.
 	// Web Push needs the web view's address, which push services are given as the sender's contact.
 	const pushKeys = config.web?.url === undefined ? undefined : loadPushKeys(dir);
 	let push: Push | undefined;
-	const ntfyRemind = config.ntfy === undefined ? undefined : ntfyNotifier(config.ntfy, config.web?.url);
-	const ntfyReport = config.ntfy === undefined ? undefined : ntfyReporter(config.ntfy);
-	/** Tells the owner every way that's set up. Throws only when every way failed, so a retry doesn't repeat one that worked; with none, prints. */
-	async function tell(message: PushMessage, viaNtfy: (() => Promise<void>) | undefined) {
-		// Each way says whether it reached anyone: Web Push reaches no one until a device signs up.
-		const ways: (() => Promise<boolean>)[] = [];
-		if (viaNtfy !== undefined) ways.push(async () => (await viaNtfy(), true));
-		if (push !== undefined) ways.push(async () => (await push!.send(message)) > 0);
-		const errors: unknown[] = [];
-		let told = false;
-		for (const way of ways) {
-			try {
-				if (await way()) told = true;
-			} catch (error) {
-				errors.push(error);
-			}
-		}
-		if (told) for (const error of errors) console.error("[notify]", error);
-		else if (errors.length > 0) throw errors[0];
-		else console.error(`[notify] ${message.title}: ${message.body} (no ntfy, and no device signed up for notifications)`);
-	}
+	// Made by start(), once the server can give it Slack. Tasks only run from then on, so nothing tells the owner before.
+	let notifications: Notifications | undefined;
+	const tell = async (notice: Notice) => {
+		if (notifications === undefined) throw new Error("Something was to be told to the owner before the host started");
+		await notifications.send(notice);
+	};
 	// The guard refuses the model lookup each request makes once a spend limit is reached.
-	let budgetNotify = (text: string) => tell({ title: "gaidin: budget", body: text, tag: "budget" }, ntfyReport && (() => ntfyReport({ title: "budget", text })));
-	const budget = createBudget({ limits: config.budget, notify: () => budgetNotify, spend: options.spend });
+	const budget = createBudget({ limits: config.budget, notify: (text) => tell({ kind: "budget", text }), spend: options.spend });
 	const models = budget.guard(chosen.models);
 	// A run the guard refused says so, wherever it's reported.
 	const explain = (reason: string | undefined) => (reason === "no_model" ? budget.blocked() : undefined);
 	const owner = config.owner;
-	const notify: Notify = options.notify ?? ((reminder) => tell({ title: "gaidin", body: reminder.text, tag: `reminder-${reminder.taskId}`, urgency: "high" }, ntfyRemind && (() => ntfyRemind(reminder))));
-	// The server also posts reminders to Slack, with snooze buttons. That's extra: a failure there is logged, not retried.
-	let alsoNotify: Notify | undefined;
-	const reminders = createReminders(async (reminder) => {
-		await notify(reminder);
-		await alsoNotify?.(reminder).catch((error) => console.error("[reminder] Slack:", error));
-	}, owner);
+	const reminders = createReminders((reminder) => tell({ kind: "reminder", reminder }), owner);
 	const redactor = options.redactor ?? redactorFor({ ...secretsOf(config), PUSH_PRIVATE_KEY: pushKeys?.privateKey });
 	const mode = options.sandbox ?? config.sandbox;
 	const bwrap = mode === "bwrap" ? findBwrap() : undefined;
@@ -180,11 +157,11 @@ export async function openHost(options: HostOptions = {}) {
 	registry.install(CodingTools);
 	registry.install(reminders.extension);
 	registry.install(createMemory(owner));
-	let deliver: Deliver = options.deliver ?? ((report) => tell({ title: report.title, body: report.text, tag: `job-${report.taskId}` }, ntfyReport && (() => ntfyReport(report))));
 	const homelab = config.homelab === undefined ? undefined : createHomelab(config.homelab, owner, config.keysDir, options.homelab);
 	// Self-written tools are gates too, once they're loaded.
 	let selfGates = (): Gate[] => [];
-	const jobs = createJobs({ deliver: () => deliver, owner, explain, gates: () => [...(homelab === undefined ? [] : [homelab.gate]), ...selfGates()] });
+	const deliver: Deliver = (report) => tell(report.paused ? { kind: "paused", report } : { kind: "report", report });
+	const jobs = createJobs({ deliver, owner, explain, gates: () => [...(homelab === undefined ? [] : [homelab.gate]), ...selfGates()] });
 	registry.install(jobs.extension);
 	if (homelab !== undefined) registry.install(homelab.extension);
 	const web = createFetch(options.fetch, owner);
@@ -227,31 +204,33 @@ export async function openHost(options: HostOptions = {}) {
 	);
 	history.attach(harness);
 	approvals = new ApprovalService(harness, { timeoutMs: options.approvalTimeoutMs ?? config.approvals.waitHours * 3_600_000 });
-	if (pushKeys !== undefined) {
-		push = createPush({ harness, keys: pushKeys, subject: config.web!.url!, fetch: options.pushFetch });
-		// Requests and questions wait on the owner, so they go to the owner's devices whatever else is set up.
-		approvals.onChange((request) => {
-			if (request.status !== "pending") return;
-			const message = { title: request.kind === "question" ? "gaidin asks" : "gaidin wants to", body: request.summary, tag: `approval-${request.id}`, urgency: "high" as const };
-			push!.send(message).catch((error) => console.error("[push]", error));
-		});
-	}
+	if (pushKeys !== undefined) push = createPush({ harness, keys: pushKeys, subject: config.web!.url!, fetch: options.pushFetch });
+	// Requests and questions wait on the owner, so the owner hears of each, and of how it ended.
+	approvals.onChange((request) => tell({ kind: "request", request }));
 	const root = await harness.root(context, { agent: { model, cwd: sandbox } });
-	// After the root exists: the guard's first read would otherwise create it without its agent.
-	await budget.attach(harness);
-	harness.resume();
+
+	/** Starts the tasks, with `slack` among the ways to reach the owner when the server has it. */
+	async function start(slack?: Adapter) {
+		notifications = createNotifications({
+			slack: slack ?? options.adapters?.slack,
+			push: options.adapters?.push ?? (push === undefined ? undefined : pushAdapter(push)),
+			ntfy: options.adapters?.ntfy ?? (config.ntfy === undefined ? undefined : ntfyAdapter(config.ntfy, config.web?.url)),
+		});
+		// After the root exists: the guard's first read would otherwise create it without its agent.
+		await budget.attach(harness);
+		harness.resume();
+	}
+
 	// The tools the web view can switch off: the coding tools, fetch_url (gaidin's only way to the internet), the history tools, the workspace tools
 	// and the self-written ones.
 	const builtIn = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...history.tools, ...workspaces.tools];
 	const switchable = () => [...builtIn, ...(self?.tools() ?? [])];
-	const setAlsoNotify = (next: Notify) => {
-		alsoNotify = next;
-	};
-	const setDeliver = (next: Deliver) => {
-		deliver = next;
-	};
-	const setBudgetNotify = (next: (text: string) => Promise<void>) => {
-		budgetNotify = next;
-	};
-	return { harness, root, reminders, jobs, setDeliver, setAlsoNotify, budget, setBudgetNotify, explain, switchable, approvals, config, timeline: history.timeline, sandbox, push };
+	return { harness, root, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, sandbox, push, start };
+}
+
+/** openHost, then start, for callers with no Slack to give it. */
+export async function startHost(options: HostOptions = {}) {
+	const host = await openHost(options);
+	await host.start();
+	return host;
 }

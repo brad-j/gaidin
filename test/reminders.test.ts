@@ -6,8 +6,9 @@ import test, { type TestContext } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import type { Conversation } from "@earendil-works/pi-durable";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import { ReminderFired, type Reminder, Reminders } from "../src/reminders.ts";
+import type { Adapters } from "../src/notifications.ts";
 
 function tempDir(t: TestContext): string {
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
@@ -23,19 +24,24 @@ function fauxModels(steps: Parameters<ReturnType<typeof fauxProvider>["setRespon
 	return { models, model: { provider: "faux", modelId: "faux-1" } };
 }
 
+/** A way to reach the owner that keeps the reminders it's sent, failing the first `failFirst`. */
 function recorder(failFirst = 0) {
 	const sent: Reminder[] = [];
 	let failures = 0;
-	return {
-		sent,
-		notify: async (reminder: Reminder) => {
-			if (failures < failFirst) {
-				failures += 1;
-				throw new Error("ntfy down");
-			}
-			sent.push(reminder);
+	const adapters: Adapters = {
+		push: {
+			send: async (notice) => {
+				if (notice.kind !== "reminder") return true;
+				if (failures < failFirst) {
+					failures += 1;
+					throw new Error("ntfy down");
+				}
+				sent.push(notice.reminder);
+				return true;
+			},
 		},
 	};
+	return { sent, adapters };
 }
 
 async function until(check: () => boolean | Promise<boolean>, timeoutMs = 10_000) {
@@ -53,10 +59,10 @@ async function firedEntries(root: Conversation) {
 
 test("the remind tool schedules a push that fires and leaves a transcript record", async (t) => {
 	const dir = tempDir(t);
-	const { sent, notify } = recorder();
-	const host = await openHost({
+	const { sent, adapters } = recorder();
+	const host = await startHost({
 		dataDir: dir,
-		notify,
+		adapters,
 		...fauxModels([
 			fauxAssistantMessage(fauxToolCall("remind", { text: "stretch", inMinutes: 0.01 }), { stopReason: "toolUse" }),
 			fauxAssistantMessage(fauxText("Set.")),
@@ -76,7 +82,7 @@ test("the remind tool schedules a push that fires and leaves a transcript record
 
 test("a reminder sleeping across a restart fires in the next process", async (t) => {
 	const dir = tempDir(t);
-	const first = await openHost({ dataDir: dir, notify: recorder().notify, ...fauxModels() });
+	const first = await startHost({ dataDir: dir, adapters: recorder().adapters, ...fauxModels() });
 	const at = Date.now() + 1500;
 	await first.root.commit(async (tx) => {
 		const id = await tx.createTask(first.reminders.ReminderTask, { text: "after restart", at }, {
@@ -87,8 +93,8 @@ test("a reminder sleeping across a restart fires in the next process", async (t)
 	}, context);
 	await first.harness.close(context);
 
-	const { sent, notify } = recorder();
-	const second = await openHost({ dataDir: dir, notify, ...fauxModels() });
+	const { sent, adapters } = recorder();
+	const second = await startHost({ dataDir: dir, adapters, ...fauxModels() });
 	t.after(() => second.harness.close(context));
 	await until(() => sent.length === 1);
 	assert.equal(sent[0]!.text, "after restart");
@@ -97,8 +103,8 @@ test("a reminder sleeping across a restart fires in the next process", async (t)
 
 test("a cancelled reminder finishes without pushing", async (t) => {
 	const dir = tempDir(t);
-	const { sent, notify } = recorder();
-	const host = await openHost({ dataDir: dir, notify, ...fauxModels() });
+	const { sent, adapters } = recorder();
+	const host = await startHost({ dataDir: dir, adapters, ...fauxModels() });
 	t.after(() => host.harness.close(context));
 	const at = Date.now() + 800;
 	const id = await host.root.commit(async (tx) => {
@@ -121,8 +127,8 @@ test("a cancelled reminder finishes without pushing", async (t) => {
 
 test("a failed push is retried", async (t) => {
 	const dir = tempDir(t);
-	const { sent, notify } = recorder(1);
-	const host = await openHost({ dataDir: dir, notify, ...fauxModels() });
+	const { sent, adapters } = recorder(1);
+	const host = await startHost({ dataDir: dir, adapters, ...fauxModels() });
 	t.after(() => host.harness.close(context));
 	const at = Date.now();
 	const id = await host.root.commit(async (tx) => {

@@ -285,7 +285,7 @@ async function findJob(tx: Tx, taskId: number): Promise<Job | undefined> {
 }
 
 export function createJobs(options: {
-	deliver: () => Deliver;
+	deliver: Deliver;
 	owner: string;
 	explain?: (reason: string | undefined) => string | undefined;
 	/** The gates jobs can use, read when they're needed: self-written tools come and go. */
@@ -497,7 +497,7 @@ export function createJobs(options: {
 				let error: string | undefined;
 				if (!silent) {
 					try {
-						await options.deliver()(report);
+						await options.deliver(report);
 					} catch (e) {
 						error = e instanceof Error ? e.message : String(e);
 					}

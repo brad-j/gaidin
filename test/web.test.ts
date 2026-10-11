@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai/providers/faux";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import { Reminders } from "../src/reminders.ts";
 import { createWebServer, type Settings } from "../src/web.ts";
 
@@ -19,7 +19,7 @@ async function start(t: TestContext) {
 	faux.setResponses(Array.from({ length: 10 }, () => fauxAssistantMessage(fauxText("Hello, Brad."))));
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const host = await openHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, notify: async () => {} });
+	const host = await startHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, adapters: { push: { send: async () => true } } });
 	const server = createWebServer({ harness: host.harness, root: host.root, user: BRAD, switchable: host.switchable, approvals: host.approvals, snooze: host.reminders.snooze });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(async () => {

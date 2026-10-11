@@ -1,7 +1,8 @@
+import type { Adapter } from "./notifications.ts";
 import type { Notify } from "./reminders.ts";
 
 // Notifications through ntfy: posts to a topic URL, e.g. https://ntfy.sh/<topic>. The topic name is a secret.
-// host.ts sends each notification this way and by Web Push (push.ts), whichever are set up.
+// notifications.ts decides which notices come this way.
 
 /** Sends a scheduled job's report or another notice as a notification, cut to fit. */
 export function ntfyReporter(ntfy: { url: string; token?: string; icon?: string }) {
@@ -38,5 +39,29 @@ export function ntfyNotifier(ntfy: { url: string; token?: string; icon?: string 
 		if (token) headers.set("Authorization", `Bearer ${token}`);
 		const response = await fetch(url, { method: "POST", body: reminder.text, headers, signal: AbortSignal.timeout(15_000) });
 		if (!response.ok) throw new Error(`ntfy answered ${response.status}`);
+	};
+}
+
+/** ntfy as a way to reach the owner: reminders with their snooze buttons, and reports and warnings as text. Requests don't come this way. */
+export function ntfyAdapter(ntfy: { url: string; token?: string; icon?: string }, web?: string): Adapter {
+	const remind = ntfyNotifier(ntfy, web);
+	const report = ntfyReporter(ntfy);
+	return {
+		async send(notice) {
+			switch (notice.kind) {
+				case "reminder":
+					await remind(notice.reminder);
+					return true;
+				case "report":
+				case "paused":
+					await report(notice.report);
+					return true;
+				case "budget":
+					await report({ title: "budget", text: notice.text });
+					return true;
+				case "request":
+					return false;
+			}
+		},
 	};
 }

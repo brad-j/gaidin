@@ -8,7 +8,7 @@ import test, { type TestContext } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { configFor } from "../src/config.ts";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import { deviceProblem, encrypt, loadPushKeys, vapid } from "../src/push.ts";
 import { createWebServer } from "../src/web.ts";
 
@@ -96,7 +96,7 @@ test("reminders and requests reach signed-up devices, a device that's gone is dr
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const BRAD = "brad@example.com";
-	const host = await openHost({
+	const host = await startHost({
 		config: configFor({ owner: "Brad", web: { user: BRAD, port: 0, url: "https://gaidin.example.ts.net" } }),
 		dataDir: dir(t),
 		models,

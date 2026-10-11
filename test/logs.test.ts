@@ -7,7 +7,7 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { configFor, type HomelabConfig } from "../src/config.ts";
 import { type RunRemote, scrubSecrets, stripAnsi } from "../src/extensions/homelab/logs.ts";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 
 const HOMELAB: HomelabConfig = { feeds: "http://feeds.test", kuma: { url: "https://kuma.test", page: "p" }, logHosts: { "apps-01": "192.0.2.1", "infra-01": "192.0.2.2" } };
 
@@ -37,7 +37,7 @@ async function call(run: RunRemote, args: Record<string, string | number>) {
 	faux.setResponses([fauxAssistantMessage(fauxToolCall("container_logs", args), { stopReason: "toolUse" }), fauxAssistantMessage(fauxText("Done."))]);
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const host = await openHost({ config: configFor({ homelab: HOMELAB }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, homelab: { logs: run }, notify: async () => {} });
+	const host = await startHost({ config: configFor({ homelab: HOMELAB }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, homelab: { logs: run }, adapters: { push: { send: async () => true } } });
 	try {
 		await (await host.root.submit({ type: "input", content: "logs" }, context)).wait(context);
 		const result = (await host.root.context(context)).messages.find((m) => m.role === "toolResult") as { content: { text: string }[]; isError?: boolean };
@@ -88,11 +88,11 @@ test("bad input is refused before anything is sent", async () => {
 test("without hosts, or with the extension off, there's no container_logs tool", async (t) => {
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
-	const options = { notify: async () => {}, models: createModels(), model: { provider: "faux", modelId: "x" } };
-	const off = await openHost({ ...options, dataDir: join(dir, "off") });
+	const options = { adapters: { push: { send: async () => true } }, models: createModels(), model: { provider: "faux", modelId: "x" } };
+	const off = await startHost({ ...options, dataDir: join(dir, "off") });
 	t.after(() => off.harness.close(context));
 	assert.ok(!(await off.root.agent(context)).tools.some((tool) => tool.name === "container_logs" || tool.name === "homelab_status"));
-	const noHosts = await openHost({ ...options, dataDir: join(dir, "no-hosts"), config: configFor({ homelab: { ...HOMELAB, logHosts: {} } }), homelab: { logs: async () => "" } });
+	const noHosts = await startHost({ ...options, dataDir: join(dir, "no-hosts"), config: configFor({ homelab: { ...HOMELAB, logHosts: {} } }), homelab: { logs: async () => "" } });
 	t.after(() => noHosts.harness.close(context));
 	const tools = (await noHosts.root.agent(context)).tools.map((tool) => tool.name);
 	assert.ok(tools.includes("homelab_status") && !tools.includes("container_logs"));

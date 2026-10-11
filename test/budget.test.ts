@@ -8,8 +8,9 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai/providers/faux";
 import { Budget } from "../src/budget.ts";
 import { configFor, loadConfig } from "../src/config.ts";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import { createWebServer } from "../src/web.ts";
+import type { Notice } from "../src/notifications.ts";
 
 /** gaidin whose spend total is `spent.value`, with what it tells the owner collected. */
 async function start(t: TestContext, budget = { daily: 5, monthly: 0 }) {
@@ -20,10 +21,10 @@ async function start(t: TestContext, budget = { daily: 5, monthly: 0 }) {
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const spent = { value: 0 };
-	const host = await openHost({ config: configFor({ budget }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, notify: async () => {}, spend: async () => spent.value });
-	t.after(() => host.harness.close(context));
 	const told: string[] = [];
-	host.setBudgetNotify(async (text) => void told.push(text));
+	const push = { send: async (notice: Notice) => (notice.kind === "budget" && told.push(notice.text), true) };
+	const host = await startHost({ config: configFor({ budget }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, adapters: { push }, spend: async () => spent.value });
+	t.after(() => host.harness.close(context));
 	const ask = async () => (await host.root.submit({ type: "input", content: "hi" }, context)).wait(context);
 	return { host, spent, told, ask };
 }

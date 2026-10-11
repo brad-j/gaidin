@@ -10,7 +10,7 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type FauxRe
 import { configFor } from "../src/config.ts";
 import { blockedRanges, type FetchOptions } from "../src/fetch.ts";
 import type { Activity } from "../src/history.ts";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import { stamp } from "../src/time.ts";
 
 type Step = (lastResult: string) => ReturnType<typeof fauxAssistantMessage>;
@@ -30,7 +30,7 @@ async function start(t: TestContext, steps: Step[], dir: string, extra: { fetch?
 	faux.setResponses(Array.from({ length: 20 }, () => step));
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const host = await openHost({ config: configFor({ owner: "Brad" }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, sandbox: "none", notify: async () => {}, ...extra });
+	const host = await startHost({ config: configFor({ owner: "Brad" }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, sandbox: "none", adapters: { push: { send: async () => true } }, ...extra });
 	t.after(() => host.harness.close(context));
 	return host;
 }

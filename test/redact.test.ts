@@ -7,7 +7,7 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import type { ShellOutputInfo } from "@earendil-works/pi-durable/env";
 import { configFor } from "../src/config.ts";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import { createRedactor, redactingStream, redactorFromEnv } from "../src/redact.ts";
 
 const TOKEN = "xoxb-1234567890-abcdefghijklmnop";
@@ -75,7 +75,7 @@ test("tools don't see the credentials in their environment, and none reach stora
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const config = configFor({ slack: { botToken: TOKEN, appToken: "xapp-1-test", channelId: "C1", userId: "U1" } });
-	const host = await openHost({ config, dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" } });
+	const host = await startHost({ config, dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" } });
 	writeFileSync(join(dir, "sandbox", "secret.txt"), `token=${TOKEN}\n`);
 
 	const settled = await (await host.root.submit({ type: "input", content: "go" }, context)).wait(context);

@@ -10,8 +10,21 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai/providers/faux";
 import { ALERT_TOOLS, followAlerts } from "../src/alerts.ts";
 import { configFor } from "../src/config.ts";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import type { Report } from "../src/jobs.ts";
+import type { Adapters } from "../src/notifications.ts";
+
+/** A way to reach the owner that hands each job report it's sent to `handle`. */
+function reporting(handle: (report: Report) => void | Promise<void>): Adapters {
+	return {
+		push: {
+			send: async (notice) => {
+				if (notice.kind === "report" || notice.kind === "paused") await handle(notice.report);
+				return true;
+			},
+		},
+	};
+}
 
 /** A topic that streams what `send` writes, and records each subscription's `since`. */
 async function topic(t: TestContext) {
@@ -50,7 +63,7 @@ async function start(t: TestContext, dir: string, url: string, reports: Report[]
 	faux.setResponses(Array.from({ length: 5 }, () => fauxAssistantMessage(fauxText("Linkding is down: its container exited. Restart it on apps-01."))));
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const host = await openHost({ config: configFor({ owner: "Brad" }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, notify: async () => {}, deliver: async (r) => void reports.push(r) });
+	const host = await startHost({ config: configFor({ owner: "Brad" }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, adapters: reporting((r) => void reports.push(r)) });
 	const alerts = followAlerts({ url, root: host.root, owner: "Brad", addJob: host.jobs.addJob, batchMs: 200 });
 	t.after(async () => {
 		alerts.stop();

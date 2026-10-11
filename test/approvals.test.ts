@@ -14,7 +14,7 @@ import { configFor } from "../src/config.ts";
 import { Jobs } from "../src/jobs.ts";
 import { Memory } from "../src/memory.ts";
 import { Reminders } from "../src/reminders.ts";
-import { context, type HostOptions, openHost } from "../src/host.ts";
+import { context, type HostOptions, openHost, startHost } from "../src/host.ts";
 
 /** A page on loopback, reachable as a.test and b.test. */
 async function site(t: TestContext): Promise<{ port: number; fetch: FetchOptions }> {
@@ -64,16 +64,18 @@ const nextPending = (approvals: ApprovalService, count = 1) =>
 		return pending.length === count ? pending : undefined;
 	});
 
-async function results(host: Awaited<ReturnType<typeof openHost>>) {
+async function results(host: Awaited<ReturnType<typeof startHost>>) {
 	return (await host.root.context(context)).messages.filter((m) => m.role === "toolResult").map((m) => JSON.stringify(m.content));
 }
 
-async function start(t: TestContext, rounds: string[][], extra: Partial<HostOptions> = {}) {
+/** A host on the scripted fetches, started unless `started` is false, for a test that gives it Slack first. */
+async function start(t: TestContext, rounds: string[][], extra: Partial<HostOptions> = {}, started = true) {
 	const { port, fetch } = await site(t);
 	const dir = dataDir(t);
 	// Named, so the messages are checked with the owner's name in them.
-	const host = await openHost({ config: configFor({ owner: "Brad" }), dataDir: dir, fetch, notify: async () => {}, ...models(port, rounds), ...extra });
+	const host = await openHost({ config: configFor({ owner: "Brad" }), dataDir: dir, fetch, adapters: { push: { send: async () => true } }, ...models(port, rounds), ...extra });
 	t.after(() => host.harness.close(context));
+	if (started) await host.start();
 	return { host, dir, port, fetch };
 }
 
@@ -131,7 +133,7 @@ test("stopping the run closes its request", async (t) => {
 test("a request open across a restart is the same request, and the call goes on once it's answered", async (t) => {
 	const { port, fetch } = await site(t);
 	const dir = dataDir(t);
-	const first = await openHost({ dataDir: dir, fetch, notify: async () => {}, ...models(port, [["a.test"]]) });
+	const first = await startHost({ dataDir: dir, fetch, adapters: { push: { send: async () => true } }, ...models(port, [["a.test"]]) });
 	const asked: string[] = [];
 	first.approvals.onChange((r) => void (r.status === "pending" && asked.push(r.id)));
 	await first.root.submit({ type: "input", content: "go", requestId: "r1" }, context);
@@ -140,7 +142,7 @@ test("a request open across a restart is the same request, and the call goes on 
 	await new Promise((r) => setTimeout(r, 700));
 
 	// The tool call is already stored; the model only has to answer after it.
-	const second = await openHost({ dataDir: dir, fetch, notify: async () => {}, ...models(port, []) });
+	const second = await startHost({ dataDir: dir, fetch, adapters: { push: { send: async () => true } }, ...models(port, []) });
 	t.after(() => second.harness.close(context));
 	second.approvals.onChange((r) => void (r.status === "pending" && asked.push(r.id)));
 	const [after] = await nextPending(second.approvals);
@@ -154,16 +156,17 @@ test("a request open across a restart is the same request, and the call goes on 
 });
 
 test("Slack asks with buttons, in the thread for a forked conversation, and shows the outcome", async (t) => {
-	const { createSlackApprovals } = await import("../src/slack-approvals.ts");
+	const { createSlackNotifications } = await import("../src/slack-notifications.ts");
 	const { SlackState } = await import("../src/slack.ts");
-	const { host } = await start(t, [["a.test"], ["b.test"]]);
+	const { host } = await start(t, [["a.test"], ["b.test"]], {}, false);
 	const calls: { method: string; body: Record<string, any> }[] = [];
 	let n = 0;
 	const api = async (method: string, body: Record<string, unknown>) => {
 		calls.push({ method, body: body as Record<string, any> });
 		return method === "chat.postMessage" ? { ts: `ask.${++n}` } : {};
 	};
-	const slack = createSlackApprovals({ harness: host.harness, approvals: host.approvals, api, channel: "C1", user: "U1" });
+	const slack = createSlackNotifications({ harness: host.harness, root: host.root, approvals: host.approvals, api, channel: "C1", user: "U1", snooze: async () => undefined, resume: async () => undefined });
+	await host.start(slack.adapter);
 	const press = (id: string, decision: string, user = "U1") =>
 		slack.action({ type: "block_actions", user: { id: user }, channel: { id: "C1" }, actions: [{ action_id: `gaidin-approve-${decision}`, value: JSON.stringify({ id, decision }) }] });
 

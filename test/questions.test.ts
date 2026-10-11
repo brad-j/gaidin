@@ -12,7 +12,7 @@ import { configFor } from "../src/config.ts";
 import { blockedRanges } from "../src/fetch.ts";
 import { context, openHost } from "../src/host.ts";
 import { createSlackSurface, type SlackPost } from "../src/slack.ts";
-import { createSlackApprovals } from "../src/slack-approvals.ts";
+import { createSlackNotifications } from "../src/slack-notifications.ts";
 
 type Steps = Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0];
 
@@ -30,12 +30,14 @@ function dataDir(t: TestContext) {
 	return dir;
 }
 
-async function open(t: TestContext, steps: Steps, dir = dataDir(t), extra: Parameters<typeof openHost>[0] = {}) {
+/** A host on the scripted steps, started unless `started` is false, for a test that gives it Slack first. */
+async function open(t: TestContext, steps: Steps, dir = dataDir(t), extra: Parameters<typeof openHost>[0] = {}, started = true) {
 	const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
 	faux.setResponses(steps);
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const host = await openHost({ config: configFor({ owner: "Brad" }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, notify: async () => {}, ...extra });
+	const host = await openHost({ config: configFor({ owner: "Brad" }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, adapters: { push: { send: async () => true } }, ...extra });
+	if (started) await host.start();
 	return host;
 }
 
@@ -119,7 +121,7 @@ test("a question open across a restart is the same question, and the run continu
 });
 
 test("Slack asks a question with buttons, and a reply in its thread answers it, once", async (t) => {
-	const host = await open(t, [call("ask_owner", { question: "Ship it?", choices: ["Ship", "Wait"] }), echoTool()]);
+	const host = await open(t, [call("ask_owner", { question: "Ship it?", choices: ["Ship", "Wait"] }), echoTool()], undefined, {}, false);
 	t.after(() => host.harness.close(context));
 	const calls: { method: string; body: Record<string, any> }[] = [];
 	let n = 0;
@@ -127,7 +129,8 @@ test("Slack asks a question with buttons, and a reply in its thread answers it, 
 		calls.push({ method, body: body as Record<string, any> });
 		return method === "chat.postMessage" ? { ts: `q.${++n}` } : {};
 	};
-	createSlackApprovals({ harness: host.harness, approvals: host.approvals, api, channel: "C1", user: "U1" });
+	const slack = createSlackNotifications({ harness: host.harness, root: host.root, approvals: host.approvals, api, channel: "C1", user: "U1", snooze: async () => undefined, resume: async () => undefined });
+	await host.start(slack.adapter);
 	const posted: string[] = [];
 	const post: SlackPost = async (_c, text) => {
 		posted.push(text);

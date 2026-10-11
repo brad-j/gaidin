@@ -56,7 +56,7 @@ const money = (dollars: number) => `$${dollars.toFixed(2)}`;
 export function createBudget(options: {
 	limits: Limits;
 	/** Tells the owner, once a day, about 80% and about reaching a limit. */
-	notify: () => (text: string) => Promise<void>;
+	notify: (text: string) => Promise<void>;
 	/** Defaults to the Pi Durable totals. */
 	spend?: (harness: Harness) => Promise<number>;
 }) {
@@ -106,7 +106,7 @@ export function createBudget(options: {
 		}, background);
 		status = state;
 		statusDay = day;
-		if (warn !== undefined) options.notify()(warn).catch((error) => console.error("[budget]", error));
+		if (warn !== undefined) options.notify(warn).catch((error) => console.error("[budget]", error));
 		return state;
 	}
 

@@ -6,9 +6,22 @@ import test, { type TestContext } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { configFor } from "../src/config.ts";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import { backoff, describeSchedule, type Job, JobReported, Jobs, MAX_JOBS, nextRun, NOTHING, parseSchedule, recordReport, type Report, resumeJob } from "../src/jobs.ts";
 import { setTimeZone } from "../src/time.ts";
+import type { Adapters } from "../src/notifications.ts";
+
+/** A way to reach the owner that hands each job report it's sent to `handle`. */
+function reporting(handle: (report: Report) => void | Promise<void>): Adapters {
+	return {
+		push: {
+			send: async (notice) => {
+				if (notice.kind === "report" || notice.kind === "paused") await handle(notice.report);
+				return true;
+			},
+		},
+	};
+}
 
 type Steps = Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0];
 
@@ -39,7 +52,7 @@ async function until<T>(get: () => Promise<T | undefined> | T | undefined, timeo
 /** Opens gaidin with every approval granted and reports collected. */
 async function start(t: TestContext, steps: Steps, data = dir(t)) {
 	const reports: Report[] = [];
-	const host = await openHost({ config: configFor({ timeZone: "America/New_York" }), dataDir: data, ...faux(steps), notify: async () => {}, deliver: async (r) => void reports.push(r) });
+	const host = await startHost({ config: configFor({ timeZone: "America/New_York" }), dataDir: data, ...faux(steps), adapters: reporting((r) => void reports.push(r)) });
 	host.approvals.onChange((r) => void (r.status === "pending" && host.approvals.decide(r.id, "once", "test")));
 	return { host, reports, data };
 }
@@ -131,7 +144,7 @@ test("a cancelled job doesn't run", async (t) => {
 	const soon = () => new Date(Date.now() + 500).toISOString();
 	const reports: string[] = [];
 	let failures = 0;
-	const host = await openHost({
+	const host = await startHost({
 		config: configFor({}),
 		dataDir: dir(t),
 		...faux([
@@ -140,11 +153,10 @@ test("a cancelled job doesn't run", async (t) => {
 			fauxAssistantMessage(fauxToolCall("list_jobs", {}), { stopReason: "toolUse" }),
 			fauxAssistantMessage(fauxText("ok")),
 		]),
-		notify: async () => {},
-		deliver: async (r) => {
+		adapters: reporting((r) => {
 			if (failures++ < 1) throw new Error("slack down");
 			reports.push(r.title);
-		},
+		}),
 	});
 	t.after(() => host.harness.close(context));
 	host.approvals.onChange((r) => void (r.status === "pending" && host.approvals.decide(r.id, "once", "test")));
@@ -179,7 +191,7 @@ test("a job due while the server was down runs when it starts", async (t) => {
 test("a failed delivery is retried", async (t) => {
 	const at = new Date(Date.now() + 300).toISOString();
 	let calls = 0;
-	const host = await openHost({
+	const host = await startHost({
 		config: configFor({}),
 		dataDir: dir(t),
 		...faux([
@@ -187,11 +199,10 @@ test("a failed delivery is retried", async (t) => {
 			fauxAssistantMessage(fauxText("ok")),
 			fauxAssistantMessage(fauxText("Report.")),
 		]),
-		notify: async () => {},
-		deliver: async () => {
+		adapters: reporting(() => {
 			calls += 1;
 			if (calls === 1) throw new Error("slack down");
-		},
+		}),
 	});
 	t.after(() => host.harness.close(context));
 	host.approvals.onChange((r) => void (r.status === "pending" && host.approvals.decide(r.id, "once", "test")));
@@ -346,7 +357,7 @@ test("a job without a gate repeats at most every 6 hours, and a gate has to exis
 test("a job is refused when there's no room, before asking and again after the owner allows it", async (t) => {
 	const soon = () => new Date(Date.now() + 3_600_000).toISOString();
 	// Not start(): its approvals answer at once.
-	const host = await openHost({
+	const host = await startHost({
 		config: configFor({}),
 		dataDir: dir(t),
 		...faux([
@@ -354,7 +365,7 @@ test("a job is refused when there's no room, before asking and again after the o
 			fauxAssistantMessage(fauxToolCall("schedule_job", { title: "Too many", instruction: "x", at: soon() }), { stopReason: "toolUse" }),
 			fauxAssistantMessage(fauxText("ok")),
 		]),
-		notify: async () => {},
+		adapters: { push: { send: async () => true } },
 	});
 	t.after(() => host.harness.close(context));
 	const placeholder = (taskId: number): Job => ({ taskId, title: "Filler", instruction: "x", schedule: { kind: "once", at: Date.now() + 3_600_000 }, mode: "report", createdAt: Date.now(), runs: 0 });

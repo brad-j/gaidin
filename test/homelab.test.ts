@@ -7,8 +7,21 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { configFor, type HomelabConfig } from "../src/config.ts";
 import { collectAttention, fetchFeeds, type FetchJson, homelabGate, report } from "../src/extensions/homelab/status.ts";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import { Jobs, type Report } from "../src/jobs.ts";
+import type { Adapters } from "../src/notifications.ts";
+
+/** A way to reach the owner that hands each job report it's sent to `handle`. */
+function reporting(handle: (report: Report) => void | Promise<void>): Adapters {
+	return {
+		push: {
+			send: async (notice) => {
+				if (notice.kind === "report" || notice.kind === "paused") await handle(notice.report);
+				return true;
+			},
+		},
+	};
+}
 
 const HOMELAB: HomelabConfig = { feeds: "http://feeds.test/data", kuma: { url: "https://kuma.test", page: "homelab" }, dashboard: "https://dash.test", logHosts: {} };
 
@@ -141,7 +154,7 @@ test("the agent can call homelab_status", async (t) => {
 	]);
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const host = await openHost({ config: configFor({ homelab: HOMELAB }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, homelab: { fetch: fixtures(undefined, Date.now()) }, notify: async () => {} });
+	const host = await startHost({ config: configFor({ homelab: HOMELAB }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, homelab: { fetch: fixtures(undefined, Date.now()) }, adapters: { push: { send: async () => true } } });
 	t.after(() => host.harness.close(context));
 	const settled = await (await host.root.submit({ type: "input", content: "is the homelab ok?" }, context)).wait(context);
 	assert.equal(settled.status, "done");
@@ -200,14 +213,13 @@ test("a gated job wakes the model only for something new, and what the gate foun
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const reports: Report[] = [];
-	const host = await openHost({
+	const host = await startHost({
 		config: configFor({ homelab: HOMELAB }),
 		dataDir: dir,
 		models,
 		model: { provider: "faux", modelId: "faux-1" },
 		homelab: { fetch: get },
-		notify: async () => {},
-		deliver: async (r) => void reports.push(r),
+		adapters: reporting((r) => void reports.push(r)),
 	});
 	t.after(() => host.harness.close(context));
 	const asked: string[] = [];

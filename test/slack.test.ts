@@ -5,10 +5,9 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai/providers/faux";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import type { Job } from "../src/jobs.ts";
-import { createSlackJobs } from "../src/slack-jobs.ts";
-import { createSlackReminders } from "../src/slack-reminders.ts";
+import { createSlackNotifications } from "../src/slack-notifications.ts";
 import { createSlackSurface, type SlackMessage, type SlackPost } from "../src/slack.ts";
 
 const CHANNEL = "C1";
@@ -59,7 +58,7 @@ async function until(check: () => boolean, timeoutMs = 10_000) {
 }
 
 test("the channel is the root conversation and a thread forks it at the answer it hangs off", async (t) => {
-	const host = await openHost({ dataDir: tempDir(t), ...echoModels() });
+	const host = await startHost({ dataDir: tempDir(t), ...echoModels() });
 	t.after(() => host.harness.close(context));
 	const { posts, post } = recorder();
 	const slack = createSlackSurface({ harness: host.harness, root: host.root, post, channel: CHANNEL, user: BRAD });
@@ -90,7 +89,7 @@ test("the channel is the root conversation and a thread forks it at the answer i
 });
 
 test("a redelivered event is answered once", async (t) => {
-	const host = await openHost({ dataDir: tempDir(t), ...echoModels() });
+	const host = await startHost({ dataDir: tempDir(t), ...echoModels() });
 	t.after(() => host.harness.close(context));
 	const { posts, post } = recorder();
 	const slack = createSlackSurface({ harness: host.harness, root: host.root, post, channel: CHANNEL, user: BRAD });
@@ -103,7 +102,7 @@ test("a redelivered event is answered once", async (t) => {
 });
 
 test("other people, other channels, bots and edits are ignored", async (t) => {
-	const host = await openHost({ dataDir: tempDir(t), ...echoModels() });
+	const host = await startHost({ dataDir: tempDir(t), ...echoModels() });
 	t.after(() => host.harness.close(context));
 	const { posts, post } = recorder();
 	const slack = createSlackSurface({ harness: host.harness, root: host.root, post, channel: CHANNEL, user: BRAD });
@@ -118,7 +117,7 @@ test("other people, other channels, bots and edits are ignored", async (t) => {
 });
 
 test("a thread on a message gaidin never answered gets a note instead of a fork", async (t) => {
-	const host = await openHost({ dataDir: tempDir(t), ...echoModels() });
+	const host = await startHost({ dataDir: tempDir(t), ...echoModels() });
 	t.after(() => host.harness.close(context));
 	const { posts, post } = recorder();
 	const slack = createSlackSurface({ harness: host.harness, root: host.root, post, channel: CHANNEL, user: BRAD });
@@ -131,7 +130,7 @@ test("a thread on a message gaidin never answered gets a note instead of a fork"
 
 test("an answer that wasn't posted before a restart is posted by the next process", async (t) => {
 	const dir = tempDir(t);
-	const first = await openHost({ dataDir: dir, ...echoModels() });
+	const first = await startHost({ dataDir: dir, ...echoModels() });
 	let posting = false;
 	// Slack never answers, as if the process died mid-post.
 	const hang: SlackPost = () => {
@@ -143,7 +142,7 @@ test("an answer that wasn't posted before a restart is posted by the next proces
 	await until(() => posting);
 	await first.harness.close(context);
 
-	const second = await openHost({ dataDir: dir, ...echoModels() });
+	const second = await startHost({ dataDir: dir, ...echoModels() });
 	t.after(() => second.harness.close(context));
 	const { posts, post } = recorder();
 	const after = createSlackSurface({ harness: second.harness, root: second.root, post, channel: CHANNEL, user: BRAD });
@@ -158,7 +157,7 @@ test("an answer that wasn't posted before a restart is posted by the next proces
 
 test("a thread on a job's report forks the run's conversation, not the root", async (t) => {
 	const { recordPosted } = await import("../src/slack.ts");
-	const host = await openHost({ dataDir: tempDir(t), ...echoModels() });
+	const host = await startHost({ dataDir: tempDir(t), ...echoModels() });
 	t.after(() => host.harness.close(context));
 	const { posts, post } = recorder();
 	const slack = createSlackSurface({ harness: host.harness, root: host.root, post, channel: CHANNEL, user: BRAD });
@@ -187,7 +186,7 @@ test("images in a message go to the model, other files are saved in the sandbox,
 	]);
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const host = await openHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" } });
+	const host = await startHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" } });
 	t.after(() => host.harness.close(context));
 	const png = Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), Buffer.from("pixels")]);
 	const downloads: string[] = [];
@@ -221,7 +220,7 @@ test("images in a message go to the model, other files are saved in the sandbox,
 	await until(() => posts.length === 2);
 });
 
-test("a fired reminder is posted with snooze buttons, and Brad's press snoozes it and says until when", async () => {
+test("a fired reminder is posted with snooze buttons, and Brad's press snoozes it and says until when", async (t) => {
 	const calls: { method: string; body: Record<string, unknown> }[] = [];
 	const api = async (method: string, body: Record<string, unknown>) => {
 		calls.push({ method, body });
@@ -232,9 +231,11 @@ test("a fired reminder is posted with snooze buttons, and Brad's press snoozes i
 		snoozed.push([id, minutes]);
 		return { taskId: 99, text: "take the bread out", at: Date.UTC(2026, 9, 11, 12, 10) };
 	};
-	const reminders = createSlackReminders({ api, channel: CHANNEL, user: BRAD, snooze });
+	const host = await startHost({ dataDir: tempDir(t), ...echoModels(), adapters: { push: { send: async () => true } } });
+	t.after(() => host.harness.close(context));
+	const slack = createSlackNotifications({ harness: host.harness, root: host.root, approvals: host.approvals, api, channel: CHANNEL, user: BRAD, snooze: snooze, resume: async () => undefined });
 
-	await reminders.post({ taskId: 7, text: "take the bread out", at: Date.now() });
+	await slack.adapter.send({ kind: "reminder", reminder: { taskId: 7, text: "take the bread out", at: Date.now() } });
 	const posted = calls[0]!.body as { channel: string; blocks: { type: string; elements?: { action_id: string; value: string }[] }[] };
 	assert.equal(posted.channel, CHANNEL);
 	assert.deepEqual(posted.blocks[1]!.elements!.map((b) => [b.action_id, JSON.parse(b.value)]), [
@@ -243,9 +244,9 @@ test("a fired reminder is posted with snooze buttons, and Brad's press snoozes i
 	]);
 
 	const press = (user: string) => ({ type: "block_actions", user: { id: user }, channel: { id: CHANNEL }, message: { ts: "rem.1" }, actions: [{ action_id: "gaidin-snooze-60", value: JSON.stringify({ id: 7, minutes: 60 }) }] });
-	await reminders.action(press("U2"));
+	await slack.action(press("U2"));
 	assert.deepEqual(snoozed, []);
-	await reminders.action(press(BRAD));
+	await slack.action(press(BRAD));
 	assert.deepEqual(snoozed, [[7, 60]]);
 	const update = calls[1]!;
 	assert.equal(update.method, "chat.update");
@@ -254,7 +255,7 @@ test("a fired reminder is posted with snooze buttons, and Brad's press snoozes i
 	assert.doesNotMatch(JSON.stringify(update.body.blocks), /gaidin-snooze/);
 });
 
-test("a paused job is posted with a resume button, and Brad's press resumes it", async () => {
+test("a paused job is posted with a resume button, and Brad's press resumes it", async (t) => {
 	const calls: { method: string; body: Record<string, unknown> }[] = [];
 	const api = async (method: string, body: Record<string, unknown>) => {
 		calls.push({ method, body });
@@ -265,9 +266,11 @@ test("a paused job is posted with a resume button, and Brad's press resumes it",
 		resumed.push(id);
 		return resumed.length === 1 ? ({ taskId: id } as Job) : undefined;
 	};
-	const jobs = createSlackJobs({ api, channel: CHANNEL, user: BRAD, resume });
+	const host = await startHost({ dataDir: tempDir(t), ...echoModels(), adapters: { push: { send: async () => true } } });
+	t.after(() => host.harness.close(context));
+	const slack = createSlackNotifications({ harness: host.harness, root: host.root, approvals: host.approvals, api, channel: CHANNEL, user: BRAD, snooze: async () => undefined, resume: resume });
 
-	await jobs.post({ taskId: 4, title: "Disks", text: "Paused after 5 failed runs in a row", conversationId: 9, paused: true });
+	await slack.adapter.send({ kind: "paused", report: { taskId: 4, title: "Disks", text: "Paused after 5 failed runs in a row", conversationId: 9, paused: true } });
 	const posted = calls[0]!.body as { blocks: { type: string; elements?: { action_id: string; value: string }[] }[] };
 	assert.deepEqual(posted.blocks[1]!.elements!.map((b) => [b.action_id, b.value]), [["gaidin-resume-job", "4"]]);
 
@@ -278,15 +281,15 @@ test("a paused job is posted with a resume button, and Brad's press resumes it",
 		message: { ts: "job.1", text: "Disks: paused", blocks: posted.blocks },
 		actions: [{ action_id: "gaidin-resume-job", value: "4" }],
 	});
-	await jobs.action(press("U2"));
+	await slack.action(press("U2"));
 	assert.deepEqual(resumed, []);
-	await jobs.action(press(BRAD));
+	await slack.action(press(BRAD));
 	assert.deepEqual(resumed, [4]);
 	const update = calls[1]!.body as { ts: string; blocks: { type: string }[] };
 	assert.equal(update.ts, "job.1");
 	assert.deepEqual(update.blocks.map((b) => b.type), ["section", "context"]);
 	assert.match(JSON.stringify(update.blocks), /"Resumed"/);
 	// A second press finds it running already.
-	await jobs.action(press(BRAD));
+	await slack.action(press(BRAD));
 	assert.match(JSON.stringify(calls[2]!.body.blocks), /Not paused any more/);
 });

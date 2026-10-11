@@ -7,7 +7,7 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { UNTRUSTED_TOOLS } from "../src/approvals.ts";
 import { configFor, loadConfig, maskedConfig, secretsOf } from "../src/config.ts";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import { type SearchBackend, type SearchQuery, tavily } from "../src/search.ts";
 
 const KEY = "tvly-dev-0123456789abcdef";
@@ -19,7 +19,7 @@ async function host(t: TestContext, search: SearchBackend | undefined, args: Rec
 	faux.setResponses([fauxAssistantMessage(fauxToolCall("web_search", args as never), { stopReason: "toolUse" }), fauxAssistantMessage(fauxText("ok"))]);
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const h = await openHost({ config: configFor({ owner: "Brad" }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, notify: async () => {}, search });
+	const h = await startHost({ config: configFor({ owner: "Brad" }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, adapters: { push: { send: async () => true } }, search });
 	t.after(() => h.harness.close(context));
 	return h;
 }

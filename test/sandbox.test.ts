@@ -7,7 +7,7 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import { createRedactor } from "../src/redact.ts";
 import { findBwrap, SandboxEnv } from "../src/sandbox.ts";
 
@@ -159,7 +159,7 @@ test("the agent's bash runs in the sandbox", { skip: bwrap === undefined && "bwr
 	]);
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const host = await openHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, notify: async () => {} });
+	const host = await startHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, adapters: { push: { send: async () => true } } });
 	t.after(() => host.harness.close(context));
 
 	const settled = await (await host.root.submit({ type: "input", content: "go" }, context)).wait(context);
@@ -178,5 +178,5 @@ test("the server refuses to start without bwrap unless told to", async (t) => {
 	t.after(() => {
 		process.env.PATH = path;
 	});
-	await assert.rejects(openHost({ dataDir: dir, notify: async () => {} }), /bwrap isn't on PATH/);
+	await assert.rejects(startHost({ dataDir: dir, adapters: { push: { send: async () => true } } }), /bwrap isn't on PATH/);
 });

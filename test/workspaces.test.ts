@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import { findBwrap } from "../src/sandbox.ts";
 import { readWorkspaces, type Remote } from "../src/workspaces.ts";
 
@@ -52,18 +52,18 @@ async function host(t: TestContext, home: string, steps: Parameters<ReturnType<t
 	faux.setResponses(steps);
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const h = await openHost({
+	const h = await startHost({
 		dataDir: dir,
 		models,
 		model: { provider: "faux", modelId: "faux-1" },
-		notify: async () => {},
+		adapters: { push: { send: async () => true } },
 		workspaces: { list: [{ name: "desk", target: "me@desk" }], remote: localRemote(home) },
 	});
 	t.after(() => h.harness.close(context));
 	return h;
 }
 
-async function results(h: Awaited<ReturnType<typeof openHost>>) {
+async function results(h: Awaited<ReturnType<typeof startHost>>) {
 	return (await h.root.context(context)).messages.filter((m) => m.role === "toolResult").map((m) => JSON.stringify(m.content));
 }
 
@@ -208,7 +208,7 @@ test("a call to a workspace that isn't in the settings isn't put to Brad", async
 test("without workspaces there are no workspace tools", async (t) => {
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
-	const h = await openHost({ dataDir: dir, notify: async () => {}, models: createModels(), model: { provider: "faux", modelId: "x" }, workspaces: { list: [], remote: undefined } });
+	const h = await startHost({ dataDir: dir, adapters: { push: { send: async () => true } }, models: createModels(), model: { provider: "faux", modelId: "x" }, workspaces: { list: [], remote: undefined } });
 	t.after(() => h.harness.close(context));
 	assert.ok(!(await h.root.agent(context)).tools.some((tool) => tool.name.startsWith("workspace_")));
 	assert.ok(!existsSync(join(dir, "nothing")));

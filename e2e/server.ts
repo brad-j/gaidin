@@ -11,7 +11,7 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { configFor } from "../src/config.ts";
 import { blockedRanges } from "../src/fetch.ts";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import { createWebServer } from "../src/web.ts";
 
 const user = process.argv[2] ?? "brad@example.com";
@@ -46,12 +46,12 @@ const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
 faux.setResponses(Array.from({ length: 500 }, () => step));
 const models = createModels();
 models.setProvider(faux.provider);
-const host = await openHost({
+const host = await startHost({
 	config: configFor({ owner: "Brad" }, {}),
 	dataDir: dir,
 	models,
 	model: { provider: "faux", modelId: "faux-1" },
-	notify: async () => {},
+	adapters: { push: { send: async () => true } },
 	fetch: { blocked: blockedRanges({ allowLoopback: true }), resolve: async () => [{ address: "127.0.0.1", family: 4 }] },
 });
 const web = createWebServer({

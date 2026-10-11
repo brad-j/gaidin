@@ -17,7 +17,9 @@
 | `approvals.ts` | the approval hook |
 | `redact.ts` | the redaction hook, installed last so it sees every result |
 
-The surfaces are separate: `server.ts` wires the socket, Slack (`slack.ts`, `slack-approvals.ts`) and the web view (`web.ts`, `web/`). `sandbox.ts` is the tools' execution environment.
+The surfaces are separate: `server.ts` wires the socket, Slack (`slack.ts` for the owner's messages and threads, `slack-notifications.ts` for what gaidin posts and its buttons) and the web view (`web.ts`, `web/`), then starts the host. `sandbox.ts` is the tools' execution environment.
+
+Everything gaidin tells the owner unprompted, a fired reminder, a job's report, a paused job, a budget warning or a request for approval, is a notice handed to `notifications.ts`, which holds the table of which ways each kind goes: Slack, Web Push (`push.ts`) and ntfy (`ntfy.ts`), one adapter each. A new kind of notice is a case there and in each adapter. Tests give `openHost` fake adapters with the `adapters` option, and `startHost` opens and starts a host for callers with no Slack to attach first.
 
 Input from outside the process, such as a request body, a button's value, a service's JSON answer, a line from a self-written tool's box or the settings file, goes through `parse.ts` where it comes in: small parsers like `object({ id: integer, text: optional(string) })` that throw a `ParseError` saying what's wrong and where. It's the one module the lint rules let look at values of unknown shape; elsewhere a type assertion needs a `SAFETY:` comment saying why it holds. `ids.ts` turns the numbers gaidin stores back into Pi Durable's ids.
 
@@ -62,7 +64,7 @@ faux.setResponses([
 ]);
 ```
 
-`openHost` takes the settings (`configFor({...})` builds them in a test) and options that replace each outside dependency: the notifier, the homelab feeds and log runner, `fetch_url`'s resolver, the workspace list and remote, and the approval timeout. `test/` has an example for each.
+`startHost` and `openHost` take the settings (`configFor({...})` builds them in a test) and options that replace each outside dependency: the ways to reach the owner (`adapters`), the homelab feeds and log runner, `fetch_url`'s resolver, the workspace list and remote, and the approval timeout. `test/` has an example for each.
 
 ## The homelab extension
 

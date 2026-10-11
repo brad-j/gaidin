@@ -11,6 +11,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { defineDoc, type Harness } from "@earendil-works/pi-durable";
+import type { Adapter, Notice } from "./notifications.ts";
 import { type Json, object, parseJson, string } from "./parse.ts";
 
 export type PushMessage = {
@@ -180,3 +181,29 @@ export function createPush(options: { harness: Harness; keys: PushKeys; subject:
 }
 
 export type Push = ReturnType<typeof createPush>;
+
+/** Web Push as a way to reach the owner. It reaches no one until a device signs up; a request is pushed when it opens. */
+export function pushAdapter(push: Push): Adapter {
+	const message = (notice: Notice): PushMessage | undefined => {
+		switch (notice.kind) {
+			case "reminder":
+				return { title: "gaidin", body: notice.reminder.text, tag: `reminder-${notice.reminder.taskId}`, urgency: "high" };
+			case "report":
+			case "paused":
+				return { title: notice.report.title, body: notice.report.text, tag: `job-${notice.report.taskId}` };
+			case "budget":
+				return { title: "gaidin: budget", body: notice.text, tag: "budget" };
+			case "request": {
+				const { request } = notice;
+				if (request.status !== "pending") return undefined;
+				return { title: request.kind === "question" ? "gaidin asks" : "gaidin wants to", body: request.summary, tag: `approval-${request.id}`, urgency: "high" };
+			}
+		}
+	};
+	return {
+		async send(notice) {
+			const pushed = message(notice);
+			return pushed === undefined ? false : (await push.send(pushed)) > 0;
+		},
+	};
+}

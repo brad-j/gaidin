@@ -10,7 +10,7 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@ear
 import { Approvals } from "../src/approvals.ts";
 import { configFor } from "../src/config.ts";
 import { blockedRanges } from "../src/fetch.ts";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import { addNote, MAX_NOTE, MAX_TOTAL, Memory } from "../src/memory.ts";
 import { createWebServer } from "../src/web.ts";
 
@@ -33,12 +33,12 @@ async function start(t: TestContext, steps: (page: string) => Steps) {
 	faux.setResponses(steps(page));
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const host = await openHost({
+	const host = await startHost({
 		config: configFor({ owner: "Brad" }),
 		dataDir: dir,
 		models,
 		model: { provider: "faux", modelId: "faux-1" },
-		notify: async () => {},
+		adapters: { push: { send: async () => true } },
 		fetch: { blocked: blockedRanges({ allowLoopback: true }), resolve: async () => [{ address: "127.0.0.1", family: 4 }] },
 	});
 	t.after(() => host.harness.close(context));
@@ -48,7 +48,7 @@ async function start(t: TestContext, steps: (page: string) => Steps) {
 	return host;
 }
 
-async function notes(host: Awaited<ReturnType<typeof openHost>>) {
+async function notes(host: Awaited<ReturnType<typeof startHost>>) {
 	return ((await host.harness.snapshot(Memory, context))?.notes ?? []).map((n) => n.text);
 }
 

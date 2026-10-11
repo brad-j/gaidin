@@ -10,7 +10,7 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type FauxRe
 import { blockedRanges } from "../src/fetch.ts";
 import { configFor } from "../src/config.ts";
 import { Approvals } from "../src/approvals.ts";
-import { context, openHost } from "../src/host.ts";
+import { context, startHost } from "../src/host.ts";
 import { Jobs } from "../src/jobs.ts";
 import { findBwrap } from "../src/sandbox.ts";
 
@@ -82,7 +82,7 @@ async function start(t: TestContext, steps: Step[], verdict = "OK", dir = mkdtem
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const fetch = { blocked: blockedRanges({ allowLoopback: true }), resolve: async () => [{ address: "127.0.0.1", family: 4 }] };
-	const host = await openHost({ config: configFor({ owner: "Brad" }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, fetch, notify: async () => {} });
+	const host = await startHost({ config: configFor({ owner: "Brad" }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, fetch, adapters: { push: { send: async () => true } } });
 	t.after(() => host.harness.close(context));
 	return { host, dir, port: (server.address() as AddressInfo).port };
 }
@@ -96,12 +96,12 @@ function draft(dir: string, files: Record<string, string>) {
 }
 
 /** The text of every tool result in the root conversation. */
-async function results(host: Awaited<ReturnType<typeof openHost>>) {
+async function results(host: Awaited<ReturnType<typeof startHost>>) {
 	return (await host.root.context(context)).messages.flatMap((m) => (m.role === "toolResult" ? [m.content.map((c) => (c.type === "text" ? c.text : "")).join("")] : []));
 }
 
 /** Runs `content`, approving every request as it comes, and returns what was asked. */
-async function runApproving(host: Awaited<ReturnType<typeof openHost>>, content: string) {
+async function runApproving(host: Awaited<ReturnType<typeof startHost>>, content: string) {
 	const asked: string[] = [];
 	host.approvals.onChange((request) => {
 		if (request.status !== "pending") return;

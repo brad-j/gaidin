@@ -14,11 +14,9 @@ import type { Config } from "./config.ts";
 import { assistantText, context, openHost } from "./host.ts";
 import { resumeJob } from "./jobs.ts";
 import { ReminderFired } from "./reminders.ts";
-import { createSlackSurface, recordPosted, slackApi, slackDownload, slackPoster, socketMode } from "./slack.ts";
+import { createSlackSurface, slackApi, slackDownload, slackPoster, socketMode } from "./slack.ts";
 import { followAlerts } from "./alerts.ts";
-import { createSlackApprovals } from "./slack-approvals.ts";
-import { createSlackJobs } from "./slack-jobs.ts";
-import { createSlackReminders } from "./slack-reminders.ts";
+import { createSlackNotifications } from "./slack-notifications.ts";
 import { literal, object, optional, ParseError, parseJson, string } from "./parse.ts";
 import { stamp } from "./time.ts";
 import { createWebServer } from "./web.ts";
@@ -81,7 +79,8 @@ export async function serve(config: Config) {
 		process.exit(1);
 	}
 
-	const { harness, root, switchable, approvals, setDeliver, setAlsoNotify, setBudgetNotify, budget, explain, timeline, sandbox, reminders, jobs, push } = await openHost({ config });
+	const host = await openHost({ config });
+	const { harness, root, switchable, approvals, budget, explain, timeline, sandbox, reminders, jobs, push } = host;
 	const alerts = config.alerts === undefined ? undefined : followAlerts({ ...config.alerts, root, owner: config.owner, addJob: jobs.addJob });
 
 	let slack: { stop(): void } | undefined;
@@ -90,29 +89,23 @@ export async function serve(config: Config) {
 		const api = slackApi(botToken);
 		const files = { download: slackDownload(botToken), sandbox };
 		const surface = createSlackSurface({ harness, root, post: slackPoster(api), channel, user, explain, approvals, files });
-		const approvalButtons = createSlackApprovals({ harness, approvals, api, channel, user });
+		const notices = createSlackNotifications({
+			harness,
+			root,
+			approvals,
+			api,
+			channel,
+			user,
+			snooze: (id, minutes) => root.commit((tx) => reminders.snooze(tx, id, minutes), context),
+			resume: (id) => root.commit((tx) => resumeJob(tx, id), context),
+		});
 		void surface.recover();
-		approvalButtons.recover().catch((error) => console.error("[slack] approvals:", error));
-		const reminderButtons = createSlackReminders({ api, channel, user, snooze: (id, minutes) => root.commit((tx) => reminders.snooze(tx, id, minutes), context) });
-		setAlsoNotify(reminderButtons.post);
-		const jobButtons = createSlackJobs({ api, channel, user, resume: (id) => root.commit((tx) => resumeJob(tx, id), context) });
-		slack = socketMode(appToken, {
-			event: surface.receive,
-			action: async (payload) => {
-				await approvalButtons.action(payload);
-				await reminderButtons.action(payload);
-				await jobButtons.action(payload);
-			},
-		});
-		// Job reports go to the channel; a thread on one continues that run's conversation.
-		const post = slackPoster(api);
-		setBudgetNotify(async (text) => void (await post(channel, text)));
-		setDeliver(async (report) => {
-			if (report.paused) return jobButtons.post(report);
-			const posted = await post(channel, `*${report.title}*\n\n${report.text}`);
-			if (report.answer !== undefined) await recordPosted(root, posted, report.answer, report.conversationId);
-		});
+		notices.recover().catch((error) => console.error("[slack] approvals:", error));
+		slack = socketMode(appToken, { event: surface.receive, action: notices.action });
 		console.error(`gaidin on Slack in ${channel}`);
+		await host.start(notices.adapter);
+	} else {
+		await host.start();
 	}
 
 	const web = config.web === undefined
