@@ -42,15 +42,21 @@ test("only Brad's tailnet login gets in", async (t) => {
 	const page = await call("/");
 	assert.equal(page.status, 200);
 	assert.match(await page.text(), /<title>gaidin<\/title>/);
-	for (const path of ["/app.js", "/transcript.ts"]) {
+	// /app.js and every module it imports, directly or not, are served with their types stripped.
+	const served = new Set(["/app.js"]);
+	for (const path of served) {
 		const script = await call(path);
-		assert.equal(script.status, 200);
+		assert.equal(script.status, 200, path);
 		assert.match(script.headers.get("content-type")!, /^text\/javascript/);
 		const code = await script.text();
-		assert.doesNotMatch(code, /: (HTMLElement|Transcript)\b/, `${path} has types left`);
+		assert.doesNotMatch(code, /: (HTMLElement|Transcript|Job|Reminder)\b/, `${path} has types left`);
 		// Only the page's own modules: the server's types it imports are stripped with the rest.
-		assert.deepEqual([...code.matchAll(/^import .* from "([^"]+)";$/gm)].map((m) => m[1]), path === "/app.js" ? ["./transcript.ts"] : [], path);
+		for (const [, from] of code.matchAll(/^import .* from "([^"]+)";$/gm)) {
+			assert.match(from, /^\.\/[a-z]+\.ts$/, `${path} imports ${from}`);
+			served.add(from.slice(1));
+		}
 	}
+	assert.ok(served.has("/transcript.ts") && served.has("/schedule.ts"), [...served].join());
 	for (const path of ["/favicon.svg", "/logo.svg"]) {
 		const icon = await call(path);
 		assert.equal(icon.headers.get("content-type"), "image/svg+xml");

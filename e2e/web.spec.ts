@@ -131,3 +131,45 @@ test("settings commands change one setting and keep the others, and the timeline
 	await send(page, "/timeline");
 	await expect(log).toContainText(/Nothing on the timeline yet\.|older|ok|running/);
 });
+
+test("the schedule view lists reminders and jobs, and pauses, opens and cancels them", async ({ page }) => {
+	await page.goto("/");
+	const views = page.getByRole("navigation", { name: "Views" });
+	const schedule = page.locator("#schedule");
+	await send(page, "remind me about the dentist");
+	await expect(page.locator("#log")).toContainText("Reminder");
+
+	await views.getByRole("link", { name: /schedule/ }).click();
+	await expect(page).toHaveURL(/#\/schedule$/);
+	await expect(page.locator("#log")).toBeHidden();
+	const reminder = schedule.locator(".sched-row", { hasText: "Call the dentist" });
+	await expect(reminder).toContainText(/in (1 h 59 min|2 h)/);
+	await expect(schedule).toContainText("No scheduled jobs.");
+
+	// The dock stays on this view; what's sent from it goes back to the console to be answered.
+	await send(page, "set up a briefing");
+	await expect(page).toHaveURL(/#\/$/);
+	await page.locator("#approvals").getByRole("button", { name: "Allow once" }).click();
+	await expect(page.locator("#approvals")).toBeEmpty();
+
+	await views.getByRole("link", { name: /schedule/ }).click();
+	const job = schedule.locator(".sched-row", { hasText: "Morning briefing" });
+	await expect(job).toContainText("at 07:30, weekdays");
+	await expect(views).toContainText("schedule 2");
+
+	await job.getByRole("button", { name: "pause" }).click();
+	await expect(job.locator(".due")).toHaveText("paused");
+	await expect(page.locator("#schedule-count")).toHaveClass(/warn/);
+	await job.getByRole("button", { name: "resume" }).click();
+	await expect(job.getByRole("button", { name: "pause" })).toBeVisible();
+
+	await job.getByRole("button", { name: "Morning briefing" }).click();
+	await expect(job).toContainText("Summarise the weather and today's calendar.");
+	await expect(job).toContainText("no reports yet");
+
+	// Cancelling takes a second press.
+	await reminder.getByRole("button", { name: "cancel" }).click();
+	await reminder.getByRole("button", { name: "Press again to cancel for good" }).click();
+	await expect(schedule).toContainText("No reminders.");
+	await expect(views).toContainText("schedule 1");
+});

@@ -2,7 +2,7 @@
 // and the agent's settings. It listens on loopback only; `tailscale serve` puts HTTPS in front and adds
 // Tailscale-User-Login, and only GAIDIN_WEB_USER is let in.
 //
-// The page is web/index.html, web/app.ts and web/transcript.ts, with their types stripped as they're served. Its icon is assets/logo.svg,
+// The page is web/index.html, web/app.ts and the modules it imports, with their types stripped as they're served. Its icon is assets/logo.svg,
 // and the header shows assets/logo-transparent.svg. The PNG icons, for phone home screens and ntfy.icon, are
 // renders of the same two files. web/sw.js is the service worker that shows notifications (push.ts).
 import { randomUUID } from "node:crypto";
@@ -143,8 +143,9 @@ export function createWebServer(options: {
 	});
 	const page = readFileSync(resolve(WEB_DIR, "index.html"));
 	const script = (name: string) => stripTypeScriptTypes(readFileSync(resolve(WEB_DIR, name), "utf8"));
-	// app.ts imports ./transcript.ts, which the browser asks for beside /app.js.
-	const scripts = new Map([["/app.js", script("app.ts")], ["/transcript.ts", script("transcript.ts")]]);
+	// app.ts imports the other modules by their .ts names, which the browser asks for beside /app.js.
+	const modules = ["api.ts", "dom.ts", "markdown.ts", "schedule.ts", "transcript.ts"];
+	const scripts = new Map([["/app.js", script("app.ts")], ...modules.map((name) => [`/${name}`, script(name)] as const)]);
 	const asset = (name: string, type: string) => ({ body: readFileSync(resolve(import.meta.dirname, "..", name)), type });
 	const files = new Map([
 		["/favicon.svg", asset("assets/logo.svg", "image/svg+xml")],

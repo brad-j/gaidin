@@ -102,13 +102,25 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 }
 #horizon h1 { margin: 0; flex: none; }
 #horizon h1 img { display: block; }
-#next-up { min-width: 0; max-width: 34ch; flex: none; color: var(--color-ink-2); }
+#views { display: flex; align-self: stretch; gap: var(--space-3xs); }
+#views a {
+	display: inline-flex; align-items: center; gap: var(--space-xs); padding: 2px var(--space-xs) 0; margin-bottom: -1px;
+	color: var(--color-ink-3); text-decoration: none; border-bottom: 2px solid transparent;
+	transition: color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
+}
+@media (hover: hover) { #views a:hover { color: var(--color-ink); } }
+#views a[aria-current="page"] { color: var(--color-ink); border-bottom-color: var(--color-accent); }
+#views .count { color: var(--color-ink-3); font-variant-numeric: tabular-nums; }
+#views .count:empty { display: none; }
+#views .count.warn { color: var(--color-warn); }
+#next-up { min-width: 0; max-width: 34ch; flex: 0 1 auto; margin-left: auto; color: var(--color-ink-2); }
 #next-up span { overflow: hidden; text-overflow: ellipsis; }
 #next-up .soon { color: var(--color-warn); }
 
 /* --- the log ----------------------------------------------------------------------------------- */
 
 /* A short log sits against the prompt, as in a terminal. */
+#scroll[hidden], #schedule-view[hidden] { display: none; }
 #scroll { display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; scrollbar-color: var(--color-rule-2) transparent; }
 #log { width: 100%; max-width: var(--measure); margin: auto auto 0; padding: var(--space-md) var(--space-md) var(--space-lg); }
 .row {
@@ -162,6 +174,8 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 .md p, .md ul, .md ol, .md blockquote, .md pre, .md .table { margin: 0 0 var(--space-sm); }
 .md h3, .md h4, .md h5 { margin: var(--space-md) 0 var(--space-xs); font-size: var(--text-md); font-weight: 600; }
 .md ul, .md ol { padding-left: var(--space-lg); }
+.md ul { list-style-type: disc; }
+.md ul ul { list-style-type: circle; }
 .md li { margin: var(--space-3xs) 0; }
 .md li > ul, .md li > ol { margin: var(--space-3xs) 0 0; }
 .md li::marker { color: var(--color-ink-3); }
@@ -194,6 +208,65 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 .help .c { color: var(--color-accent); }
 .help .a, .help .h { color: var(--color-ink-3); }
 .keys { margin-top: var(--space-xs); color: var(--color-ink-3); }
+
+/* --- schedule: reminders and jobs ------------------------------------------------------------- */
+
+#schedule-view { overflow-y: auto; overscroll-behavior: contain; scrollbar-color: var(--color-rule-2) transparent; }
+#schedule { display: flex; flex-direction: column; gap: var(--space-lg); max-width: var(--measure); margin: 0 auto; padding: var(--space-lg) var(--space-md); }
+.sched-head { display: flex; align-items: center; gap: var(--space-xs); padding: 0 0 var(--space-xs) var(--space-xs); border-bottom: 1px solid var(--color-rule-2); }
+.sched-head h2 { margin: 0; font-family: var(--font-body); font-size: var(--text-md); font-weight: 600; }
+.sched-head .count { color: var(--color-ink-3); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.sched-head button { margin-left: auto; font-size: var(--text-xs); }
+.sched-problem { margin: 0; padding: var(--space-xs) var(--space-sm); background: var(--color-bad-wash); border: 1px solid var(--color-bad); border-radius: var(--radius-sm); color: var(--color-bad); }
+.sched-empty { margin: var(--space-sm) 0 0; padding: 0 var(--space-xs); font-family: var(--font-body); color: var(--color-ink-3); }
+.sched-list { margin: 0; padding: 0; list-style: none; }
+.sched-row {
+	display: grid; grid-template-columns: 15ch minmax(0, 1fr) auto; grid-template-areas: "due body actions"; column-gap: var(--col-gap);
+	align-items: start; padding: var(--space-sm) var(--space-xs); border-bottom: 1px solid var(--color-rule);
+	transition: background-color var(--dur-short) var(--ease-out);
+}
+@media (hover: hover) { .sched-row:hover { background: var(--color-paper-2); } }
+.sched-row .due { grid-area: due; display: flex; flex-direction: column; font-variant-numeric: tabular-nums; line-height: 1.4; }
+.sched-row .due .at { color: var(--color-ink); }
+.sched-row .due .in { color: var(--color-ink-3); font-size: var(--text-xs); }
+.sched-row .due.soon .at, .sched-row .due.soon .in, .sched-row .due.warn .at { color: var(--color-warn); }
+.sched-row .body { grid-area: body; min-width: 0; }
+.sched-row .title { font-family: var(--font-body); font-size: var(--text-md); font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.sched-row.paused .title { color: var(--color-ink-2); }
+.sched-row .toggle {
+	display: inline; min-height: 0; padding: 0; text-align: left; white-space: normal;
+	background: none; border: 0; border-radius: var(--radius-sm); color: var(--color-ink);
+}
+.sched-row .toggle::after { content: "+"; margin-left: 1ch; font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 400; color: var(--color-ink-3); }
+.sched-row .toggle[aria-expanded="true"]::after { content: "−"; }
+@media (hover: hover) { .sched-row .toggle:hover:not(:disabled) { background: none; color: var(--color-accent); } }
+.sched-row .toggle:active:not(:disabled) { transform: none; }
+/* Each part carries its "·" in the space before it; the one starting a line falls in the clipped 2ch on the left. */
+.sched-row .meta {
+	display: flex; flex-wrap: wrap; align-items: baseline; margin: var(--space-3xs) 0 0 -2ch; clip-path: inset(0 0 0 2ch);
+	color: var(--color-ink-3); font-size: var(--text-xs);
+}
+.sched-row .meta > span { margin-left: 2ch; }
+.sched-row .meta > span::before { content: "·"; display: inline-block; width: 2ch; margin-left: -2ch; text-align: center; }
+.sched-row .meta .tag { padding: 0 var(--space-xs); border: 1px solid var(--color-rule-2); border-radius: 999px; color: var(--color-voice); font-size: var(--text-2xs); line-height: 1.6; }
+.sched-row .meta .tag::before { content: none; }
+.sched-row .meta .bad { color: var(--color-bad); }
+.sched-row .status { margin-top: var(--space-3xs); font-size: var(--text-xs); }
+.sched-row .status.warn { color: var(--color-warn); }
+.sched-row .status.bad { color: var(--color-bad); }
+.sched-row .actions { grid-area: actions; flex-wrap: nowrap; gap: var(--space-2xs); }
+.sched-row .detail {
+	display: flex; flex-direction: column; gap: var(--space-2xs); margin-top: var(--space-sm); padding: var(--space-sm) var(--space-md);
+	background: var(--color-paper); border: 1px solid var(--color-rule); border-radius: var(--radius-md);
+}
+.sched-row .detail .label { margin-top: var(--space-xs); color: var(--color-ink-3); font-size: var(--text-2xs); }
+.sched-row .detail .label:first-child { margin-top: 0; }
+.sched-row .detail .instruction { margin: 0; max-width: 76ch; font-family: var(--font-body); white-space: pre-wrap; color: var(--color-ink-2); }
+.sched-row .detail pre { color: var(--color-ink-2); font-size: var(--text-xs); }
+.sched-row .detail .report { padding-top: var(--space-xs); }
+.sched-row .detail .report + .report { margin-top: var(--space-xs); border-top: 1px solid var(--color-rule); }
+.sched-row .detail .report .stamp { margin-bottom: var(--space-2xs); color: var(--color-ink-3); font-size: var(--text-xs); }
+.sched-row .detail .md { font-family: var(--font-body); }
 
 /* --- the dock: approvals, prompt, status line ------------------------------------------------- */
 
@@ -272,7 +345,13 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 @media (max-width: 600px) {
 	:root { --col-label: 6ch; --col-gap: 1.5ch; }
 	#horizon { gap: var(--space-sm); padding: 0 var(--space-sm); }
-	#next-up { flex: 1; max-width: none; }
+	#horizon h1 img { width: 28px; height: 28px; }
+	#views a { padding-left: var(--space-2xs); padding-right: var(--space-2xs); }
+	#next-up { max-width: none; }
+	#schedule { padding: var(--space-md) var(--space-sm); }
+	.sched-head, .sched-empty { padding-left: 0; }
+	.sched-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "due actions" "body body"; row-gap: var(--space-2xs); padding-left: 0; padding-right: 0; }
+	.sched-row .due { flex-direction: row; align-items: baseline; gap: 1ch; }
 	#log, #dock-inner { padding-left: var(--space-sm); padding-right: var(--space-sm); }
 	.row { grid-template-columns: var(--col-label) minmax(0, 1fr); }
 	.row .t { display: none; }
@@ -302,10 +381,17 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 <div id="app">
 	<header id="horizon">
 		<h1><img src="/logo.svg" alt="gaidin" width="32" height="32"></h1>
-		<button id="next-up" class="plain" type="button" title="Upcoming reminders and jobs (/next)"><span>…</span></button>
+		<nav id="views" aria-label="Views">
+			<a href="#/" data-view="console">console</a>
+			<a href="#/schedule" data-view="schedule">schedule <span id="schedule-count" class="count"></span></a>
+		</nav>
+		<button id="next-up" class="plain" type="button" title="Reminders and jobs"><span>…</span></button>
 	</header>
 	<main id="scroll">
 		<div id="log" role="log" aria-live="polite" aria-relevant="additions"></div>
+	</main>
+	<main id="schedule-view" hidden>
+		<div id="schedule"></div>
 	</main>
 	<footer id="dock">
 		<button id="jump" type="button" hidden>↓ new activity</button>

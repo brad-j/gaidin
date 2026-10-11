@@ -4,6 +4,10 @@
 import type { Message } from "@earendil-works/pi-ai";
 import type { ApprovalRequest } from "../src/approvals.ts";
 import type { Gets, Posts, StreamEvent } from "../src/web.ts";
+import { load, post } from "./api.ts";
+import { $, clock, el, fromNow, money, when } from "./dom.ts";
+import { markdown } from "./markdown.ts";
+import { renderSchedule, troubled } from "./schedule.ts";
 import { applyEvent, newTranscript } from "./transcript.ts";
 
 type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
@@ -19,11 +23,6 @@ type Reminder = Gets["/api/reminders"][number];
 type Job = Gets["/api/jobs"][number];
 type Settings = Gets["/api/settings"];
 type Approval = ApprovalRequest;
-
-function $<T extends HTMLElement = HTMLElement>(id: string): T {
-	// SAFETY: every id asked for is an element of that type in index.html.
-	return document.getElementById(id) as T;
-}
 
 /** The conversation, as the event stream has it. */
 const transcript = newTranscript();
@@ -97,13 +96,6 @@ function schedule() {
 	});
 }
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
-	const node = document.createElement(tag);
-	if (className) node.className = className;
-	if (text !== undefined) node.textContent = text;
-	return node;
-}
-
 function textOf(content: string | Part[]): string {
 	return Array.isArray(content) ? content.map((p) => p.text ?? `[${p.type}]`).join("") : content;
 }
@@ -124,18 +116,6 @@ function shortStamp(stamp: string): string {
 	return new Date(Number(year), Number(month) - 1, Number(day)).toLocaleString(undefined, { month: "short", day: "numeric" });
 }
 
-const clock = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-const when = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-
-/** "in 25 min", "in 3 h 10 min", "in 4 days". */
-function fromNow(at: number): string {
-	const minutes = Math.round((at - Date.now()) / 60_000);
-	if (minutes < 1) return "now";
-	if (minutes < 60) return `in ${minutes} min`;
-	if (minutes < 48 * 60) return `in ${Math.floor(minutes / 60)} h${minutes % 60 === 0 ? "" : ` ${minutes % 60} min`}`;
-	return `in ${Math.round(minutes / 1440)} days`;
-}
-
 function argsSummary(name: string, args: Fields): string {
 	if (name === "bash" && isText(args.command)) return args.command;
 	if (isText(args.path)) return args.path;
@@ -151,197 +131,6 @@ function argsSummary(name: string, args: Fields): string {
 function toolArguments(detail: string): Fields {
 	// SAFETY: history.ts writes a tool call's detail with JSON.stringify of its arguments, an object.
 	return JSON.parse(detail) as Fields;
-}
-
-function money(dollars: number): string {
-	return `$${dollars.toFixed(dollars < 1 ? 3 : 2)}`;
-}
-
-// --- markdown ---------------------------------------------------------------------------------
-// Enough Markdown for model answers: fences, headings, lists, quotes, tables, rules, and inline code,
-// emphasis and links. It builds DOM nodes, never HTML strings, so nothing in a message can inject markup.
-
-const INLINE = /(`+)([\s\S]*?[^`])\1(?!`)|\*\*([^*][\s\S]*?)\*\*|__([^_][\s\S]*?)__|~~([\s\S]+?)~~|!?\[([^\]]+)\]\(<?((?:[^()\s<>]|\([^()\s]*\))+)>?\)|<?(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"\]])>?|\*([^*\s](?:[^*]*[^*\s])?)\*|(?<![\w])_([^_\s](?:[^_]*[^_\s])?)_(?![\w])/g;
-
-function inline(text: string, parent: HTMLElement) {
-	let last = 0;
-	for (const m of text.matchAll(INLINE)) {
-		const index = m.index ?? 0;
-		if (index > last) parent.append(text.slice(last, index));
-		last = index + m[0].length;
-		if (m[1] !== undefined) parent.append(el("code", undefined, m[2].replace(/^ (.*) $/, "$1")));
-		else if (m[3] !== undefined || m[4] !== undefined) inline(m[3] ?? m[4], parent.appendChild(el("strong")));
-		else if (m[5] !== undefined) inline(m[5], parent.appendChild(el("s")));
-		else if (m[6] !== undefined) parent.append(link(m[7], m[6]));
-		else if (m[8] !== undefined) parent.append(link(m[8]));
-		else inline(m[9] ?? m[10], parent.appendChild(el("em")));
-	}
-	if (last < text.length) parent.append(text.slice(last));
-}
-
-/** A link to an http(s) or mailto address; anything else is shown as its label. A label holding a URL stays plain, so links don't nest. */
-function link(href: string, label?: string): Node {
-	if (!/^(https?:|mailto:)/i.test(href)) return document.createTextNode(label ?? href);
-	const a = el("a");
-	a.href = href;
-	a.target = "_blank";
-	a.rel = "noopener noreferrer";
-	if (label === undefined || /https?:\/\//.test(label)) a.textContent = label ?? href;
-	else inline(label, a);
-	return a;
-}
-
-const FENCE = /^ {0,3}(`{3,}|~{3,})\s*([\w+-]*)/;
-const HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
-const RULE = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
-const ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
-const QUOTE = /^ {0,3}> ?(.*)$/;
-const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
-
-function markdown(source: string): HTMLElement {
-	const root = el("div", "md");
-	blocks(source.replace(/\r\n?/g, "\n").split("\n"), root);
-	return root;
-}
-
-function cells(row: string): string[] {
-	return row.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
-}
-
-function isTable(lines: string[], i: number): boolean {
-	return lines[i].includes("|") && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1]);
-}
-
-function startsBlock(lines: string[], i: number): boolean {
-	const line = lines[i];
-	return FENCE.test(line) || HEADING.test(line) || RULE.test(line) || ITEM.test(line) || QUOTE.test(line) || isTable(lines, i);
-}
-
-function blocks(lines: string[], parent: HTMLElement) {
-	let i = 0;
-	while (i < lines.length) {
-		const line = lines[i];
-		if (line.trim() === "") {
-			i++;
-			continue;
-		}
-		const fence = FENCE.exec(line);
-		if (fence) {
-			// An unclosed fence runs to the end, which is what a streaming answer looks like mid-block.
-			const close = new RegExp(`^ {0,3}${fence[1][0]}{${fence[1].length},}\\s*$`);
-			const body: string[] = [];
-			for (i++; i < lines.length && !close.test(lines[i]); i++) body.push(lines[i]);
-			i++;
-			const pre = el("pre");
-			const code = el("code", undefined, body.join("\n"));
-			if (fence[2]) code.dataset.lang = fence[2];
-			pre.append(code);
-			parent.append(pre);
-			continue;
-		}
-		const heading = HEADING.exec(line);
-		if (heading) {
-			const level = heading[1].length;
-			const h = el(level <= 2 ? "h3" : level === 3 ? "h4" : "h5");
-			inline(heading[2], h);
-			parent.append(h);
-			i++;
-			continue;
-		}
-		if (RULE.test(line)) {
-			parent.append(el("hr"));
-			i++;
-			continue;
-		}
-		if (QUOTE.test(line)) {
-			const body: string[] = [];
-			for (; i < lines.length && lines[i].trim() !== "" && QUOTE.test(lines[i]); i++) body.push(QUOTE.exec(lines[i])![1]);
-			const quote = el("blockquote");
-			blocks(body, quote);
-			parent.append(quote);
-			continue;
-		}
-		if (isTable(lines, i)) {
-			const align = cells(lines[i + 1]).map((c) => (c.endsWith(":") ? (c.startsWith(":") ? "center" : "right") : ""));
-			const table = el("table");
-			const head = table.createTHead().insertRow();
-			for (const [n, text] of cells(line).entries()) {
-				const th = el("th");
-				if (align[n]) th.style.textAlign = align[n];
-				inline(text, th);
-				head.append(th);
-			}
-			const body = table.createTBody();
-			for (i += 2; i < lines.length && lines[i].includes("|") && lines[i].trim() !== ""; i++) {
-				const row = body.insertRow();
-				for (const [n, text] of cells(lines[i]).entries()) {
-					const td = row.insertCell();
-					if (align[n]) td.style.textAlign = align[n];
-					inline(text, td);
-				}
-			}
-			const wrap = el("div", "table");
-			wrap.append(table);
-			parent.append(wrap);
-			continue;
-		}
-		const item = ITEM.exec(line);
-		if (item) {
-			i = list(lines, i, item[1].length, parent);
-			continue;
-		}
-		// Line breaks inside a paragraph are kept: answers use them on purpose.
-		const paragraph = el("p");
-		for (let first = true; i < lines.length && lines[i].trim() !== "" && (first || !startsBlock(lines, i)); i++, first = false) {
-			if (!first) paragraph.append(el("br"));
-			inline(lines[i].trim(), paragraph);
-		}
-		parent.append(paragraph);
-	}
-}
-
-/** A list at `indent`; lines indented further belong to the item above them. Returns the next line. */
-function list(lines: string[], i: number, indent: number, parent: HTMLElement): number {
-	const first = ITEM.exec(lines[i])!;
-	const ordered = /\d/.test(first[2]);
-	const node = ordered ? el("ol") : el("ul");
-	if (node instanceof HTMLOListElement && parseInt(first[2]) !== 1) node.start = parseInt(first[2]);
-	while (i < lines.length) {
-		const item = ITEM.exec(lines[i]);
-		if (!item || item[1].length !== indent || /\d/.test(item[2]) !== ordered) break;
-		const body = [item[3]];
-		let loose = false;
-		for (i++; i < lines.length; i++) {
-			const line = lines[i];
-			const leading = line.length - line.trimStart().length;
-			if (line.trim() === "") {
-				// A blank line ends the item; the list goes on if the next text is another item or indented under this one.
-				const next = lines.slice(i + 1).find((l) => l.trim() !== "");
-				if (next === undefined || next.length - next.trimStart().length <= indent) break;
-				body.push("");
-				loose = true;
-			} else if (leading > indent) body.push(line.slice(Math.min(leading, indent + 2)));
-			else if (ITEM.test(line) || startsBlock(lines, i)) break;
-			else body.push(line.trim());
-		}
-		const li = el("li");
-		if (body.length === 1) inline(body[0], li);
-		else {
-			blocks(body, li);
-			// A tight item's first paragraph sits inline, so the bullet lines up with its text.
-			const lead = li.firstElementChild;
-			if (!loose && lead?.tagName === "P") lead.replaceWith(...lead.childNodes);
-		}
-		node.append(li);
-		if (lines[i]?.trim() === "") {
-			let next = i;
-			while (next < lines.length && lines[next].trim() === "") next++;
-			const following = next < lines.length ? ITEM.exec(lines[next]) : null;
-			if (following && following[1].length === indent) i = next;
-		}
-	}
-	parent.append(node);
-	return i;
 }
 
 /** Rendered answers by key, so a re-render while text streams in only re-parses the block that changed. */
@@ -582,7 +371,7 @@ function renderStatusline() {
 }
 
 // --- horizon ----------------------------------------------------------------------------------
-// The next reminder or scheduled job run, named in the header.
+// The header: the views, and the next reminder or scheduled job run.
 
 let reminders: Reminder[] = [];
 let jobs: Job[] = [];
@@ -616,32 +405,54 @@ function renderHorizon() {
 		if (next.at - now < 3_600_000) text.className = "soon";
 	}
 	nextUp.replaceChildren(text);
+
+	const count = $("schedule-count");
+	count.textContent = items.length === 0 ? "" : String(items.length);
+	count.classList.toggle("warn", troubled(jobs) > 0);
+	count.title = troubled(jobs) > 0 ? "A job is paused or failing" : "";
+	if (view() === "schedule") {
+		renderSchedule($("schedule"), reminders, jobs, {
+			changed: async () => {
+				await Promise.all([loadReminders(), loadJobs()]);
+			},
+			prefill,
+		});
+	}
+}
+
+// --- views ------------------------------------------------------------------------------------
+// The console is the conversation; the others are pages beside it. The dock stays on every view, so
+// approvals are never out of sight, and anything sent from it goes back to the console to be answered.
+
+const VIEWS = ["console", "schedule"] as const;
+type View = (typeof VIEWS)[number];
+
+function view(): View {
+	return VIEWS.find((v) => location.hash === `#/${v}`) ?? "console";
+}
+
+function go(to: View) {
+	if (view() !== to) location.hash = `#/${to === "console" ? "" : to}`;
+}
+
+function showView() {
+	const shown = view();
+	$("scroll").hidden = shown !== "console";
+	$("schedule-view").hidden = shown !== "schedule";
+	for (const link of document.querySelectorAll<HTMLAnchorElement>("#views a")) {
+		if (link.dataset.view === shown) link.setAttribute("aria-current", "page");
+		else link.removeAttribute("aria-current");
+	}
+	if (shown === "console") {
+		stick = true;
+		schedule();
+	} else renderHorizon();
 }
 
 // --- requests ---------------------------------------------------------------------------------
 
 function notice(text: string) {
 	if (text !== "") say("err", text);
-}
-
-/** A POST to one of the server's routes, with the body it takes. */
-async function post<P extends keyof Posts>(path: P, body: Posts[P]["body"]): Promise<Posts[P]["answer"]> {
-	const response = await fetch(path, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(body),
-	});
-	if (!response.ok) throw new Error(`${path}: ${await response.text()}`);
-	// SAFETY: web.ts's route table is checked against Posts, so the route answers with Posts[P]["answer"].
-	return response.json() as Promise<Posts[P]["answer"]>;
-}
-
-/** A GET of one of the server's routes, with `query` after it. */
-async function load<P extends keyof Gets>(path: P, query = ""): Promise<Gets[P]> {
-	const response = await fetch(path + query);
-	if (!response.ok) throw new Error(`${path}: ${await response.text()}`);
-	// SAFETY: web.ts's route table is checked against Gets, so the route answers with Gets[P].
-	return response.json() as Promise<Gets[P]>;
 }
 
 async function loadSpend() {
@@ -1280,6 +1091,7 @@ async function submit() {
 	input.value = "";
 	fit();
 	updateMenu();
+	go("console");
 	if (content.startsWith("/") && !content.startsWith("//")) {
 		typed.push(content);
 		return runCommand(content);
@@ -1394,7 +1206,9 @@ $("jump").addEventListener("click", () => {
 	scroller.scrollTop = scroller.scrollHeight;
 	$("jump").hidden = true;
 });
-$("next-up").addEventListener("click", () => void runCommand("/next"));
+$("next-up").addEventListener("click", () => go("schedule"));
+window.addEventListener("hashchange", showView);
+showView();
 
 // The service worker shows notifications, and a short page when the server can't be reached.
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch((error) => notice(String(error)));

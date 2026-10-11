@@ -25,7 +25,10 @@ const sitePort = (site.address() as AddressInfo).port;
 
 type Context = { messages: readonly { role: string; content?: unknown }[] };
 
-/** "fetch" fetches site.test, "ask" asks a question, "remind" sets a reminder due now; then it says what came back, in short for a fetch. */
+/**
+ * "fetch" fetches site.test, "ask" asks a question, "remind" sets a reminder due now, "dentist" one due in two hours,
+ * and "briefing" schedules a weekday job; then it says what came back, in short for a fetch.
+ */
 function step(ctx: Context) {
 	const last = ctx.messages.at(-1);
 	if (last?.role === "toolResult") {
@@ -37,6 +40,8 @@ function step(ctx: Context) {
 	const call = (name: string, args: Record<string, string | number | string[]>) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: "toolUse" });
 	if (said.includes("fetch")) return call("fetch_url", { url: `http://site.test:${sitePort}/` });
 	if (said.includes("ask")) return call("ask_owner", { question: "Keep the old branch?", choices: ["Yes", "No"] });
+	if (said.includes("dentist")) return call("remind", { text: "Call the dentist", inMinutes: 120 });
+	if (said.includes("briefing")) return call("schedule_job", { title: "Morning briefing", instruction: "Summarise the weather and today's calendar.", time: "07:30", days: "weekdays" });
 	if (said.includes("remind")) return call("remind", { text: "stretch", inMinutes: 0 });
 	return fauxAssistantMessage(fauxText("Hello, Brad."));
 }
