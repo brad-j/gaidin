@@ -14,6 +14,7 @@ import { type Conversation, type Harness, type ModelRef, type ToolRegistration, 
 import type { ApprovalService, Decision } from "./approvals.ts";
 import type { BudgetGuard } from "./budget.ts";
 import { context } from "./host.ts";
+import type { createHistory } from "./history.ts";
 import { describeSchedule, Jobs, removeJob } from "./jobs.ts";
 import { addNote, forgetNote, Memory } from "./memory.ts";
 import { Reminders, removeReminder } from "./reminders.ts";
@@ -40,6 +41,8 @@ export function createWebServer(options: {
 	/** Model ids the page offers, from the settings' model.choices. */
 	models?: readonly string[];
 	budget?: BudgetGuard;
+	/** What gaidin did, for /timeline. */
+	timeline?: ReturnType<typeof createHistory>["timeline"];
 }) {
 	const { harness, root, user, switchable, approvals } = options;
 	const choices = options.models ?? [];
@@ -130,6 +133,11 @@ export function createWebServer(options: {
 		if (get && url.pathname === "/api/jobs") {
 			const items = (await harness.snapshot(Jobs, context))?.items ?? [];
 			return json(response, items.map((job) => ({ ...job, when: describeSchedule(job.schedule) })).sort((a, b) => (a.nextAt ?? 0) - (b.nextAt ?? 0)));
+		}
+		if (get && url.pathname === "/api/timeline") {
+			const entry = Number(url.searchParams.get("entry"));
+			const ref = url.searchParams.get("ref");
+			return json(response, (await options.timeline?.(ref === null || !Number.isInteger(entry) ? undefined : { entry, ref })) ?? { items: [] });
 		}
 		if (get && url.pathname === "/api/memory") return json(response, (await harness.snapshot(Memory, context))?.notes ?? []);
 		if (get && url.pathname === "/api/budget") return json(response, options.budget === undefined ? null : await options.budget.refresh());

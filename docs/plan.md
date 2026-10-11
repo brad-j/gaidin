@@ -23,11 +23,12 @@
 9. Web search through a configurable backend, Tavily first.
 10. Self-extension: gaidin writes tools for itself, which pass a type check, their tests, lint rules and a review before the owner approves them, and run in a box of their own ([Tools](tools.md#self-written-tools)).
 11. Search over past conversations: the owner's messages and gaidin's answers in every conversation, thread and job run, in an index of its own ([Tools](tools.md#past-conversations)).
+12. A timeline in the web view of what gaidin did and who allowed it, from approval outcomes recorded in the transcript ([Security](security.md#approvals)).
 
 ## Next
 
 Candidates:
 
-- Branching from any message in the web view, and a timeline of what gaidin did and who approved it.
 - Release polish: a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
-- Push-to-talk in the web view. That would need more memory on the VM.
+
+Not planned: branching from any message in the web view, since Slack threads already branch, and push-to-talk, since the owner dictates with superwhisper.

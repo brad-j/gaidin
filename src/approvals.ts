@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
 import { type Message, type ToolCall, Type } from "@earendil-works/pi-ai";
-import { type ConversationId, defineDoc, defineExtension, defineTool, type Harness, hook, type TaskId, ToolTask } from "@earendil-works/pi-durable";
+import { type ConversationId, defineDoc, defineEntry, defineExtension, defineTool, type Harness, hook, type TaskId, ToolTask, type Tx } from "@earendil-works/pi-durable";
 import { describeSchedule, parseSchedule } from "./jobs.ts";
 
 export type Decision = "once" | "always" | "deny";
@@ -56,6 +56,12 @@ export const Approvals = defineDoc<{ requests: Record<string, ApprovalRequest>; 
 	scope: "session",
 	initial: () => ({ requests: {}, fetchHosts: [] }),
 });
+
+/**
+ * How a request ended, written into its conversation for the timeline (history.ts). The model doesn't see it, and
+ * it outlives the request, which is dropped from the document a week after it's decided.
+ */
+export const ApprovalSettled = defineEntry<Pick<ApprovalRequest, "id" | "tool" | "summary" | "status" | "kind" | "decision" | "by" | "answer" | "decidedAt">>("gaidin.approval");
 
 type ApprovalState = { requests: Record<string, ApprovalRequest>; fetchHosts: string[]; grants?: Grant[] };
 
@@ -171,9 +177,18 @@ export class ApprovalService {
 		return () => this.#listeners.delete(listener);
 	}
 
-	async #commit<T>(change: (doc: ApprovalState) => T): Promise<T> {
+	async #commit<T>(change: (doc: ApprovalState, tx: Tx) => T | Promise<T>): Promise<T> {
 		const root = await this.#harness.root(background);
-		return root.commit(async (tx) => change(await tx.doc(Approvals)), background);
+		return root.commit(async (tx) => change(await tx.doc(Approvals), tx), background);
+	}
+
+	/** Records how `request` ended in its conversation, and returns a copy that outlives the commit. */
+	async #record(tx: Tx, request: ApprovalRequest): Promise<ApprovalRequest> {
+		const done = plain(request);
+		const { id, tool, summary, status, kind, decision, by, answer, decidedAt } = done;
+		const data = JSON.parse(JSON.stringify({ id, tool, summary, status, kind, decision, by, answer, decidedAt }));
+		await tx.appendEntry(ApprovalSettled, request.conversationId as ConversationId, { data });
+		return done;
 	}
 
 	#emit(request: ApprovalRequest) {
@@ -201,13 +216,13 @@ export class ApprovalService {
 
 	/** The owner's answer. Returns the request, or nothing if it wasn't pending. */
 	async decide(id: string, decision: Decision, by: string): Promise<ApprovalRequest | undefined> {
-		const decided = await this.#commit((doc) => {
+		const decided = await this.#commit(async (doc, tx) => {
 			const request = doc.requests[id];
 			if (request === undefined || request.status !== "pending" || request.kind === "question") return undefined;
 			if (request.expiresAt <= Date.now()) {
 				request.status = "expired";
 				request.decidedAt = Date.now();
-				return plain(request);
+				return this.#record(tx, request);
 			}
 			request.status = decision === "deny" ? "denied" : "approved";
 			request.decidedAt = Date.now();
@@ -223,7 +238,7 @@ export class ApprovalService {
 					{ workspace: request.always.value, conversationId: request.conversationId, until: now + WORKSPACE_GRANT_MS },
 				];
 			}
-			return plain(request);
+			return this.#record(tx, request);
 		});
 		if (decided !== undefined) this.#settled(decided);
 		return decided;
@@ -233,14 +248,14 @@ export class ApprovalService {
 	async answer(id: string, text: string, by: string): Promise<ApprovalRequest | undefined> {
 		const answer = text.trim();
 		if (answer === "") return undefined;
-		const answered = await this.#commit((doc): ApprovalRequest | undefined => {
+		const answered = await this.#commit(async (doc, tx): Promise<ApprovalRequest | undefined> => {
 			const request = doc.requests[id];
 			if (request === undefined || request.status !== "pending" || request.kind !== "question") return undefined;
 			request.status = "answered";
 			request.answer = answer;
 			request.decidedAt = Date.now();
 			request.by = by;
-			return plain(request);
+			return this.#record(tx, request);
 		});
 		if (answered !== undefined) this.#settled(answered);
 		return answered;
@@ -266,12 +281,12 @@ export class ApprovalService {
 
 	/** Ends a pending request without an answer: the run was stopped, the time ran out, or the owner moved on. */
 	async close(id: string, status: "expired" | "cancelled" | "superseded"): Promise<void> {
-		const closed = await this.#commit((doc): ApprovalRequest | undefined => {
+		const closed = await this.#commit(async (doc, tx): Promise<ApprovalRequest | undefined> => {
 			const request = doc.requests[id];
 			if (request === undefined || request.status !== "pending") return undefined;
 			request.status = status;
 			request.decidedAt = Date.now();
-			return plain(request);
+			return this.#record(tx, request);
 		});
 		if (closed !== undefined) this.#settled(closed);
 	}

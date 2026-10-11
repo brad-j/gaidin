@@ -224,6 +224,7 @@ function argsSummary(name: string, args: Record<string, unknown>): string {
 	if (typeof args.url === "string") return args.url;
 	if (name === "remind") return `${args.text ?? ""} ${args.at ?? (args.inMinutes === undefined ? "" : `in ${args.inMinutes} min`)}`;
 	if (typeof args.title === "string") return args.title;
+	if (typeof args.text === "string") return args.text;
 	const json = JSON.stringify(args);
 	return json === "{}" ? "" : json;
 }
@@ -953,6 +954,43 @@ async function showMemory() {
 	say("sys", out);
 }
 
+type Activity = { entry: number; at: number; place: string; kind: string; name: string; detail: string; outcome: string };
+type Cursor = { entry: number; ref: string };
+
+const GOOD = /^(ok|allowed once|always allowed|answered|reported|pushed)\b/;
+const BAD = /^(denied|blocked|expired|not delivered|push failed)\b/;
+
+/** What gaidin did, 50 at a time, newest first, with who allowed it. */
+async function showTimeline(cursor?: Cursor) {
+	const page = await load<{ items: Activity[]; next?: Cursor }>(cursor === undefined ? "/api/timeline" : `/api/timeline?entry=${cursor.entry}&ref=${encodeURIComponent(cursor.ref)}`);
+	if (page.items.length === 0) return say("sys", cursor === undefined ? "Nothing on the timeline yet." : "Nothing older.");
+	const out = el("div", "out timeline");
+	for (const item of page.items) {
+		const label = item.kind === "tool" ? item.name : item.kind === "approval" ? `allow ${item.name}?` : item.kind === "job" ? "job" : "reminder";
+		const what = item.kind === "tool" ? argsSummary(item.name, JSON.parse(item.detail) as Record<string, unknown>) : item.kind === "job" ? item.name : item.detail;
+		const detail = el("span", undefined, what);
+		if (item.place !== "main") detail.append(el("span", "dim", ` · ${item.place === "thread" ? "thread" : "job run"}`));
+		const outcome = item.outcome || "running";
+		out.append(
+			el("span", "dim", item.at > 0 ? when.format(item.at) : ""),
+			el("span", "when", label),
+			detail,
+			el("span", GOOD.test(outcome) ? "on" : BAD.test(outcome) || item.kind === "tool" && outcome !== "running" ? "off" : "dim", outcome),
+		);
+	}
+	say("sys", out);
+	if (page.next !== undefined) {
+		const next = page.next;
+		const button = el("button", "plain", "older");
+		button.type = "button";
+		button.addEventListener("click", () => {
+			button.disabled = true;
+			void showTimeline(next);
+		}, { once: true });
+		say("sys", button);
+	}
+}
+
 async function allowMore() {
 	try {
 		state.budget = await post("/api/budget/allow", {});
@@ -1022,6 +1060,7 @@ const commands: Command[] = [
 	},
 	{ name: "tools", help: "The tools you can switch off", run: showTools },
 	{ name: "memory", help: "gaidin's notes, which every conversation sees", run: showMemory },
+	{ name: "timeline", help: "What gaidin did and who allowed it, newest first", run: () => showTimeline() },
 	{
 		name: "remember",
 		args: "<text>",

@@ -46,6 +46,8 @@ Writing a note normally doesn't ask. If the run has read outside text since the 
 
 Pi Durable keeps every message, including the ones compaction summarized away, but can't search them, so `src/history.ts` keeps a full-text index in `<data>/history.sqlite`, using SQLite's FTS5. It follows the transcript as messages are stored and catches up at start, so deleting the file only makes it rebuild. Tool output isn't indexed, and neither are gaidin's internal conversations, such as the reviewer's for [self-written tools](#self-written-tools). A fact that only appeared in a fetched page or a command's output is found only if gaidin repeated it in an answer. The search makes no model calls.
 
+The same index holds the web view's [timeline](surfaces.md#web-view): tool calls and whether they worked, approval outcomes, job reports and reminders, from every indexed conversation.
+
 ## Scheduled jobs
 
 `schedule_job` sets up work for later: a morning briefing, a check every few hours, or a follow-up gaidin promised ("I'll look again on Friday"). It takes a `title`, an `instruction`, and one schedule:

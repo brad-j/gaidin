@@ -53,7 +53,7 @@ export const Jobs = defineDoc<{ items: Job[] }>({
 });
 
 /** Transcript record of a job's report, in the conversation the job was made in. The model doesn't see it. */
-export const JobReported = defineEntry<{ taskId: number; title: string; text: string; conversationId: number; delivered: boolean; error?: string }>("gaidin.job-reported");
+export const JobReported = defineEntry<{ taskId: number; title: string; text: string; conversationId: number; delivered: boolean; error?: string; at?: number }>("gaidin.job-reported");
 
 /** What a run's answer starts with when a watch has nothing to report. */
 export const NOTHING = "NOTHING_TO_REPORT";
@@ -291,7 +291,7 @@ export function createJobs(options: { deliver: () => Deliver; owner: string; exp
 					const job = doc.items.find((j) => j.taskId === task.id);
 					if (!quiet) {
 						await tx.appendEntry(JobReported, task.conversationId, {
-							data: { ...report, answer: undefined, delivered: error === undefined, ...(error === undefined ? {} : { error }) } as never,
+							data: { ...report, answer: undefined, at: state.at, delivered: error === undefined, ...(error === undefined ? {} : { error }) } as never,
 						});
 					}
 					if (job === undefined) return { status: "terminal", outcome: { status: "completed", result: "cancelled" } };

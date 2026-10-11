@@ -204,6 +204,8 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 .out .on { color: var(--color-voice); }
 .out .off { color: var(--color-bad); }
 .out button { justify-self: end; }
+.timeline { grid-template-columns: auto auto minmax(0, 2fr) minmax(0, 1fr); }
+.timeline > span { overflow-wrap: anywhere; }
 .help { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 0 2ch; }
 .help .c { color: var(--color-accent); }
 .help .a, .help .h { color: var(--color-ink-3); }

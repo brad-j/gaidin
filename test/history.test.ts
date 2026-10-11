@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type FauxResponseFactory } from "@earendil-works/pi-ai/providers/faux";
 import { configFor } from "../src/config.ts";
+import { blockedRanges, type FetchOptions } from "../src/fetch.ts";
+import type { Activity } from "../src/history.ts";
 import { context, openHost } from "../src/host.ts";
 import { stamp } from "../src/time.ts";
 
@@ -16,7 +20,7 @@ const call = (name: string, args: (lastResult: string) => Parameters<typeof faux
 	fauxAssistantMessage(fauxToolCall(name, args(last)), { stopReason: "toolUse" });
 
 /** A host whose model plays `steps` in order, across every conversation. */
-async function start(t: TestContext, steps: Step[], dir: string) {
+async function start(t: TestContext, steps: Step[], dir: string, extra: { fetch?: FetchOptions } = {}) {
 	const step: FauxResponseFactory = (ctx) => {
 		const last = ctx.messages.at(-1);
 		const text = last?.role === "toolResult" ? last.content.map((c) => (c.type === "text" ? c.text : "")).join("") : "";
@@ -26,7 +30,7 @@ async function start(t: TestContext, steps: Step[], dir: string) {
 	faux.setResponses(Array.from({ length: 20 }, () => step));
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const host = await openHost({ config: configFor({ owner: "Brad" }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, sandbox: "none", notify: async () => {} });
+	const host = await openHost({ config: configFor({ owner: "Brad" }), dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, sandbox: "none", notify: async () => {}, ...extra });
 	t.after(() => host.harness.close(context));
 	return host;
 }
@@ -82,4 +86,34 @@ test("the index is rebuilt from the transcript when its file is gone", async (t)
 	const second = await start(t, [call("search_history", () => ({ query: "router garage" }))], dir);
 	await ask(second.root, "where's the spare router?");
 	assert.match((await results(second)).at(-1)!, /Brad: the spare «router» is a GL\.iNet in the «garage»$/);
+});
+
+test("the timeline lists what gaidin did and who allowed it, newest first, and is rebuilt with the index", async (t) => {
+	const dir = dataDir(t);
+	const server = createServer((_req, res) => res.end("page text"));
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	t.after(() => new Promise((resolve) => server.close(resolve)));
+	const url = `http://a.test:${(server.address() as AddressInfo).port}/`;
+	const fetch = { blocked: blockedRanges({ allowLoopback: true }), resolve: async () => [{ address: "127.0.0.1", family: 4 }] };
+	const steps = [call("fetch_url", () => ({ url })), call("list_reminders", () => ({})), call("remember", () => ({ text: "the page says page text" })), say("Done.")];
+	const host = await start(t, steps, dir, { fetch });
+	host.approvals.onChange((request) => void (request.status === "pending" && host.approvals.decide(request.id, "once", "slack")));
+	await ask(host.root, "read the page and remember it");
+
+	// An approval is recorded when it's decided, after the call that asked. list_reminders isn't listed.
+	const pick = (items: Activity[]) => items.map(({ kind, name, outcome }) => `${kind} ${name}: ${outcome}`);
+	const { items } = await host.timeline();
+	assert.deepEqual(pick(items), [
+		"approval remember: allowed once in Slack",
+		"tool remember: ok",
+		"approval fetch_url: allowed once in Slack",
+		"tool fetch_url: ok",
+	]);
+	assert.ok(items.every((item) => item.at > 0 && item.place === "main"));
+	assert.match(items.find((i) => i.kind === "approval" && i.name === "fetch_url")!.detail, /^fetch http:\/\/a\.test:\d+\/$/);
+	await host.harness.close(context);
+
+	rmSync(join(dir, "history.sqlite"));
+	const again = await start(t, [], dir);
+	assert.deepEqual(pick((await again.timeline()).items), pick(items));
 });

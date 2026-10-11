@@ -42,7 +42,7 @@ The web view is a console on the root conversation, live from every surface:
 - The dock holds pending approvals and questions above the prompt. Approvals have Allow, the wider grant where there is one, and Deny (Alt+Y, Alt+A, Alt+N for the oldest). Questions have a button per choice, and whatever you type at the prompt next is taken as the answer.
 - The status line shows whether a run is going, with Esc or Ctrl+C to stop it, the model, thinking level and tools, and the cost of the conversation and today's spend against any limit. When the spend guard has stopped gaidin, it shows a button to allow more today.
 
-Everything else is a slash command; `/help` lists them. `/next` lists reminders and jobs and `/cancel` cancels one, `/model`, `/thinking`, `/tools`, `/tool` and `/instructions` change the agent's settings, `/memory`, `/remember` and `/forget` manage gaidin's notes, and `/budget` shows the spend. Enter sends, Shift+Enter starts a new line, the up and down arrows recall earlier messages, and Tab completes commands.
+Everything else is a slash command; `/help` lists them. `/next` lists reminders and jobs and `/cancel` cancels one, `/model`, `/thinking`, `/tools`, `/tool` and `/instructions` change the agent's settings, `/memory`, `/remember` and `/forget` manage gaidin's notes, `/timeline` lists what gaidin did and who allowed it, newest first, and `/budget` shows the spend. Enter sends, Shift+Enter starts a new line, the up and down arrows recall earlier messages, and Tab completes commands.
 
 It shows no keys or Slack settings, and turning a tool off there is the quickest way to take it away from the model.
 

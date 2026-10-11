@@ -198,5 +198,5 @@ export async function openHost(options: HostOptions = {}) {
 	const setBudgetNotify = (next: (text: string) => Promise<void>) => {
 		budgetNotify = next;
 	};
-	return { harness, root, reminders, jobs, setDeliver, budget, setBudgetNotify, explain, switchable, approvals, config };
+	return { harness, root, reminders, jobs, setDeliver, budget, setBudgetNotify, explain, switchable, approvals, config, timeline: history.timeline };
 }
