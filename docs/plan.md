@@ -24,7 +24,28 @@
 
 ## Next
 
-10. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
+10. Self-extension: gaidin writes new tools for itself, checks them, asks the owner, and starts using them without a restart. The design below is a proposal until the owner approves it.
+
+### Self-extension
+
+Self-written tools never run in the server process. In there they could read the settings file and send the API key and tokens anywhere, and a diff review would be the only thing stopping them. They run in a box instead, so the worst a bad one can do is fail.
+
+What it is:
+
+- gaidin drafts an extension in the sandbox, in `extensions/<name>/`, with its normal file tools: `index.ts` exporting its tools, and `test.ts`. A tool is a name, a description, a JSON Schema for its arguments and an `execute` function. Node's built-ins and a `fetch` passed in are all an extension gets. It can't install packages.
+- `load_extension(name)` runs the checks below, then asks the owner with the diff since the last approved version. On approval the server copies the draft to `<data>/extensions/<name>/`, which the sandbox can't see, commits it there, and installs the extension in the registry under its name. Pi Durable swaps it in place: a call already running finishes on the old code and the next one uses the new. The copy is what runs, so editing the draft afterwards changes nothing until it's approved again.
+- Each loaded extension runs in one Node child process under the same bubblewrap box as `bash`: no network, no settings, no data directory, its own approved copy read-only. The server talks to it over JSON lines on stdin and stdout. A call has a time limit, and a child that crashes or hangs is restarted on the next call.
+- The extension's `fetch` goes through the server under `fetch_url`'s rules: private addresses are refused, and a host the owner hasn't approved waits for approval.
+- Its tools are offered like any other, are switchable in the web view, aren't replay-safe, and can't reuse a built-in tool's name. Results pass through redaction.
+- `remove_extension(name)` uninstalls it after approval, and its history stays in `<data>/extensions/`. At start the server installs every approved extension at its last approved commit. Without bubblewrap, self-extension is off.
+- Not in the first version: hooks, prompt sections and background tasks, which only work in-process, and secrets, which come when a tool needs one, given to that extension alone.
+
+Clean code, checked before the owner is asked:
+
+- The type check (`tsc --strict`) and the extension's own tests pass in the box. Every tool has a test.
+- A short style guide is part of the prompt while gaidin works on an extension. It asks for the least code that does the job, no options nobody asked for, no wrappers or helpers used once, no comments that restate the code, and no tool that duplicates an existing one.
+- A second model call reviews the diff against the guide and names any bloat. gaidin fixes what it finds, or the approval request shows the objection next to the diff.
+- The approval request shows the lines added and removed. A change that makes an extension smaller is as welcome as one that adds to it.
 
 Candidates after that:
 
