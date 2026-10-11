@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark">
 <title>gaidin</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
 /* Hallmark · redesign · genre: modern-minimal (app) · structure: console (horizon / log / dock / status line)
  * tone: technical, utilitarian · palette: cool-neutral dark, hue 250 · accent: steel blue
@@ -92,7 +93,8 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 	display: flex; align-items: center; gap: var(--space-md); height: 44px; padding: 0 var(--space-md);
 	border-bottom: 1px solid var(--color-rule); font-size: var(--text-xs);
 }
-#horizon h1 { margin: 0; font-size: var(--text-sm); font-weight: 700; letter-spacing: 0.04em; }
+#horizon h1 { margin: 0; flex: none; }
+#horizon h1 img { display: block; }
 #next-up { min-width: 0; max-width: 34ch; flex: none; color: var(--color-ink-2); }
 #next-up span { overflow: hidden; text-overflow: ellipsis; }
 #next-up .soon { color: var(--color-warn); }
@@ -311,7 +313,7 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 <body>
 <div id="app">
 	<header id="horizon">
-		<h1>gaidin</h1>
+		<h1><img src="/favicon.svg" alt="gaidin" width="28" height="28"></h1>
 		<button id="next-up" class="plain" type="button" title="Upcoming reminders and jobs (/next)"><span>…</span></button>
 		<div id="track" aria-label="The next 24 hours"></div>
 		<button id="later" class="plain" type="button" hidden></button>

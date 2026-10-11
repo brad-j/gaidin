@@ -45,6 +45,9 @@ test("only Brad's tailnet login gets in", async (t) => {
 	const script = await call("/app.js");
 	assert.equal(script.status, 200);
 	assert.doesNotMatch(await script.text(), /: HTMLElement\b/);
+	const icon = await call("/favicon.svg");
+	assert.equal(icon.headers.get("content-type"), "image/svg+xml");
+	assert.match(await icon.text(), /<title>gaidin<\/title>/);
 });
 
 test("a post from another site is refused", async (t) => {
