@@ -1016,6 +1016,7 @@ async function turnOnHere(publicKey: string) {
 	const { endpoint, keys } = subscription.toJSON();
 	await post("/api/push/subscribe", { endpoint, keys, label: deviceLabel() });
 	say("sys", "Notifications are on for this device.");
+	await showNotifications();
 }
 
 async function removeDevice(endpoint: string) {
@@ -1023,6 +1024,7 @@ async function removeDevice(endpoint: string) {
 	await post("/api/push/unsubscribe", { endpoint });
 	if (mine?.endpoint === endpoint) await mine.unsubscribe();
 	say("sys", mine?.endpoint === endpoint ? "Notifications are off for this device." : "That device won't get notifications any more.");
+	await showNotifications();
 }
 
 async function showNotifications() {
