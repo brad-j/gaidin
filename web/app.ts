@@ -14,7 +14,7 @@ type Usage = { cost: { total: number } };
 type UsageState = { models: Record<string, Usage>; tools: Record<string, Usage> };
 type Slot = { callId: string; name: string; output: string };
 type Reminder = { taskId: number; text: string; at: number };
-type Job = { taskId: number; title: string; when: string; mode: string; nextAt?: number; lastAt?: number; lastResult?: string };
+type Job = { taskId: number; title: string; when: string; mode: string; nextAt?: number; lastAt?: number; lastResult?: string; paused?: { at: number; reason: string } };
 type Approval = { id: string; summary: string; detail?: string; tool: string; expiresAt: number; kind?: string; choices?: string[]; always?: { kind: string; value: string; label: string } };
 type Note = { id: number; text: string; by: string; updatedAt: number };
 type Budget = { today: number; month: number; dailyLimit: number; monthlyLimit: number; stopped: boolean; reason?: string };
@@ -662,12 +662,20 @@ const HORIZON = 24 * 3_600_000;
 let reminders: Reminder[] = [];
 let jobs: Job[] = [];
 
-type Upcoming = { ref: string; kind: "reminder" | "job"; text: string; at?: number; detail: string };
+type Upcoming = { ref: string; kind: "reminder" | "job"; text: string; at?: number; detail: string; paused?: boolean };
 
 function upcoming(): Upcoming[] {
 	return [
 		...reminders.map((r): Upcoming => ({ ref: `r${r.taskId}`, kind: "reminder", text: r.text, at: r.at, detail: "reminder" })),
-		...jobs.map((j): Upcoming => ({ ref: `j${j.taskId}`, kind: "job", text: j.title, at: j.nextAt, detail: `${j.mode === "watch" ? "watch, " : ""}${j.when}` })),
+		...jobs.map((j): Upcoming => ({
+			ref: `j${j.taskId}`,
+			kind: "job",
+			text: j.title,
+			// A paused job's runs are skipped, so it has no next run to show.
+			at: j.paused === undefined ? j.nextAt : undefined,
+			detail: `${j.mode === "watch" ? "watch, " : ""}${j.when}${j.paused === undefined ? "" : `, paused: ${j.paused.reason}`}`,
+			paused: j.paused !== undefined,
+		})),
 	].sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity));
 }
 
@@ -932,19 +940,33 @@ async function cancel(ref: string) {
 	say(ok ? "sys" : "err", ok ? `Cancelled ${kind === "r" ? "reminder" : "job"} ${id}.` : `No open ${kind === "r" ? "reminder" : "job"} ${id}.`);
 }
 
+async function pause(ref: string, paused: boolean) {
+	const match = /^j(\d+)$/.exec(ref);
+	if (!match) throw new Error(`Give a job's reference from /next, like j3, not "${ref}".`);
+	const { ok } = await post(paused ? "/api/jobs/pause" : "/api/jobs/resume", { id: Number(match[1]) });
+	await loadJobs();
+	say(ok ? "sys" : "err", ok ? `${paused ? "Paused" : "Resumed"} job ${match[1]}.` : `No ${paused ? "running" : "paused"} job ${match[1]}.`);
+}
+
 function showUpcoming() {
 	const items = upcoming();
 	if (items.length === 0) return say("sys", "Nothing coming up. Ask gaidin for a reminder or a scheduled job.");
 	const out = el("div", "out");
 	for (const item of items) {
-		const button = el("button", "plain", "cancel");
-		button.type = "button";
-		button.addEventListener("click", () => void cancel(item.ref).catch((error) => notice(String(error))));
+		const actions = el("span", "actions");
+		const button = (label: string, run: () => Promise<void>) => {
+			const b = el("button", "plain", label);
+			b.type = "button";
+			b.addEventListener("click", () => void run().catch((error) => notice(String(error))));
+			actions.append(b);
+		};
+		if (item.kind === "job") button(item.paused ? "resume" : "pause", () => pause(item.ref, !item.paused));
+		button("cancel", () => cancel(item.ref));
 		out.append(
 			el("span", "dim", item.ref),
-			el("span", "when", item.at === undefined ? "no next run" : `${when.format(item.at)} · ${fromNow(item.at)}`),
+			el("span", "when", item.at !== undefined ? `${when.format(item.at)} · ${fromNow(item.at)}` : item.paused ? "paused" : "no next run"),
 			el("span", undefined, `${item.text}${item.kind === "job" ? ` (${item.detail})` : ""}`),
-			button,
+			actions,
 		);
 	}
 	say("sys", out);
@@ -1055,6 +1077,20 @@ const commands: Command[] = [
 		help: "Cancel a reminder or job by its /next reference",
 		complete: () => upcoming().map((i) => ({ value: i.ref, hint: `${i.text}${i.at === undefined ? "" : ` · ${fromNow(i.at)}`}` })),
 		run: (arg) => cancel(arg),
+	},
+	{
+		name: "pause",
+		args: "<ref>",
+		help: "Pause a job: its runs are skipped until you resume it",
+		complete: () => upcoming().filter((i) => i.kind === "job" && !i.paused).map((i) => ({ value: i.ref, hint: i.text })),
+		run: (arg) => pause(arg, true),
+	},
+	{
+		name: "resume",
+		args: "<ref>",
+		help: "Resume a paused job from its next scheduled run",
+		complete: () => upcoming().filter((i) => i.paused).map((i) => ({ value: i.ref, hint: i.text })),
+		run: (arg) => pause(arg, false),
 	},
 	{ name: "stop", help: "Stop the current run (Esc, Ctrl+C)", run: () => stop() },
 	{

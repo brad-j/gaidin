@@ -15,7 +15,7 @@ import type { ApprovalService, Decision } from "./approvals.ts";
 import type { BudgetGuard } from "./budget.ts";
 import { context } from "./host.ts";
 import type { createHistory } from "./history.ts";
-import { describeSchedule, Jobs, removeJob } from "./jobs.ts";
+import { describeSchedule, Jobs, pauseJob, removeJob, resumeJob } from "./jobs.ts";
 import { addNote, forgetNote, Memory } from "./memory.ts";
 import { type Reminder, Reminders, removeReminder } from "./reminders.ts";
 import { stamp } from "./time.ts";
@@ -195,6 +195,14 @@ export function createWebServer(options: {
 			case "/api/jobs/cancel": {
 				const removed = await root.commit((tx) => removeJob(tx, Number(body.id)), context);
 				return json(response, { ok: removed !== undefined });
+			}
+			case "/api/jobs/pause": {
+				const paused = await root.commit((tx) => pauseJob(tx, Number(body.id), "paused by the owner"), context);
+				return json(response, { ok: paused !== undefined });
+			}
+			case "/api/jobs/resume": {
+				const resumed = await root.commit((tx) => resumeJob(tx, Number(body.id)), context);
+				return json(response, { ok: resumed !== undefined });
 			}
 			case "/api/approvals/answer": {
 				const answered = await approvals.answer(String(body.id), String(body.answer ?? ""), "web");

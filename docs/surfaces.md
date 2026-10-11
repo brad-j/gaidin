@@ -18,7 +18,7 @@ On the VM, `setup.sh`'s `gaidin` command runs as the service's user. `gaidin ask
 
 gaidin answers in one channel, for one Slack user, over Socket Mode, so the server needs no inbound port. It answers every top-level message you post in the channel; you don't need to mention it. Replies in a thread go to that thread's [fork](concepts.md#forks). It ignores other people, other channels, bots and edited messages. A thread on a message it never answered gets a note instead of a fork.
 
-Each reminder that fires is posted to the channel as well as pushed, with buttons that snooze it; once pressed, the message says when it'll come back.
+Each reminder that fires is posted to the channel as well as pushed, with buttons that snooze it; once pressed, the message says when it'll come back. A job that [paused](tools.md#scheduled-jobs) after failing is posted with a button that resumes it.
 
 Files can come with a message. Images, such as screenshots, go to the model with the text; one over 3.75 MB goes as Slack's 1024-pixel preview. Other files, up to 20 MB, are saved in the sandbox as `uploads/<message ts>-<name>`, and the message tells gaidin where, so it reads text with its file tools and a PDF with `pdftotext`. A file that can't be fetched is noted in the message instead. An image stays in the conversation's context until compaction, so it costs tokens on each later turn there; a thread keeps that cost out of the channel's conversation.
 
@@ -46,7 +46,7 @@ The web view is a console on the root conversation, live from every surface:
 - The dock holds pending approvals and questions above the prompt. Approvals have Allow, the wider grant where there is one, and Deny (Alt+Y, Alt+A, Alt+N for the oldest). Questions have a button per choice, and whatever you type at the prompt next is taken as the answer.
 - The status line shows whether a run is going, with Esc or Ctrl+C to stop it, the model, thinking level and tools, and the cost of the conversation and today's spend against any limit. When the spend guard has stopped gaidin, it shows a button to allow more today.
 
-Everything else is a slash command; `/help` lists them. `/next` lists reminders and jobs and `/cancel` cancels one, `/model`, `/thinking`, `/tools`, `/tool` and `/instructions` change the agent's settings, `/memory`, `/remember` and `/forget` manage gaidin's notes, `/timeline` lists what gaidin did and who allowed it, newest first, and `/budget` shows the spend. Enter sends, Shift+Enter starts a new line, the up and down arrows recall earlier messages, and Tab completes commands.
+Everything else is a slash command; `/help` lists them. `/next` lists reminders and jobs and `/cancel` cancels one, `/pause` and `/resume` pause and resume a job (`/next` has buttons for all three), `/model`, `/thinking`, `/tools`, `/tool` and `/instructions` change the agent's settings, `/memory`, `/remember` and `/forget` manage gaidin's notes, `/timeline` lists what gaidin did and who allowed it, newest first, and `/budget` shows the spend. Enter sends, Shift+Enter starts a new line, the up and down arrows recall earlier messages, and Tab completes commands.
 
 It shows no keys or Slack settings, and turning a tool off there is the quickest way to take it away from the model.
 

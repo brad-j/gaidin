@@ -166,7 +166,7 @@ test("a fired reminder is snoozed from its push's button", async (t) => {
 	assert.equal((await post("/api/reminders/snooze", { id: fired, minutes: 0 })).status, 400);
 });
 
-test("scheduled jobs are listed and can be cancelled", async (t) => {
+test("scheduled jobs are listed, paused, resumed and cancelled", async (t) => {
 	const { Jobs } = await import("../src/jobs.ts");
 	const { host, call, post } = await start(t);
 	const firstAt = Date.now() + 60 * 60_000;
@@ -176,6 +176,12 @@ test("scheduled jobs are listed and can be cancelled", async (t) => {
 	}, context);
 	const listed = (await (await call("/api/jobs")).json()) as { taskId: number; title: string; when: string }[];
 	assert.deepEqual(listed.map((j) => [j.title, j.when]), [["Briefing", "at 08:00, weekdays"]]);
-	assert.deepEqual(await (await post("/api/jobs/cancel", { id: listed[0]!.taskId })).json(), { ok: true });
+	const id = listed[0]!.taskId;
+	assert.deepEqual(await (await post("/api/jobs/pause", { id })).json(), { ok: true });
+	assert.equal(((await (await call("/api/jobs")).json()) as { paused?: { reason: string } }[])[0]!.paused?.reason, "paused by the owner");
+	assert.deepEqual(await (await post("/api/jobs/pause", { id })).json(), { ok: false }, "it's already paused");
+	assert.deepEqual(await (await post("/api/jobs/resume", { id })).json(), { ok: true });
+	assert.equal(((await (await call("/api/jobs")).json()) as { paused?: unknown }[])[0]!.paused, undefined);
+	assert.deepEqual(await (await post("/api/jobs/cancel", { id })).json(), { ok: true });
 	assert.deepEqual(await (await call("/api/jobs")).json(), []);
 });

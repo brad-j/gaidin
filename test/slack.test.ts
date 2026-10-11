@@ -6,6 +6,8 @@ import test, { type TestContext } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai/providers/faux";
 import { context, openHost } from "../src/host.ts";
+import type { Job } from "../src/jobs.ts";
+import { createSlackJobs } from "../src/slack-jobs.ts";
 import { createSlackReminders } from "../src/slack-reminders.ts";
 import { createSlackSurface, type SlackMessage, type SlackPost } from "../src/slack.ts";
 
@@ -250,4 +252,41 @@ test("a fired reminder is posted with snooze buttons, and Brad's press snoozes i
 	assert.equal(update.body.ts, "rem.1");
 	assert.match(JSON.stringify(update.body.blocks), /Snoozed until /);
 	assert.doesNotMatch(JSON.stringify(update.body.blocks), /gaidin-snooze/);
+});
+
+test("a paused job is posted with a resume button, and Brad's press resumes it", async () => {
+	const calls: { method: string; body: Record<string, unknown> }[] = [];
+	const api = async (method: string, body: Record<string, unknown>) => {
+		calls.push({ method, body });
+		return { ts: "job.1" };
+	};
+	const resumed: number[] = [];
+	const resume = async (id: number) => {
+		resumed.push(id);
+		return resumed.length === 1 ? ({ taskId: id } as Job) : undefined;
+	};
+	const jobs = createSlackJobs({ api, channel: CHANNEL, user: BRAD, resume });
+
+	await jobs.post({ taskId: 4, title: "Disks", text: "Paused after 5 failed runs in a row", conversationId: 9, paused: true });
+	const posted = calls[0]!.body as { blocks: { type: string; elements?: { action_id: string; value: string }[] }[] };
+	assert.deepEqual(posted.blocks[1]!.elements!.map((b) => [b.action_id, b.value]), [["gaidin-resume-job", "4"]]);
+
+	const press = (user: string) => ({
+		type: "block_actions",
+		user: { id: user },
+		channel: { id: CHANNEL },
+		message: { ts: "job.1", text: "Disks: paused", blocks: posted.blocks },
+		actions: [{ action_id: "gaidin-resume-job", value: "4" }],
+	});
+	await jobs.action(press("U2"));
+	assert.deepEqual(resumed, []);
+	await jobs.action(press(BRAD));
+	assert.deepEqual(resumed, [4]);
+	const update = calls[1]!.body as { ts: string; blocks: { type: string }[] };
+	assert.equal(update.ts, "job.1");
+	assert.deepEqual(update.blocks.map((b) => b.type), ["section", "context"]);
+	assert.match(JSON.stringify(update.blocks), /"Resumed"/);
+	// A second press finds it running already.
+	await jobs.action(press(BRAD));
+	assert.match(JSON.stringify(calls[2]!.body.blocks), /Not paused any more/);
 });

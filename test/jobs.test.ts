@@ -7,7 +7,7 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { configFor } from "../src/config.ts";
 import { context, openHost } from "../src/host.ts";
-import { describeSchedule, type Job, JobReported, Jobs, nextRun, NOTHING, parseSchedule, recordReport, type Report } from "../src/jobs.ts";
+import { backoff, describeSchedule, type Job, JobReported, Jobs, nextRun, NOTHING, parseSchedule, recordReport, type Report, resumeJob } from "../src/jobs.ts";
 import { setTimeZone } from "../src/time.ts";
 
 type Steps = Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0];
@@ -258,4 +258,68 @@ test("a watch's runs see its earlier reports and the quiet runs since", async (t
 	assert.doesNotMatch(seen[1]!, /nothing to report\./);
 	assert.match(seen[2]!, /Disk at 87%\..*Since the last one, 1 run had nothing to report\./);
 	assert.deepEqual(job.recent!.map((r) => r.text), ["Disk at 87%.", "Disk at 96%."]);
+});
+
+/** Adds a job that runs every `step` minutes from 200 ms on, past the tool's 15-minute floor. */
+async function addTestJob(host: Awaited<ReturnType<typeof start>>["host"], title: string, fields: Partial<Job> = {}, step = 0.01): Promise<number> {
+	const firstAt = Date.now() + 200;
+	return host.root.commit(async (tx) => {
+		const id = await tx.createTask(host.jobs.JobTask, { title, firstAt }, { ownership: { kind: "conversation" }, background: true });
+		(await tx.doc(Jobs)).items.push({ taskId: id as number, title, instruction: `Do ${title}.`, schedule: { kind: "every", minutes: step, from: firstAt }, mode: "report", createdAt: Date.now(), nextAt: firstAt, runs: 0, ...fields });
+		return id as number;
+	}, context);
+}
+
+async function jobNamed(host: Awaited<ReturnType<typeof start>>["host"], title: string): Promise<Job | undefined> {
+	return (await host.harness.snapshot(Jobs, context))?.items.find((j) => j.title === title);
+}
+
+test("failures wait longer each time, tell the owner once, and pause the job after five in a row", async (t) => {
+	assert.deepEqual([1, 2, 3, 4, 5, 6].map((n) => backoff(n) / 60_000), [15, 30, 60, 120, 240, 240]);
+	// Every run fails but the one for "Healthy".
+	const answer: Steps[number] = (ctx) =>
+		/Healthy/.test(JSON.stringify(ctx.messages)) ? fauxAssistantMessage(fauxText("All good.")) : fauxAssistantMessage("", { stopReason: "error", errorMessage: "model down" });
+	const { host, reports } = await start(t, Array<Steps[number]>(20).fill(answer));
+	t.after(() => host.harness.close(context));
+	const started = Date.now();
+	await addTestJob(host, "First");
+	await addTestJob(host, "Second", { failures: 1 });
+	await addTestJob(host, "Fifth", { failures: 4 });
+	await addTestJob(host, "Healthy", { failures: 3 });
+	const [first, second, fifth, healthy] = await until(async () => {
+		const jobs = await Promise.all(["First", "Second", "Fifth", "Healthy"].map((title) => jobNamed(host, title)));
+		return jobs.every((j) => j?.lastAt !== undefined) ? (jobs as Job[]) : undefined;
+	});
+
+	assert.equal(first!.failures, 1);
+	assert.ok(first!.nextAt! >= started + backoff(1), "the next run waits 15 minutes");
+	assert.equal(second!.failures, 2);
+	assert.ok(second!.nextAt! >= started + backoff(2));
+	assert.equal(fifth!.failures, 5);
+	assert.equal(fifth!.paused?.reason, "5 failed runs in a row");
+	assert.ok(fifth!.nextAt! < started + 60_000, "a paused job doesn't wait out a backoff");
+	assert.equal(healthy!.failures, 0);
+	assert.equal(healthy!.lastResult, "reported");
+
+	const told = reports.filter((r) => r.title !== "Healthy").map((r) => [r.title, r.paused ?? false]);
+	assert.deepEqual(told.sort(), [["Fifth", true], ["First", false]]);
+	assert.match(reports.find((r) => r.title === "Fifth")!.text, /^Paused after 5 failed runs in a row; .*The last one: The run didn't finish/);
+});
+
+test("a paused job skips its runs until it's resumed", async (t) => {
+	const { host, reports } = await start(t, Array.from({ length: 10 }, () => fauxAssistantMessage(fauxText("Ran."))));
+	t.after(() => host.harness.close(context));
+	const id = await addTestJob(host, "Held", { paused: { at: Date.now(), reason: "paused by the owner" }, failures: 5 });
+	// A one-off job paused past its time is skipped and gone.
+	await addTestJob(host, "Once", { paused: { at: Date.now(), reason: "paused by the owner" }, schedule: { kind: "once", at: Date.now() + 200 } });
+	const firstAt = (await jobNamed(host, "Held"))!.nextAt!;
+	await until(async () => ((await jobNamed(host, "Held"))!.nextAt! > firstAt + 1000 && (await jobNamed(host, "Once")) === undefined ? true : undefined));
+	assert.equal(reports.length, 0);
+	assert.equal((await jobNamed(host, "Held"))!.runs, 0);
+
+	const resumed = await host.root.commit((tx) => resumeJob(tx, id), context);
+	assert.equal(resumed?.failures, 0);
+	assert.equal(await host.root.commit((tx) => resumeJob(tx, id), context), undefined, "it isn't paused any more");
+	await until(() => (reports.length > 0 ? true : undefined));
+	assert.equal(reports[0]!.text, "Ran.");
 });

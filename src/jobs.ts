@@ -4,6 +4,8 @@
 // and a run due while the server was down happens when it starts.
 //
 // A job in watch mode reports only when something needs the owner; otherwise the run ends quietly.
+// A run that fails delays the next one, and after MAX_FAILURES in a row the job pauses until the owner
+// resumes it; the owner hears about the first failure and the pause, not the ones between.
 // gaidin also uses jobs for its own follow-ups ("I'll check on that Friday"). Creating one always
 // asks the owner first (approvals.ts), because a job acts later without them.
 import { Type } from "@earendil-works/pi-ai";
@@ -40,6 +42,7 @@ export type Job = {
 	createdAt: number;
 	nextAt?: number;
 	lastAt?: number;
+	/** "failed": the run didn't finish, or its report couldn't be delivered. */
 	lastResult?: "reported" | "quiet" | "failed";
 	runs: number;
 	/** The only tools its runs get, by name. Absent: every tool but the job tools. */
@@ -48,6 +51,10 @@ export type Job = {
 	recent?: { at: number; text: string }[];
 	/** Runs since the last report that had nothing to report. */
 	quietRuns?: number;
+	/** Runs in a row that didn't finish. */
+	failures?: number;
+	/** Its runs are skipped until the owner resumes it. */
+	paused?: { at: number; reason: string };
 };
 
 /** Active jobs. A job leaves the list when it's cancelled or has no more runs. */
@@ -67,8 +74,16 @@ export const MIN_EVERY_MINUTES = 15;
 export const MAX_JOBS = 20;
 const RECENT_REPORTS = 3;
 const REPORT_CHARS = 800;
+/** Failed runs in a row that pause a job. */
+export const MAX_FAILURES = 5;
 
-export type Report = { taskId: number; title: string; text: string; conversationId: number; answer?: EntryId };
+/** How long after a failure the next run waits at least: 15 minutes, doubled for each failure in a row, up to 4 hours. */
+export function backoff(failures: number): number {
+	return failures === 0 ? 0 : Math.min(15 * 2 ** (failures - 1), 240) * 60_000;
+}
+
+/** `paused`: the report says the job paused, and offers to resume it. */
+export type Report = { taskId: number; title: string; text: string; conversationId: number; answer?: EntryId; paused?: boolean };
 /** Sends a report to the owner. Throwing makes the job retry. */
 export type Deliver = (report: Report) => Promise<void>;
 
@@ -186,7 +201,18 @@ export function parseSchedule(args: { at?: string; every?: string; time?: string
 type State =
 	| { phase: "wait"; at: number; firing: number }
 	| { phase: "run"; at: number; firing: number; conversationId?: number }
-	| { phase: "deliver"; at: number; firing: number; conversationId: number; text: string; answer?: number; attempt: number; retryAt: number };
+	| {
+		phase: "deliver";
+		at: number;
+		firing: number;
+		conversationId: number;
+		text: string;
+		answer?: number;
+		/** A failed run: the first in a row, one after it, which the owner isn't told about, or the one that paused the job. */
+		failure?: "first" | "repeat" | "pause";
+		attempt: number;
+		retryAt: number;
+	};
 type Result = "done" | "cancelled";
 
 const MAX_DELIVERY_ATTEMPTS = 5;
@@ -254,6 +280,16 @@ export function createJobs(options: { deliver: () => Deliver; owner: string; exp
 				await runtime.commit(async (tx) => {
 					const job = await findJob(tx, task.id);
 					if (job === undefined) return { status: "terminal", outcome: { status: "completed", result: "cancelled" } };
+					if (job.paused !== undefined) {
+						const next = nextRun(job.schedule, Math.max(runtime.now(), at));
+						if (next === undefined) {
+							const doc = await tx.doc(Jobs);
+							doc.items = doc.items.filter((j) => j.taskId !== task.id);
+							return { status: "terminal", outcome: { status: "completed", result: "done" } };
+						}
+						job.nextAt = next;
+						return { status: "running", checkpoint: { phase: "wait", at: next, firing } };
+					}
 					return { status: "running", checkpoint: { phase: "run", at, firing } };
 				}, context);
 			},
@@ -284,30 +320,46 @@ export function createJobs(options: { deliver: () => Deliver; owner: string; exp
 				await runtime.commit(async (tx) => {
 					let text: string;
 					let answer: number | undefined;
+					let failure: "first" | "repeat" | "pause" | undefined;
 					if (settled.status === "done" && settled.type === "input") {
 						answer = settled.answer as number;
 						text = answerText(await tx.entry(settled.answer)) ?? "(the run gave no text)";
 					} else {
 						const why = options.explain?.(settled.reason);
 						text = why === undefined ? `The run didn't finish (${settled.status}${settled.reason ? `: ${settled.reason}` : ""}).` : `The run didn't happen. ${why}`;
+						// The spend limit and the owner's Stop aren't the job failing.
+						const job = await findJob(tx, task.id);
+						if (job !== undefined && why === undefined && settled.reason !== "aborted") {
+							job.failures = (job.failures ?? 0) + 1;
+							failure = job.failures === 1 ? "first" : job.failures < MAX_FAILURES ? "repeat" : "pause";
+							if (failure === "pause") {
+								job.paused = { at: runtime.now(), reason: `${job.failures} failed runs in a row` };
+								text = `Paused after ${job.failures} failed runs in a row; it runs again once ${owner} resumes it. The last one: ${text}`;
+							}
+						}
 					}
-					return { status: "running", checkpoint: { phase: "deliver", at, firing, conversationId, text, ...(answer === undefined ? {} : { answer }), attempt: 1, retryAt: 0 } };
+					return {
+						status: "running",
+						checkpoint: { phase: "deliver", at, firing, conversationId, text, ...(answer === undefined ? {} : { answer }), ...(failure === undefined ? {} : { failure }), attempt: 1, retryAt: 0 },
+					};
 				}, context);
 			},
 			deliver: async (task, runtime, context) => {
 				const state = task.state.checkpoint;
 				await runtime.sleep(state.retryAt, context);
 				const quiet = state.text.trim().startsWith(NOTHING);
+				const silent = quiet || state.failure === "repeat";
 				const report: Report = {
 					taskId: task.id,
 					title: task.input.title,
 					text: state.text,
 					conversationId: state.conversationId,
 					...(state.answer === undefined ? {} : { answer: state.answer as EntryId }),
+					...(state.failure === "pause" ? { paused: true } : {}),
 				};
 				// At least once: a crash after delivering and before this commit delivers again.
 				let error: string | undefined;
-				if (!quiet) {
+				if (!silent) {
 					try {
 						await options.deliver()(report);
 					} catch (e) {
@@ -320,7 +372,7 @@ export function createJobs(options: { deliver: () => Deliver; owner: string; exp
 					}
 					const doc = await tx.doc(Jobs);
 					const job = doc.items.find((j) => j.taskId === task.id);
-					if (!quiet) {
+					if (!silent) {
 						await tx.appendEntry(JobReported, task.conversationId, {
 							data: { ...report, answer: undefined, at: state.at, delivered: error === undefined, ...(error === undefined ? {} : { error }) } as never,
 						});
@@ -330,15 +382,18 @@ export function createJobs(options: { deliver: () => Deliver; owner: string; exp
 					// Only answers the owner was sent count as reports; a run that didn't finish leaves the history alone.
 					if (quiet) job.quietRuns = (job.quietRuns ?? 0) + 1;
 					else if (state.answer !== undefined && error === undefined) recordReport(job, now, state.text);
+					// An answer, delivered or not, shows the job works again.
+					if (state.answer !== undefined) job.failures = 0;
 					job.runs += 1;
 					job.lastAt = now;
-					job.lastResult = quiet ? "quiet" : error === undefined ? "reported" : "failed";
+					job.lastResult = quiet ? "quiet" : state.failure === undefined && error === undefined ? "reported" : "failed";
 					const next = nextRun(job.schedule, Math.max(now, state.at));
 					if (next === undefined) {
 						doc.items = doc.items.filter((j) => j.taskId !== task.id);
 						return { status: "terminal", outcome: { status: "completed", result: "done" } };
 					}
-					job.nextAt = next;
+					// A paused job wakes at its schedule to skip, so resuming it doesn't wait out a backoff.
+					job.nextAt = job.paused === undefined ? Math.max(next, now + backoff(job.failures ?? 0)) : next;
 					return { status: "running", checkpoint: { phase: "wait", at: next, firing: state.firing + 1 } };
 				}, context);
 			},
@@ -404,9 +459,27 @@ export function createJobs(options: { deliver: () => Deliver; owner: string; exp
 }
 
 export function describeJob(job: Job): string {
-	const last = job.lastAt === undefined ? "" : `; last ran ${formatTime(job.lastAt)} (${job.lastResult})`;
-	const next = job.nextAt === undefined ? "" : `; next ${formatTime(job.nextAt)}`;
+	const last = job.lastAt === undefined ? "" : `; last ran ${formatTime(job.lastAt)} (${job.lastResult}${job.failures ? `, ${job.failures} failed in a row` : ""})`;
+	const next = job.paused !== undefined ? `; paused since ${formatTime(job.paused.at)}: ${job.paused.reason}`
+		: job.nextAt === undefined ? "" : `; next ${formatTime(job.nextAt)}`;
 	return `${job.taskId}: "${job.title}", ${describeSchedule(job.schedule)}${job.mode === "watch" ? ", watch" : ""}${next}${last}. ${job.instruction}`;
+}
+
+/** Pauses a job: its runs are skipped until it's resumed. Returns the job, or nothing if there's no such job or it's already paused. */
+export async function pauseJob(tx: Tx, id: number, reason: string): Promise<Job | undefined> {
+	const job = (await tx.doc(Jobs)).items.find((j) => j.taskId === id);
+	if (job === undefined || job.paused !== undefined) return undefined;
+	job.paused = { at: Date.now(), reason };
+	return JSON.parse(JSON.stringify(job));
+}
+
+/** Resumes a paused job from its next scheduled run, with its failures forgotten. Returns the job, or nothing if it wasn't paused. */
+export async function resumeJob(tx: Tx, id: number): Promise<Job | undefined> {
+	const job = (await tx.doc(Jobs)).items.find((j) => j.taskId === id);
+	if (job?.paused === undefined) return undefined;
+	delete job.paused;
+	job.failures = 0;
+	return JSON.parse(JSON.stringify(job));
 }
 
 /** Takes a job off the list; its task ends the next time it wakes. Returns the job, or nothing. */
