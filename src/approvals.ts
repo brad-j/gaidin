@@ -7,11 +7,15 @@
 //
 // Now: fetch_url to a host the owner hasn't allowed for good. Tools that change things outside the
 // sandbox will ask every time.
+//
+// Before asking, the hook checks whether the call can succeed at all (`Refusal`), so the owner is never asked
+// to allow something that would fail. An answer can come days later, so after an approval it checks again:
+// an approval allows a call, but never one that has become impossible since.
 import { randomUUID } from "node:crypto";
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
 import { type Message, type ToolCall, Type } from "@earendil-works/pi-ai";
-import { type ConversationId, defineDoc, defineEntry, defineExtension, defineTool, type Harness, hook, type TaskId, ToolTask, type Tx } from "@earendil-works/pi-durable";
+import { type ConversationId, defineDoc, defineEntry, defineExtension, defineTool, type DocumentReader, type Harness, hook, type TaskId, ToolTask, type Tx } from "@earendil-works/pi-durable";
 import { describeSchedule, GATE_FINDINGS, parseSchedule } from "./jobs.ts";
 
 export type Decision = "once" | "always" | "deny";
@@ -72,6 +76,9 @@ type Ask = Pick<ApprovalRequest, "summary" | "always"> | undefined;
  * read since the owner's last message; it reads the transcript, so call it only when it matters.
  */
 export type Policy = (call: ToolCall, state: ApprovalState, conversationId: number, untrusted: () => Promise<string[]>) => Ask | Promise<Ask>;
+
+/** Why a call can't succeed, read from the current state, or nothing. Checked before asking and again after an approval. */
+export type Refusal = (call: ToolCall, read: DocumentReader, context: Context) => string | undefined | Promise<string | undefined>;
 
 /** Tools whose results are text from outside: web pages, other programs' logs, files and output on a workspace. */
 export const UNTRUSTED_TOOLS = new Set(["fetch_url", "web_search", "container_logs", "workspace_read", "workspace_run"]);
@@ -371,7 +378,15 @@ export async function untrustedSince(api: unknown, context: Context): Promise<st
 }
 
 /** The hook. `service` is read lazily, because the Harness that the service needs is opened after the registry. */
-export function approvalExtension(service: () => ApprovalService, owner: string, policy: Policy = defaultPolicy) {
+export function approvalExtension(service: () => ApprovalService, owner: string, options: { policy?: Policy; refusals?: readonly Refusal[] } = {}) {
+	const policy = options.policy ?? defaultPolicy;
+	const refused = async (call: ToolCall, api: DocumentReader, context: Context) => {
+		for (const refusal of options.refusals ?? []) {
+			const why = await refusal(call, api, context);
+			if (why !== undefined) return why;
+		}
+		return undefined;
+	};
 	const askOwner = defineTool({
 		name: "ask_owner",
 		description:
@@ -406,13 +421,18 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 			hook(ToolTask, {
 				beforeTool: async (call, api, context: Context) => {
 					const approvals = service();
+					const impossible = await refused(call, api, context);
+					if (impossible !== undefined) return { block: impossible };
 					const ask = await policy(call, await approvals.state(), api.conversationId as number, () => untrustedSince(api, context));
 					if (ask === undefined) return undefined;
 					// The same id for every run of this call's phase, so a restart doesn't ask twice.
 					const id = await api.memo<string>("gaidin.approval", randomUUID(), context);
 					const request = await approvals.open(id, { conversationId: api.conversationId as number, taskId: api.taskId as number }, call.name, ask);
 					const done = await approvals.wait(request, signalOf(api, context));
-					if (done.status === "approved") return undefined;
+					if (done.status === "approved") {
+						const since = await refused(call, api, context);
+						return since === undefined ? undefined : { block: `${owner} allowed it, but it can't happen now: ${since}` };
+					}
 					const why = done.status === "denied" ? `${owner} said no`
 						: done.status === "expired" ? `${owner} didn't answer in time`
 						: done.status === "superseded" ? `${owner} sent a new message instead of answering`

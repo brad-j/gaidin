@@ -151,6 +151,16 @@ test("every workspace call asks; an hour's grant covers that conversation only",
 	assert.ok(grants[0]!.until > Date.now() + 59 * 60_000);
 });
 
+test("a call to a workspace that isn't in the settings isn't put to Brad", async (t) => {
+	const { home } = machine(t);
+	const h = await host(t, home, [call("workspace_run", { workspace: "laptop", command: "ls" }), done]);
+	const asked: string[] = [];
+	h.approvals.onChange((r) => void (r.status === "pending" && asked.push(r.summary)));
+	await (await h.root.submit({ type: "input", content: "list it" }, context)).wait(context);
+	assert.deepEqual(asked, []);
+	assert.match((await results(h))[0]!, /No workspace laptop; one of desk/);
+});
+
 test("without workspaces there are no workspace tools", async (t) => {
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));

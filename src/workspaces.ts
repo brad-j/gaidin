@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
+import type { Refusal } from "./approvals.ts";
 import { type Redactor, redactingStream } from "./redact.ts";
 
 export type Workspace = { name: string; target: string };
@@ -180,8 +181,11 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 	});
 
 	const tools: ToolRegistration[] = workspaces.length === 0 || remote === undefined ? [] : [run, read, write, edit];
+	// A workspace taken out of the settings isn't put to the owner.
+	const refuse: Refusal = (call) => (call.name.startsWith("workspace_") && !names.includes(String(call.arguments.workspace)) ? `No workspace ${String(call.arguments.workspace)}; one of ${names.join(", ")}` : undefined);
 	return {
 		tools,
+		refuse,
 		extension: defineExtension({
 			name: "workspaces",
 			tools,

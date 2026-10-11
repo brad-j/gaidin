@@ -8,6 +8,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineDoc, defineExtension, defineTool, section, type Tx } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
+import type { Refusal } from "./approvals.ts";
 
 export type Note = { id: number; text: string; createdAt: number; updatedAt: number; by: "owner" | "gaidin" };
 
@@ -21,14 +22,32 @@ export const Memory = defineDoc<{ notes: Note[]; nextId: number }>({
 export const MAX_NOTE = 500;
 export const MAX_TOTAL = 8000;
 
+const tidy = (text: string) => text.trim().replace(/\s+/g, " ");
+
+/** Why `text` can't be a note among `notes`, in place of note `replacing` when given, or nothing. */
+export function noteProblem(notes: readonly Note[], text: string, replacing?: number): string | undefined {
+	const clean = tidy(text);
+	if (clean === "") return "A note can't be empty.";
+	if (clean.length > MAX_NOTE) return `Notes are at most ${MAX_NOTE} characters; this one is ${clean.length}. Split or shorten it.`;
+	if (replacing !== undefined && !notes.some((n) => n.id === replacing)) return `No note ${replacing}.`;
+	const total = notes.reduce((sum, n) => sum + (n.id === replacing ? 0 : n.text.length), 0);
+	if (total + clean.length > MAX_TOTAL) return `Memory is full (${total} of ${MAX_TOTAL} characters). Merge or forget notes first.`;
+	return undefined;
+}
+
+/** A note that can't be written isn't put to the owner (approvals.ts). */
+export const refuseNote: Refusal = async (call, read, context) => {
+	if (call.name !== "remember" && call.name !== "update_memory") return undefined;
+	const notes = (await read.snapshot(Memory, context))?.notes ?? [];
+	return noteProblem(notes, String(call.arguments.text ?? ""), call.name === "update_memory" ? Number(call.arguments.id) : undefined);
+};
+
 /** Adds a note, or throws with why not. */
 export async function addNote(tx: Tx, text: string, by: Note["by"]): Promise<Note> {
-	const clean = text.trim().replace(/\s+/g, " ");
-	if (clean === "") throw new Error("A note can't be empty.");
-	if (clean.length > MAX_NOTE) throw new Error(`Notes are at most ${MAX_NOTE} characters; this one is ${clean.length}. Split or shorten it.`);
+	const clean = tidy(text);
 	const doc = await tx.doc(Memory);
-	const total = doc.notes.reduce((sum, n) => sum + n.text.length, 0);
-	if (total + clean.length > MAX_TOTAL) throw new Error(`Memory is full (${total} of ${MAX_TOTAL} characters). Merge or forget notes first.`);
+	const problem = noteProblem(doc.notes, clean);
+	if (problem !== undefined) throw new Error(problem);
 	const now = Date.now();
 	const note: Note = { id: doc.nextId, text: clean, createdAt: now, updatedAt: now, by };
 	doc.nextId += 1;
@@ -70,14 +89,13 @@ export function createMemory(owner: string) {
 		description: "Replace the text of a note, by id.",
 		parameters: Type.Object({ id: Type.Number(), text: Type.String() }),
 		execute: async (args, api, context) => {
-			const text = args.text.trim().replace(/\s+/g, " ");
-			if (text === "" || text.length > MAX_NOTE) throw new Error(`A note is 1 to ${MAX_NOTE} characters.`);
+			const text = tidy(args.text);
 			const found = await api.commit(async (tx) => {
 				const doc = await tx.doc(Memory);
 				const note = doc.notes.find((n) => n.id === args.id);
 				if (note === undefined) return false;
-				const total = doc.notes.reduce((sum, n) => sum + (n.id === args.id ? 0 : n.text.length), 0);
-				if (total + text.length > MAX_TOTAL) throw new Error(`Memory is full; forget or merge notes first.`);
+				const problem = noteProblem(doc.notes, text, args.id);
+				if (problem !== undefined) throw new Error(problem);
 				note.text = text;
 				note.updatedAt = Date.now();
 				note.by = "gaidin";

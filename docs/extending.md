@@ -46,7 +46,7 @@ Durable state goes in a document (`defineDoc`) changed inside `api.commit`, and 
 
 ### Tools that reach outside
 
-A tool that changes anything outside the sandbox, or sends data to a place the owner hasn't approved, should ask first. Add a case to `defaultPolicy` in `approvals.ts` that returns a one-line `summary` of the call, and optionally an `always` grant for the second button. Slack and the web view render any request; their labels come from the request.
+A tool that changes anything outside the sandbox, or sends data to a place the owner hasn't approved, should ask first. Add a case to `defaultPolicy` in `approvals.ts` that returns a one-line `summary` of the call, and optionally an `always` grant for the second button. Slack and the web view render any request; their labels come from the request. If some calls can't succeed for reasons known before they run, such as a name that doesn't exist, add a `Refusal` to the list `host.ts` passes to `approvalExtension`, so they're blocked with the reason instead of being put to the owner.
 
 ## Tests
 

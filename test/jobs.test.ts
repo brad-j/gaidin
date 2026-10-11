@@ -7,7 +7,7 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { configFor } from "../src/config.ts";
 import { context, openHost } from "../src/host.ts";
-import { backoff, describeSchedule, type Job, JobReported, Jobs, nextRun, NOTHING, parseSchedule, recordReport, type Report, resumeJob } from "../src/jobs.ts";
+import { backoff, describeSchedule, type Job, JobReported, Jobs, MAX_JOBS, nextRun, NOTHING, parseSchedule, recordReport, type Report, resumeJob } from "../src/jobs.ts";
 import { setTimeZone } from "../src/time.ts";
 
 type Steps = Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0];
@@ -338,6 +338,39 @@ test("a job without a gate repeats at most every 6 hours, and a gate has to exis
 	await (await host.root.submit({ type: "input", content: "check often" }, context)).wait(context);
 	const results = (await host.root.context(context)).messages.flatMap((m) => (m.role === "toolResult" ? [JSON.stringify(m.content)] : []));
 	assert.match(results[0]!, /without a gate runs at most every 6 hours/);
-	assert.deepEqual(asked, ['schedule "Gated", every 15 minutes, gated by nope {"severity":"critical"}: x']);
+	// A job that can't be made isn't put to the owner.
+	assert.deepEqual(asked, []);
 	assert.match(results[1]!, /There's no gate nope\. Gates: none\./);
+});
+
+test("a job is refused when there's no room, before asking and again after the owner allows it", async (t) => {
+	const soon = () => new Date(Date.now() + 3_600_000).toISOString();
+	// Not start(): its approvals answer at once.
+	const host = await openHost({
+		config: configFor({}),
+		dataDir: dir(t),
+		...faux([
+			fauxAssistantMessage(fauxToolCall("schedule_job", { title: "One more", instruction: "x", at: soon() }), { stopReason: "toolUse" }),
+			fauxAssistantMessage(fauxToolCall("schedule_job", { title: "Too many", instruction: "x", at: soon() }), { stopReason: "toolUse" }),
+			fauxAssistantMessage(fauxText("ok")),
+		]),
+		notify: async () => {},
+	});
+	t.after(() => host.harness.close(context));
+	const placeholder = (taskId: number): Job => ({ taskId, title: "Filler", instruction: "x", schedule: { kind: "once", at: Date.now() + 3_600_000 }, mode: "report", createdAt: Date.now(), runs: 0 });
+	await host.root.commit(async (tx) => void (await tx.doc(Jobs)).items.push(...Array.from({ length: MAX_JOBS - 1 }, (_, i) => placeholder(-1 - i))), context);
+	const asked: string[] = [];
+	// While the owner is being asked about the 20th, another job takes the last place.
+	host.approvals.onChange(async (r) => {
+		if (r.status !== "pending") return;
+		asked.push(r.summary);
+		await host.root.commit(async (tx) => void (await tx.doc(Jobs)).items.push(placeholder(-100)), context);
+		await host.approvals.decide(r.id, "once", "test");
+	});
+	await (await host.root.submit({ type: "input", content: "two more jobs" }, context)).wait(context);
+	const results = (await host.root.context(context)).messages.flatMap((m) => (m.role === "toolResult" ? [JSON.stringify(m.content)] : []));
+	assert.equal(asked.length, 1, "the second call isn't put to the owner");
+	assert.match(results[0]!, /allowed it, but it can't happen now: There are already 20 jobs; cancel one first\./);
+	assert.match(results[1]!, /Tool call blocked: There are already 20 jobs/);
+	assert.equal((await host.harness.snapshot(Jobs, context))!.items.length, MAX_JOBS);
 });

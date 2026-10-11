@@ -14,7 +14,7 @@ import { createHomelab, type HomelabOptions } from "./extensions/homelab/index.t
 import { createFetch, type FetchOptions } from "./fetch.ts";
 import { createHistory } from "./history.ts";
 import { createJobs, type Deliver, type Gate } from "./jobs.ts";
-import { createMemory } from "./memory.ts";
+import { createMemory, refuseNote } from "./memory.ts";
 import { ntfyNotifier, ntfyReporter } from "./ntfy.ts";
 import { type Redactor, redactionExtension, redactorFor } from "./redact.ts";
 import { createReminders, type Notify } from "./reminders.ts";
@@ -178,7 +178,7 @@ export async function openHost(options: HostOptions = {}) {
 	}
 	// The service needs the Harness, which needs the registry; the hook reads it once calls start.
 	let approvals: ApprovalService | undefined;
-	registry.install(approvalExtension(() => approvals!, owner));
+	registry.install(approvalExtension(() => approvals!, owner, { refusals: [jobs.refuse, refuseNote, workspaces.refuse] }));
 	// Last, so its afterTool sees what every other hook left.
 	registry.install(budget.extension);
 	registry.install(redactionExtension(redactor));

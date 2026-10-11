@@ -26,6 +26,7 @@ import {
 	type TaskId,
 	type Tx,
 } from "@earendil-works/pi-durable";
+import type { Refusal } from "./approvals.ts";
 import { formatTime, stamp, timeZone } from "./time.ts";
 
 export type Schedule =
@@ -315,6 +316,23 @@ export function createJobs(options: {
 		return result;
 	}
 
+	const missingGate = (name: string) => (gates().some((g) => g.name === name) ? undefined : `There's no gate ${name}. Gates: ${gates().map((g) => g.name).join(", ") || "none"}.`);
+
+	/** A job that can't be made isn't put to the owner (approvals.ts): a schedule it can't keep, a gate that doesn't exist, or no room. */
+	const refuse: Refusal = async (call, read, context) => {
+		if (call.name !== "schedule_job") return undefined;
+		const args = call.arguments as Parameters<typeof parseSchedule>[0] & { gate?: { name?: unknown } };
+		try {
+			parseSchedule(args, args.gate !== undefined);
+		} catch (error) {
+			return error instanceof Error ? error.message : String(error);
+		}
+		const gate = args.gate === undefined ? undefined : missingGate(String(args.gate.name));
+		if (gate !== undefined) return gate;
+		if (((await read.snapshot(Jobs, context))?.items.length ?? 0) >= MAX_JOBS) return `There are already ${MAX_JOBS} jobs; cancel one first.`;
+		return undefined;
+	};
+
 	/** Adds a job whose reports go to `conversationId`'s surface. Throws when there are already MAX_JOBS. */
 	async function addJob(tx: Tx, conversationId: ConversationId, fields: Pick<Job, "title" | "instruction" | "schedule" | "mode" | "tools" | "gate">): Promise<Job> {
 		const doc = await tx.doc(Jobs);
@@ -535,9 +553,8 @@ export function createJobs(options: {
 		}),
 		execute: async (args, api, context) => {
 			const parsed = parseSchedule(args, args.gate !== undefined);
-			if (args.gate !== undefined && !gates().some((g) => g.name === args.gate!.name)) {
-				throw new Error(`There's no gate ${args.gate.name}. Gates: ${gates().map((g) => g.name).join(", ") || "none"}.`);
-			}
+			const gate = args.gate === undefined ? undefined : missingGate(args.gate.name);
+			if (gate !== undefined) throw new Error(gate);
 			const fields = { title: args.title, instruction: args.instruction, schedule: parsed, mode: args.mode ?? "report", ...(args.gate === undefined ? {} : { gate: args.gate }) } as const;
 			const created = await api.commit((tx) => addJob(tx, api.conversationId, fields), context);
 			return { content: [{ type: "text", text: `Job ${created.taskId} "${created.title}" scheduled ${describeSchedule(created.schedule)}${created.mode === "watch" ? ", as a watch" : ""}. First run ${formatTime(created.nextAt!)}.` }] };
@@ -568,7 +585,7 @@ export function createJobs(options: {
 	});
 
 	extension = defineExtension({ name: "jobs", tools: [schedule, list, cancel], tasks: [JobTask] });
-	return { extension, JobTask, addJob };
+	return { extension, JobTask, addJob, refuse };
 }
 
 export function describeJob(job: Job): string {
