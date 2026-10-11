@@ -90,7 +90,7 @@ A GET of a public web page or API, returned as text. HTML is reduced to the page
 
 - Every address a name resolves to is checked when the connection is made, and again after each redirect. Private, CGNAT (which covers tailnet addresses), loopback, link-local and other reserved ranges are refused, and so are the IPv6 forms that carry an IPv4 address (IPv4-mapped, IPv4-compatible, NAT64 and 6to4), so DNS can't point it at the LAN.
 - No cookies or auth headers are sent. Up to five redirects on the same host are followed. A redirect to another host isn't: the result says where it points, and fetching that is a new call, which asks for a host not allowed for good. A self-written tool's fetch asks for each new host a redirect leads to, and a gate's fails on one not allowed for good.
-- Downloads stop at 2 MB after decompression. The text is cut to 20,000 characters unless the model asks for more, up to 200,000.
+- Downloads stop at 2 MB after decompression. A server that stays quiet for 15 seconds is given up on, and so is a fetch that takes more than a minute in all, redirects included. The text is cut to 20,000 characters unless the model asks for more, up to 200,000.
 
 A fetch to a host you haven't allowed for good waits for your [approval](security.md#approvals).
 

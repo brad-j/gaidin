@@ -43,7 +43,8 @@ export type Resolve = (hostname: string) => Promise<{ address: string; family: n
 const systemResolve: Resolve = (hostname) =>
 	new Promise((resolve, reject) => dnsLookup(hostname, { all: true }, (error, addresses) => (error ? reject(error) : resolve(addresses))));
 
-export type FetchOptions = { resolve?: Resolve; blocked?: BlockList; timeoutMs?: number; maxBytes?: number };
+/** `timeoutMs`: how long the server may stay quiet (default 15s); `deadlineMs`: how long the whole fetch may take, redirects and body included (default 60s). */
+export type FetchOptions = { resolve?: Resolve; blocked?: BlockList; timeoutMs?: number; deadlineMs?: number; maxBytes?: number };
 
 const MAX_REDIRECTS = 5;
 
@@ -56,6 +57,18 @@ function isBlocked(blocked: BlockList, address: string): boolean {
 
 /** GETs `url`, following redirects on its host, refusing any hop that resolves to a blocked address. */
 export async function fetchPublic(url: string, options: FetchOptions = {}): Promise<Fetched> {
+	// A server that sends a byte now and then is never quiet long enough for the idle timeout.
+	const deadlineMs = options.deadlineMs ?? 60_000;
+	const deadline = AbortSignal.timeout(deadlineMs);
+	try {
+		return await fetchUntil(url, options, deadline);
+	} catch (error) {
+		if (deadline.aborted) throw new Error(`Gave up on ${url}: it didn't finish in ${deadlineMs / 1000}s`);
+		throw error;
+	}
+}
+
+async function fetchUntil(url: string, options: FetchOptions, deadline: AbortSignal): Promise<Fetched> {
 	const resolve = options.resolve ?? systemResolve;
 	const blocked = options.blocked ?? blockedRanges();
 	const timeoutMs = options.timeoutMs ?? 15_000;
@@ -97,6 +110,7 @@ export async function fetchPublic(url: string, options: FetchOptions = {}): Prom
 			const req = send(current, {
 				method: "GET",
 				lookup,
+				signal: deadline,
 				headers: { "User-Agent": "gaidin (personal agent)", Accept: "text/html, text/plain, application/json, */*;q=0.5", "Accept-Encoding": "gzip, deflate, br" },
 				timeout: timeoutMs,
 			}, resolveResponse);

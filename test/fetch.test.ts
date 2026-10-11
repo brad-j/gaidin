@@ -39,6 +39,22 @@ async function setup(t: TestContext): Promise<{ base: string; options: FetchOpti
 			case "/big":
 				res.writeHead(200, { "Content-Type": "text/plain" });
 				return res.end("x".repeat(50_000));
+			case "/drip": {
+				// A byte every 50ms: never quiet long enough for the idle timeout, never done.
+				res.writeHead(200, { "Content-Type": "text/plain" });
+				const timer = setInterval(() => res.write("x"), 50);
+				return res.once("close", () => clearInterval(timer));
+			}
+			case "/drip-gzip": {
+				res.writeHead(200, { "Content-Type": "text/plain", "Content-Encoding": "gzip" });
+				const gzip = createGzip();
+				gzip.pipe(res);
+				const timer = setInterval(() => {
+					gzip.write("x");
+					gzip.flush();
+				}, 50);
+				return res.once("close", () => clearInterval(timer));
+			}
 			case "/stall":
 				res.writeHead(200, { "Content-Type": "text/plain" });
 				return res.write("the start");
@@ -117,6 +133,15 @@ test("a page that goes silent partway is given up on at the idle timeout, compre
 	for (const path of ["/stall", "/stall-gzip"]) {
 		const started = Date.now();
 		await assert.rejects(fetchPublic(`${base}${path}`, { ...options, timeoutMs: 300 }), /No answer from public\.test:\d+ in 0\.3s/, path);
+		assert.ok(Date.now() - started < 2000, `${path} took ${Date.now() - started}ms`);
+	}
+});
+
+test("a page that keeps dripping bytes is given up on at the deadline, compressed or not", async (t) => {
+	const { base, options } = await setup(t);
+	for (const path of ["/drip", "/drip-gzip"]) {
+		const started = Date.now();
+		await assert.rejects(fetchPublic(`${base}${path}`, { ...options, timeoutMs: 1000, deadlineMs: 400 }), /didn't finish in 0\.4s/, path);
 		assert.ok(Date.now() - started < 2000, `${path} took ${Date.now() - started}ms`);
 	}
 });
