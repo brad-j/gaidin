@@ -214,6 +214,10 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 #approvals { display: flex; flex-direction: column; gap: var(--space-xs); margin-bottom: var(--space-xs); }
 .approval { padding: var(--space-xs) 0; background: var(--color-warn-wash); border: 1px solid var(--color-warn); border-radius: var(--radius-md); }
 .approval .k { color: var(--color-warn); font-weight: 600; }
+/* A question waits on the owner too, but asks rather than warns. */
+.approval.question { background: var(--color-paper-2); border-color: var(--color-accent); }
+.approval.question .k { color: var(--color-accent); }
+.approval.question .ask .what { font-weight: 600; }
 .approval .t { padding-left: var(--space-xs); }
 .approval .ask .tool { color: var(--color-warn); }
 .approval .ask .what { font-family: var(--font-body); font-size: var(--text-md); }
@@ -261,6 +265,8 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 #statusline .status.problem::before { background: var(--color-warn); }
 #statusline .seg.danger { color: var(--color-bad); }
 #statusline .spend { padding: 0 var(--space-xs); font-variant-numeric: tabular-nums; }
+#statusline .spend.near { color: var(--color-warn); }
+#statusline .spend.stopped { color: var(--color-bad); }
 #statusline .spacer { flex: 1; }
 
 /* --- narrow screens --------------------------------------------------------------------------- */

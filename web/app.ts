@@ -15,7 +15,9 @@ type UsageState = { models: Record<string, Usage>; tools: Record<string, Usage> 
 type Slot = { callId: string; name: string; output: string };
 type Reminder = { taskId: number; text: string; at: number };
 type Job = { taskId: number; title: string; when: string; mode: string; nextAt?: number; lastAt?: number; lastResult?: string };
-type Approval = { id: string; summary: string; tool: string; expiresAt: number; always?: { kind: string; value: string; label: string } };
+type Approval = { id: string; summary: string; tool: string; expiresAt: number; kind?: string; choices?: string[]; always?: { kind: string; value: string; label: string } };
+type Note = { id: number; text: string; by: string; updatedAt: number };
+type Budget = { today: number; month: number; dailyLimit: number; monthlyLimit: number; stopped: boolean; reason?: string };
 type Settings = { model: string; models: string[]; thinkingLevel: string; instructions: string; tools: { name: string; enabled: boolean }[] };
 // The event stream's shapes are pi-durable's AgentEvent; only the fields used here are read.
 type AgentEvent = { type: string; [field: string]: any };
@@ -33,8 +35,9 @@ const state = {
 	retry: undefined as string | undefined,
 	usage: undefined as UsageState | undefined,
 	allSpend: undefined as number | undefined,
+	budget: undefined as Budget | null | undefined,
 };
-/** Tool calls and thinking blocks Brad has opened, so a re-render keeps them open. */
+/** Tool calls and thinking blocks the owner has opened, so a re-render keeps them open. */
 const opened = new Set<string>();
 
 // --- events -----------------------------------------------------------------------------------
@@ -187,7 +190,7 @@ function textOf(content: string | Part[]): string {
 	return typeof content === "string" ? content : content.map((p) => p.text ?? `[${p.type}]`).join("");
 }
 
-/** Brad's messages start with the local time in brackets; show it apart from the text. */
+/** The owner's messages start with the local time in brackets; show it apart from the text. */
 function splitStamp(text: string): { time?: string; text: string } {
 	const match = /^\[([^\]]+)\] /.exec(text);
 	return match ? { time: match[1], text: text.slice(match[0].length) } : { text };
@@ -519,7 +522,9 @@ let lastHeight = 0;
 
 function render() {
 	renderStatusline();
-	document.title = approvals.length > 0 ? `(${approvals.length}) approval · gaidin` : state.running ? "working · gaidin" : "gaidin";
+	const asks = approvals.filter((a) => a.kind === "question").length;
+	const allows = approvals.length - asks;
+	document.title = asks > 0 ? `(${asks}) question · gaidin` : allows > 0 ? `(${allows}) approval · gaidin` : state.running ? "working · gaidin" : "gaidin";
 
 	const scroller = $("scroll");
 	const atBottom = stick || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48;
@@ -616,8 +621,14 @@ function renderStatusline() {
 	const here = state.usage
 		? [...Object.values(state.usage.models), ...Object.values(state.usage.tools)].reduce((sum, u) => sum + (u.cost?.total ?? 0), 0)
 		: undefined;
-	const spend = [here === undefined ? "" : `${money(here)} conversation`, state.allSpend === undefined ? "" : `${money(state.allSpend)} all`].filter(Boolean).join(" · ");
-	const signature = JSON.stringify([label, tone, spend, current]);
+	const budget = state.budget;
+	// Today's spend against the daily limit when there's a budget; otherwise the totals.
+	const total = budget
+		? [budget.dailyLimit > 0 ? `${money(budget.today)} of ${money(budget.dailyLimit)} today` : `${money(budget.today)} today`, budget.monthlyLimit > 0 ? `${money(budget.month)} of ${money(budget.monthlyLimit)} month` : ""]
+		: [state.allSpend === undefined ? "" : `${money(state.allSpend)} all`];
+	const spend = [here === undefined ? "" : `${money(here)} conversation`, ...total].filter(Boolean).join(" · ");
+	const near = budget !== null && budget !== undefined && !budget.stopped && budget.dailyLimit > 0 && budget.today >= budget.dailyLimit * 0.8;
+	const signature = JSON.stringify([label, tone, spend, current, budget?.stopped, near]);
 	// Rebuilt only when something in it changed, so a button under the pointer stays put while text streams.
 	if (signature === statusSignature) return;
 	statusSignature = signature;
@@ -632,7 +643,12 @@ function renderStatusline() {
 		segs.push(segment(off.length === 0 ? `tools ${settings.tools.length}/${settings.tools.length}` : `${off.join(" ")} off`, "Switch tools on and off (/tools)", () => void runCommand("/tools")));
 		if (settings.instructions !== "") segs.push(segment("instructions", "Standing instructions (/instructions)", () => void runCommand("/instructions")));
 	}
-	if (spend !== "") segs.push(el("span", "spend", spend));
+	if (budget?.stopped) segs.push(segment("stopped · allow more", budget.reason ?? "The spend limit is reached (/budget)", () => void allowMore(), "danger"));
+	if (spend !== "") {
+		const line = el("span", `spend${budget?.stopped ? " stopped" : near ? " near" : ""}`, spend);
+		if (budget?.reason) line.title = budget.reason;
+		segs.push(line);
+	}
 	segs.push(el("span", "spacer"), segment("/ commands", "Show the commands", () => prefill("/")));
 	$("statusline").replaceChildren(...segs);
 }
@@ -723,6 +739,7 @@ async function loadSpend() {
 	try {
 		const usage = await load<UsageState>("/api/usage");
 		state.allSpend = [...Object.values(usage.models), ...Object.values(usage.tools)].reduce((s, u) => s + (u.cost?.total ?? 0), 0);
+		state.budget = await load<Budget | null>("/api/budget");
 		schedule();
 	} catch (error) {
 		notice(String(error));
@@ -785,9 +802,45 @@ async function loadApprovals() {
 	}
 }
 
+/** The oldest request to allow a call; questions are answered, not allowed. */
+function firstApproval(): Approval | undefined {
+	return approvals.find((a) => a.kind !== "question");
+}
+
+/** A question from ask_owner: a button per choice, or type the answer at the prompt. */
+function questionRow(request: Approval): HTMLElement {
+	const ask = el("div", "ask");
+	ask.append(el("span", "what", request.summary));
+	const buttons = el("div", "buttons");
+	for (const choice of request.choices ?? []) {
+		const button = el("button", "", choice);
+		button.type = "button";
+		button.addEventListener("click", () => void answerQuestion(request, choice));
+		buttons.append(button);
+	}
+	buttons.append(el("span", "expires", `type your answer below · waits until ${when.format(request.expiresAt)}`));
+	const b = el("div", "b");
+	b.append(ask, buttons);
+	const node = el("div", "row approval question");
+	node.append(el("span", "t", clock.format(Date.now())), el("span", "k", "asks?"), b);
+	return node;
+}
+
+async function answerQuestion(request: Approval, answer: string) {
+	for (const b of $("approvals").querySelectorAll("button")) b.disabled = true;
+	try {
+		await post("/api/approvals/answer", { id: request.id, answer });
+	} catch (error) {
+		notice(String(error));
+	}
+	await loadApprovals();
+}
+
 function renderApprovals() {
+	const first = firstApproval();
 	$("approvals").replaceChildren(
-		...approvals.map((request, n) => {
+		...approvals.map((request) => {
+			if (request.kind === "question") return questionRow(request);
 			const ask = el("div", "ask");
 			ask.append(el("span", "tool", request.tool), " ", el("span", "what", request.summary));
 			const buttons = el("div", "buttons");
@@ -797,7 +850,7 @@ function renderApprovals() {
 			for (const [decision, label, className, letter] of choices) {
 				const button = el("button", className, label);
 				button.type = "button";
-				if (n === 0) button.append(el("kbd", undefined, `${alt}${letter}`));
+				if (request === first) button.append(el("kbd", undefined, `${alt}${letter}`));
 				button.addEventListener("click", () => void decide(decision, request));
 				buttons.append(button);
 			}
@@ -813,7 +866,7 @@ function renderApprovals() {
 
 type Decision = "once" | "always" | "deny";
 
-async function decide(decision: Decision, request = approvals[0]) {
+async function decide(decision: Decision, request = firstApproval()) {
 	if (request === undefined) return say("sys", "Nothing is waiting for approval.");
 	if (decision === "always" && request.always === undefined) return say("err", `${request.tool} has no "always" choice.`);
 	for (const b of $("approvals").querySelectorAll("button")) b.disabled = true;
@@ -882,6 +935,44 @@ async function showTools() {
 	say("sys", out);
 }
 
+async function showMemory() {
+	const notes = await load<Note[]>("/api/memory");
+	if (notes.length === 0) return say("sys", "gaidin has no notes yet. /remember adds one, or tell gaidin something worth keeping.");
+	const out = el("div", "out");
+	for (const note of notes) {
+		const button = el("button", "plain", "forget");
+		button.type = "button";
+		button.addEventListener("click", () => void runCommand(`/forget ${note.id}`));
+		out.append(el("span", "dim", String(note.id)), el("span", "when", note.by === "owner" ? "you" : "gaidin"), el("span", undefined, note.text), button);
+	}
+	say("sys", out);
+}
+
+async function allowMore() {
+	try {
+		state.budget = await post("/api/budget/allow", {});
+		say("sys", `Allowed more today: the daily limit is now ${money(state.budget!.dailyLimit)}.`);
+	} catch (error) {
+		notice(String(error));
+	}
+}
+
+function showBudget() {
+	const budget = state.budget;
+	if (!budget) return say("sys", "No spend information yet.");
+	const daily = budget.dailyLimit > 0 ? `${money(budget.today)} of ${money(budget.dailyLimit)} today` : `${money(budget.today)} today, no daily limit`;
+	const monthly = budget.monthlyLimit > 0 ? `${money(budget.month)} of ${money(budget.monthlyLimit)} this month` : `${money(budget.month)} this month, no monthly limit`;
+	const body = el("div");
+	body.append(`${daily} · ${monthly}`);
+	if (budget.stopped) {
+		const button = el("button", "danger", "allow more today");
+		button.type = "button";
+		button.addEventListener("click", () => void allowMore());
+		body.append(el("div", "why", budget.reason ?? "Stopped at the limit."), button);
+	}
+	say(budget.stopped ? "err" : "sys", body);
+}
+
 function showHelp() {
 	const help = el("div", "help");
 	for (const c of commands) help.append(el("span", "c", `/${c.name}`), el("span", "a", c.args ?? ""), el("span", "h", c.help));
@@ -925,6 +1016,29 @@ const commands: Command[] = [
 		},
 	},
 	{ name: "tools", help: "The tools you can switch off", run: showTools },
+	{ name: "memory", help: "gaidin's notes, which every conversation sees", run: showMemory },
+	{
+		name: "remember",
+		args: "<text>",
+		help: "Add a note to gaidin's memory",
+		run: async (arg) => {
+			if (arg === "") throw new Error("Give the note's text: /remember the NAS is in the hall closet");
+			const note = await post("/api/memory/add", { text: arg });
+			say("sys", `Noted [${note.id}]: ${note.text}`);
+		},
+	},
+	{
+		name: "forget",
+		args: "<id>",
+		help: "Delete a note by its /memory number",
+		run: async (arg) => {
+			const id = Number(arg);
+			if (!Number.isInteger(id)) throw new Error("Give a note number from /memory, like /forget 3.");
+			const { ok } = await post("/api/memory/forget", { id });
+			say(ok ? "sys" : "err", ok ? `Forgot note ${id}.` : `No note ${id}.`);
+		},
+	},
+	{ name: "budget", help: "Spend today and this month, against the limits", run: () => loadSpend().then(showBudget) },
 	{
 		name: "tool",
 		args: "<name> [on|off]",
@@ -1112,7 +1226,9 @@ async function submit() {
 	}
 	stick = true;
 	try {
-		await post("/api/message", { content: content.startsWith("//") ? content.slice(1) : content, requestId: requestId() });
+		const sent = await post("/api/message", { content: content.startsWith("//") ? content.slice(1) : content, requestId: requestId() });
+		// The server takes a message as the answer when gaidin is waiting on a question.
+		if (sent?.answered) say("sys", "Taken as the answer to gaidin's question; the run goes on.");
 	} catch (error) {
 		// Put the message back so it isn't lost.
 		if (input.value === "") {
@@ -1180,7 +1296,7 @@ input.addEventListener("keydown", (press) => {
 
 document.addEventListener("keydown", (press) => {
 	const { key, code, altKey, ctrlKey, metaKey } = press;
-	if (altKey && !ctrlKey && !metaKey && approvals.length > 0) {
+	if (altKey && !ctrlKey && !metaKey && firstApproval() !== undefined) {
 		const decision = ({ KeyY: "once", KeyA: "always", KeyN: "deny" } as Record<string, Decision>)[code];
 		if (decision !== undefined) {
 			press.preventDefault();

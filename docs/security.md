@@ -6,7 +6,7 @@ The transcript is kept forever, compaction included, so anything a tool returns 
 
 ## Redaction
 
-`src/redact.ts` keeps the server's own secrets (the API key, the ntfy URL and token, and the two Slack tokens) out of tools and the transcript:
+`src/redact.ts` keeps the server's own secrets (the API key, the ntfy URL and token, the two Slack tokens, and the search key) out of tools and the transcript:
 
 - Shell commands can't read the settings file and don't inherit those values' environment variables.
 - Shell output is redacted as it streams, holding back a few characters so a value split across two chunks is still caught. The live output, the stored result and the partial result saved after a crash are all clean.
@@ -42,10 +42,11 @@ A URL can carry data out in its path or query, which is why a fetch to a new hos
 | `fetch_url` | for a host not allowed for good | always allow that host |
 | `workspace_*` | every call | allow that workspace for an hour, in that conversation only |
 | `schedule_job` | every new job | none |
+| `remember`, `update_memory` | when the run has read outside text since the owner's last message | none |
 
-Deny, no answer within 30 minutes, or Stop blocks the call, and the model is told which. The request id comes from a memo on the tool task, so after a restart the same call waits on the same request without asking again. Only the configured Slack user's presses in the configured channel count, and the web view only answers its configured login. Requests, always-allowed hosts and hour grants are stored in a session document and survive restarts.
+A request waits up to `approvals.waitHours` (7 days by default); the run is stored meanwhile and costs nothing. Deny, no answer in time, Stop, or a new message from the owner in that conversation blocks the call, and the model is told which. A new message closes the request as skipped, so the owner never has to answer an old request before saying something else. The request id comes from a memo on the tool task, so after a restart the same call waits on the same request without asking again. Only the configured Slack user's presses in the configured channel count, and the web view only answers its configured login. Requests, always-allowed hosts and hour grants are stored in a session document and survive restarts.
 
-A tool that changes anything outside the sandbox should go through this policy ([Extending](extending.md#tools-that-reach-outside)).
+The policy can also see which tools that return outside text (`UNTRUSTED_TOOLS`: `fetch_url`, `web_search`, `container_logs`, `workspace_read`, `workspace_run`) the run has used since the owner's last message; memory writes use that. A tool that changes anything outside the sandbox should go through this policy ([Extending](extending.md#tools-that-reach-outside)).
 
 ## Workspaces
 
@@ -69,11 +70,12 @@ The web view trusts the identity header Tailscale Serve adds, and listens only o
 
 ## Known gaps
 
-- A host you've always allowed for `fetch_url` can still receive data in a URL without asking.
+- A host you've always allowed for `fetch_url` can still receive data in a URL without asking, and a `web_search` query reaches the search backend without asking.
 - Redaction and log scrubbing match known values and labelled patterns; they won't catch everything.
 - Workspace secret masking goes by file name.
 - Anything gaidin writes into a project can run later as you.
-- The tools that don't ask (sandbox, reminders, homelab reads) can still be steered: a manipulated model could set reminders or fill the sandbox.
+- The tools that don't ask (sandbox, reminders, homelab reads) can still be steered: a manipulated model could set reminders or fill the sandbox. Any steered run also spends money, which the [spend limits](deploy.md#spend-limits) cap.
+- A note the owner approves, or one written before any outside text was read, goes into every later prompt. The web view shows them all, and deleting one takes it out.
 - An approved job runs its instruction later with the tools of an ordinary run. Its own calls to workspaces or new hosts still ask, but the instruction itself isn't checked again.
 
 ## Rules

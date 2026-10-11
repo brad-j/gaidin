@@ -2,6 +2,7 @@
 // message in it is a fork of the root at that message's answer; later replies in the thread continue the
 // fork. Socket Mode, so the host needs no inbound port.
 import { type ConversationId, type Conversation, defineDoc, type EntryId, type Harness } from "@earendil-works/pi-durable";
+import type { ApprovalService } from "./approvals.ts";
 import { assistantText, context } from "./host.ts";
 import { stamp } from "./time.ts";
 
@@ -17,6 +18,8 @@ export const SlackState = defineDoc<{
 	threads: Record<string, number>;
 	/** Accepted messages whose answer isn't posted yet. */
 	pending: Record<string, Pending>;
+	/** Messages taken as the answer to a question, so a redelivery isn't taken again. */
+	consumed?: Record<string, number>;
 }>({
 	kind: "gaidin.slack",
 	version: 1,
@@ -63,6 +66,10 @@ export function createSlackSurface(options: {
 	channel: string;
 	user: string;
 	retryDelayMs?: number;
+	/** Says why a run went unanswered, when there's more to say than its reason, such as the spend limit. */
+	explain?: (reason: string | undefined) => string | undefined;
+	/** Pending questions and approvals: a message can answer a question, and a new message skips an approval. */
+	approvals?: ApprovalService;
 }) {
 	const { harness, root, post, channel, user, retryDelayMs = 1000 } = options;
 	const delivering = new Set<string>();
@@ -88,8 +95,24 @@ export function createSlackSurface(options: {
 	async function accept(ts: string, text: string, threadTs: string | undefined): Promise<boolean> {
 		const state = await read();
 		// A redelivered event: already answered, or already on its way.
-		if (ts in state.answers) return false;
+		if (ts in state.answers || state.consumed?.[ts] !== undefined) return false;
 		if (ts in state.pending) return true;
+		const approvals = options.approvals;
+		const consume = () => root.commit(async (tx) => {
+			const doc = await tx.doc(SlackState);
+			doc.consumed ??= {};
+			doc.consumed[ts] = Date.now();
+			// A week is long past any redelivery.
+			for (const [key, at] of Object.entries(doc.consumed)) if (at < Date.now() - 7 * 86_400_000) delete doc.consumed[key];
+		}, context);
+		// A reply in the thread of a question gaidin asked answers it, whichever conversation asked.
+		if (threadTs !== undefined && approvals !== undefined) {
+			const question = await approvals.questionAt(threadTs);
+			if (question !== undefined && (await approvals.answer(question.id, text, "slack")) !== undefined) {
+				await consume();
+				return false;
+			}
+		}
 		let conversationId: number = root.id;
 		if (threadTs !== undefined) {
 			const existing = state.threads[threadTs];
@@ -111,6 +134,11 @@ export function createSlackSurface(options: {
 				}, context);
 				conversationId = fork.id;
 			}
+		}
+		// A question waiting in this conversation takes the message as its answer; a waiting approval is skipped.
+		if (approvals !== undefined && (await approvals.intercept(conversationId, text, "slack")) === "answered") {
+			await consume();
+			return false;
 		}
 		// The time is fixed here, so a resubmission after a restart sends the same text.
 		const pending: Pending = { conversationId, content: stamp(text), ...(threadTs === undefined ? {} : { threadTs }) };
@@ -139,7 +167,7 @@ export function createSlackSurface(options: {
 				answer = settled.answer;
 				text = assistantText(await conversation.commit((tx) => tx.entry(settled.answer), context)) ?? "(no text in the answer)";
 			} else {
-				text = `! ${settled.status}${settled.reason ? `: ${settled.reason}` : ""}`;
+				text = options.explain?.(settled.reason) ?? `! ${settled.status}${settled.reason ? `: ${settled.reason}` : ""}`;
 			}
 			// At least once: a crash between posting and the commit below posts it again.
 			const posted = await postWithRetry(pending.threadTs, text);

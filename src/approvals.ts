@@ -10,12 +10,13 @@
 import { randomUUID } from "node:crypto";
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
-import type { ToolCall } from "@earendil-works/pi-ai";
-import { defineDoc, defineExtension, type Harness, hook, type TaskId, ToolTask } from "@earendil-works/pi-durable";
+import { type Message, type ToolCall, Type } from "@earendil-works/pi-ai";
+import { type ConversationId, defineDoc, defineExtension, defineTool, type Harness, hook, type TaskId, ToolTask } from "@earendil-works/pi-durable";
 import { describeSchedule, parseSchedule } from "./jobs.ts";
 
 export type Decision = "once" | "always" | "deny";
-export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
+/** "superseded": the owner sent a new message in the conversation instead of answering. */
+export type ApprovalStatus = "pending" | "approved" | "denied" | "answered" | "expired" | "cancelled" | "superseded";
 
 export type ApprovalRequest = {
 	id: string;
@@ -23,8 +24,14 @@ export type ApprovalRequest = {
 	/** The tool call's task. A request whose task has ended isn't waited on any more. */
 	taskId: number;
 	tool: string;
-	/** One line for the owner: what the call does. */
+	/** One line for the owner: what the call does, or for a question, the question. */
 	summary: string;
+	/** A question from ask_owner rather than a request to allow a call. */
+	kind?: "question";
+	/** Answers offered as buttons. */
+	choices?: string[];
+	/** The owner's answer to a question. */
+	answer?: string;
 	/** The wider grant the second button gives, when one is offered. `label` is the button, `done` the outcome. */
 	always?: { kind: "fetch-host" | "workspace-hour"; value: string; label: string; done: string };
 	createdAt: number;
@@ -51,12 +58,27 @@ export const Approvals = defineDoc<{ requests: Record<string, ApprovalRequest>; 
 type ApprovalState = { requests: Record<string, ApprovalRequest>; fetchHosts: string[]; grants?: Grant[] };
 
 /** What a call needs approval for, or nothing. */
-export type Policy = (call: ToolCall, state: ApprovalState, conversationId: number) => Pick<ApprovalRequest, "summary" | "always"> | undefined;
+type Ask = Pick<ApprovalRequest, "summary" | "always"> | undefined;
+/**
+ * What a call needs approval for, or nothing. `untrusted` lists the tools whose outside text the run has
+ * read since the owner's last message; it reads the transcript, so call it only when it matters.
+ */
+export type Policy = (call: ToolCall, state: ApprovalState, conversationId: number, untrusted: () => Promise<string[]>) => Ask | Promise<Ask>;
+
+/** Tools whose results are text from outside: web pages, other programs' logs, files and output on a workspace. */
+export const UNTRUSTED_TOOLS = new Set(["fetch_url", "web_search", "container_logs", "workspace_read", "workspace_run"]);
 
 const WORKSPACE_GRANT_MS = 60 * 60_000;
 const clip = (text: string, max = 1500) => (text.length > max ? `${text.slice(0, max)}… (${text.length} characters)` : text);
 
-export const defaultPolicy: Policy = (call, state, conversationId) => {
+export const defaultPolicy: Policy = async (call, state, conversationId, untrusted) => {
+	// Notes reach every future run, so writing one right after reading outside text asks first.
+	if (call.name === "remember" || call.name === "update_memory") {
+		const read = await untrusted();
+		if (read.length === 0) return undefined;
+		const text = String(call.arguments.text ?? "");
+		return { summary: `${call.name === "remember" ? "remember" : `change note ${String(call.arguments.id)} to`} "${clip(text, 500)}", after reading outside text (${read.join(", ")})` };
+	}
 	// Every workspace tool asks, unless the owner allowed that workspace for an hour in this conversation.
 	if (call.name.startsWith("workspace_")) {
 		const workspace = String(call.arguments.workspace);
@@ -109,7 +131,7 @@ export class ApprovalService {
 
 	constructor(harness: Harness, options: { timeoutMs?: number } = {}) {
 		this.#harness = harness;
-		this.#timeoutMs = options.timeoutMs ?? 30 * 60_000;
+		this.#timeoutMs = options.timeoutMs ?? 7 * 24 * 3_600_000;
 	}
 
 	async state(): Promise<ApprovalState> {
@@ -159,7 +181,7 @@ export class ApprovalService {
 	}
 
 	/** Records a request under `id` unless it exists, and returns it as stored. */
-	async open(id: string, at: { conversationId: number; taskId: number }, tool: string, ask: Pick<ApprovalRequest, "summary" | "always">): Promise<ApprovalRequest> {
+	async open(id: string, at: { conversationId: number; taskId: number }, tool: string, ask: Pick<ApprovalRequest, "summary" | "always" | "kind" | "choices">): Promise<ApprovalRequest> {
 		const now = Date.now();
 		const { request, created } = await this.#commit((doc) => {
 			for (const [key, old] of Object.entries(doc.requests)) {
@@ -179,7 +201,7 @@ export class ApprovalService {
 	async decide(id: string, decision: Decision, by: string): Promise<ApprovalRequest | undefined> {
 		const decided = await this.#commit((doc) => {
 			const request = doc.requests[id];
-			if (request === undefined || request.status !== "pending") return undefined;
+			if (request === undefined || request.status !== "pending" || request.kind === "question") return undefined;
 			if (request.expiresAt <= Date.now()) {
 				request.status = "expired";
 				request.decidedAt = Date.now();
@@ -205,8 +227,43 @@ export class ApprovalService {
 		return decided;
 	}
 
-	/** Ends a pending request without an answer: the run was stopped, or the time ran out. */
-	async close(id: string, status: "expired" | "cancelled"): Promise<void> {
+	/** The owner's answer to a question. Returns the request, or nothing if it wasn't a pending question. */
+	async answer(id: string, text: string, by: string): Promise<ApprovalRequest | undefined> {
+		const answer = text.trim();
+		if (answer === "") return undefined;
+		const answered = await this.#commit((doc): ApprovalRequest | undefined => {
+			const request = doc.requests[id];
+			if (request === undefined || request.status !== "pending" || request.kind !== "question") return undefined;
+			request.status = "answered";
+			request.answer = answer;
+			request.decidedAt = Date.now();
+			request.by = by;
+			return plain(request);
+		});
+		if (answered !== undefined) this.#settled(answered);
+		return answered;
+	}
+
+	/**
+	 * The owner's new message in a conversation. If a question is waiting there, the message is its answer
+	 * ("answered"). Otherwise pending approvals there are closed as superseded, so the run stops waiting
+	 * and the message can run ("continue").
+	 */
+	async intercept(conversationId: number, text: string, by: string): Promise<"answered" | "continue"> {
+		const waiting = (await this.pending()).filter((r) => r.conversationId === conversationId);
+		const question = waiting.find((r) => r.kind === "question");
+		if (question !== undefined && (await this.answer(question.id, text, by)) !== undefined) return "answered";
+		for (const request of waiting) await this.close(request.id, "superseded");
+		return "continue";
+	}
+
+	/** The pending question asked in the Slack message `ts`, if any. */
+	async questionAt(ts: string): Promise<ApprovalRequest | undefined> {
+		return (await this.pending()).find((r) => r.kind === "question" && r.slackTs === ts);
+	}
+
+	/** Ends a pending request without an answer: the run was stopped, the time ran out, or the owner moved on. */
+	async close(id: string, status: "expired" | "cancelled" | "superseded"): Promise<void> {
 		const closed = await this.#commit((doc): ApprovalRequest | undefined => {
 			const request = doc.requests[id];
 			if (request === undefined || request.status !== "pending") return undefined;
@@ -269,14 +326,60 @@ export class ApprovalService {
 }
 
 /** The hook. `service` is read lazily, because the Harness that the service needs is opened after the registry. */
+/**
+ * The untrusted tools whose results are in the conversation since its last user message. The hook's api is
+ * the tool task's runtime, which can read the conversation's context.
+ */
+export async function untrustedSince(api: unknown, context: Context): Promise<string[]> {
+	const runtime = api as { conversationId: ConversationId; context?: (id: ConversationId, context: Context) => Promise<{ messages: readonly Message[] }> };
+	if (runtime.context === undefined) return [];
+	const { messages } = await runtime.context(runtime.conversationId, context);
+	const found = new Set<string>();
+	for (let i = messages.length - 1; i >= 0; i -= 1) {
+		const message = messages[i]!;
+		if (message.role === "user") break;
+		if (message.role === "toolResult" && UNTRUSTED_TOOLS.has(message.toolName)) found.add(message.toolName);
+	}
+	return [...found];
+}
+
 export function approvalExtension(service: () => ApprovalService, owner: string, policy: Policy = defaultPolicy) {
+	const askOwner = defineTool({
+		name: "ask_owner",
+		description:
+			`Ask ${owner} a question and wait for the answer, for a decision only they can make. The run pauses until ` +
+			`${owner} answers, for up to days, and continues where it stopped. Give \`choices\` (up to 5) when the answer is one ` +
+			`of a few options; ${owner} can still answer in their own words. Ask one question at a time.`,
+		parameters: Type.Object({
+			question: Type.String(),
+			choices: Type.Optional(Type.Array(Type.String(), { maxItems: 5 })),
+		}),
+		// The request id comes from the tool call's task, so a rerun after a restart waits on the same question.
+		replay: "safe",
+		execute: async (args, api, context) => {
+			const approvals = service();
+			const choices = (args.choices ?? []).map((c) => c.trim()).filter((c) => c !== "").map((c) => c.slice(0, 75));
+			const request = await approvals.open(`question:${api.taskId}`, { conversationId: api.conversationId as number, taskId: api.taskId as number }, "ask_owner", {
+				summary: args.question.trim(),
+				kind: "question",
+				...(choices.length === 0 ? {} : { choices }),
+			});
+			const signals = [context.abortSignal, (api as { signal?: AbortSignal }).signal].filter((s) => s !== undefined);
+			const done = await approvals.wait(request, signals.length === 0 ? undefined : AbortSignal.any(signals));
+			const text = done.status === "answered" ? `${owner} answered: ${done.answer}`
+				: done.status === "expired" ? `${owner} didn't answer in time.`
+				: "No answer: the run was stopped.";
+			return { content: [{ type: "text", text }], isError: done.status !== "answered" };
+		},
+	});
 	return defineExtension({
 		name: "approvals",
+		tools: [askOwner],
 		hooks: [
 			hook(ToolTask, {
 				beforeTool: async (call, api, context: Context) => {
 					const approvals = service();
-					const ask = policy(call, await approvals.state(), api.conversationId as number);
+					const ask = await policy(call, await approvals.state(), api.conversationId as number, () => untrustedSince(api, context));
 					if (ask === undefined) return undefined;
 					// The same id for every run of this call's phase, so a restart doesn't ask twice.
 					const id = await api.memo<string>("gaidin.approval", randomUUID(), context);
@@ -285,7 +388,10 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 					const signals = [context.abortSignal, (api as { signal?: AbortSignal }).signal].filter((s) => s !== undefined);
 					const done = await approvals.wait(request, AbortSignal.any(signals));
 					if (done.status === "approved") return undefined;
-					const why = done.status === "denied" ? `${owner} said no` : done.status === "expired" ? `${owner} didn't answer in time` : "the run was stopped";
+					const why = done.status === "denied" ? `${owner} said no`
+						: done.status === "expired" ? `${owner} didn't answer in time`
+						: done.status === "superseded" ? `${owner} sent a new message instead of answering`
+						: "the run was stopped";
 					return { block: `Needs ${owner}'s approval to ${ask.summary}, and ${why}.` };
 				},
 			}),

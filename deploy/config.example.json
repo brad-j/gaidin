@@ -18,5 +18,13 @@
   },
   "web": {
     "user": "alex@example.com"
+  },
+  "search": {
+    "provider": "tavily",
+    "apiKey": "tvly-..."
+  },
+  "budget": {
+    "daily": 5,
+    "monthly": 60
   }
 }

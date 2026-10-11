@@ -10,8 +10,10 @@ import { stripTypeScriptTypes } from "node:module";
 import { resolve } from "node:path";
 import { type Conversation, type Harness, type ModelRef, type ToolRegistration, watchEvents } from "@earendil-works/pi-durable";
 import type { ApprovalService, Decision } from "./approvals.ts";
+import type { BudgetGuard } from "./budget.ts";
 import { context } from "./host.ts";
 import { describeSchedule, Jobs, removeJob } from "./jobs.ts";
+import { addNote, forgetNote, Memory } from "./memory.ts";
 import { Reminders, removeReminder } from "./reminders.ts";
 import { stamp } from "./time.ts";
 
@@ -35,6 +37,7 @@ export function createWebServer(options: {
 	approvals: ApprovalService;
 	/** Model ids the page offers, from the settings' model.choices. */
 	models?: readonly string[];
+	budget?: BudgetGuard;
 }) {
 	const { harness, root, user, switchable, approvals } = options;
 	const choices = options.models ?? [];
@@ -114,6 +117,8 @@ export function createWebServer(options: {
 			const items = (await harness.snapshot(Jobs, context))?.items ?? [];
 			return json(response, items.map((job) => ({ ...job, when: describeSchedule(job.schedule) })).sort((a, b) => (a.nextAt ?? 0) - (b.nextAt ?? 0)));
 		}
+		if (get && url.pathname === "/api/memory") return json(response, (await harness.snapshot(Memory, context))?.notes ?? []);
+		if (get && url.pathname === "/api/budget") return json(response, options.budget === undefined ? null : await options.budget.refresh());
 		if (get && url.pathname === "/api/usage") return json(response, await harness.usage(context));
 		if (get && url.pathname === "/api/approvals") return json(response, await approvals.pending());
 		if (request.method !== "POST") throw new HttpError(404, "Not found");
@@ -123,6 +128,7 @@ export function createWebServer(options: {
 			case "/api/message": {
 				const content = typeof body.content === "string" ? body.content.trim() : "";
 				if (content === "") throw new HttpError(400, "Empty message");
+				if ((await approvals.intercept(root.id, content, "web")) === "answered") return json(response, { ok: true, answered: true });
 				const requestId = typeof body.requestId === "string" ? `web:${body.requestId}` : `web:${randomUUID()}`;
 				await root.submit({ type: "input", content: stamp(content), requestId }, context);
 				return json(response, { ok: true });
@@ -134,9 +140,33 @@ export function createWebServer(options: {
 				const removed = await root.commit((tx) => removeReminder(tx, Number(body.id)), context);
 				return json(response, { ok: removed !== undefined });
 			}
+			case "/api/memory/add": {
+				try {
+					const note = await root.commit((tx) => addNote(tx, String(body.text ?? ""), "owner"), context);
+					return json(response, note);
+				} catch (error) {
+					throw new HttpError(400, error instanceof Error ? error.message : String(error));
+				}
+			}
+			case "/api/memory/forget": {
+				const removed = await root.commit((tx) => forgetNote(tx, Number(body.id)), context);
+				return json(response, { ok: removed !== undefined });
+			}
+			case "/api/budget/allow": {
+				if (options.budget === undefined) throw new HttpError(404, "No budget");
+				const { dailyLimit } = options.budget.status();
+				// One more day's worth, or $5 when there's no daily limit.
+				const amount = Number(body.amount ?? (dailyLimit > 0 ? dailyLimit : 5));
+				if (!Number.isFinite(amount) || amount <= 0 || amount > 1000) throw new HttpError(400, "amount must be between 0 and 1000 dollars");
+				return json(response, await options.budget.allowMore(amount));
+			}
 			case "/api/jobs/cancel": {
 				const removed = await root.commit((tx) => removeJob(tx, Number(body.id)), context);
 				return json(response, { ok: removed !== undefined });
+			}
+			case "/api/approvals/answer": {
+				const answered = await approvals.answer(String(body.id), String(body.answer ?? ""), "web");
+				return json(response, { ok: answered !== undefined });
 			}
 			case "/api/approvals/decide": {
 				const decision = String(body.decision);

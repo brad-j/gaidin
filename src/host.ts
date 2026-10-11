@@ -8,14 +8,17 @@ import { AssistantEntry, createRegistry, defineExtension, type EntryRecord, Harn
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { ApprovalService, approvalExtension } from "./approvals.ts";
+import { createBudget } from "./budget.ts";
 import { type Config, configFor, secretsOf } from "./config.ts";
 import { createHomelab, type HomelabOptions } from "./extensions/homelab/index.ts";
 import { createFetch, type FetchOptions } from "./fetch.ts";
 import { createJobs, type Deliver } from "./jobs.ts";
+import { createMemory } from "./memory.ts";
 import { ntfyNotifier, ntfyReporter } from "./ntfy.ts";
 import { type Redactor, redactionExtension, redactorFor } from "./redact.ts";
 import { createReminders, type Notify } from "./reminders.ts";
 import { findBwrap, SandboxEnv } from "./sandbox.ts";
+import { backendFor, type SearchBackend, webSearchTool } from "./search.ts";
 import { setTimeZone, timeZone } from "./time.ts";
 import { createWorkspaces, readWorkspaces, type Remote, sshRemote, type Workspace } from "./workspaces.ts";
 
@@ -66,7 +69,10 @@ function persona(owner: string) {
 					`Each of ${owner}'s messages starts with the local time in brackets, in the ${timeZone()} time zone. ` +
 					`Use the reminder tools for anything ${owner} wants to be reminded of, and read back the time the tool reports. ` +
 					`Use schedule_job for work to do later or on a schedule: briefings, regular checks, and watches. ` +
-					`When you tell ${owner} you'll check on something later, schedule it, so it happens.`,
+					`When you tell ${owner} you'll check on something later, schedule it, so it happens. ` +
+					`When you need a decision only ${owner} can make, ask with ask_owner and wait for the answer rather than guessing. ` +
+					"The bash tool runs in a sandbox with no network: curl, package installs and git clone fail there. " +
+					"Reach the internet with fetch_url, and web_search when it's available. If a tool fails, say what failed rather than guessing a cause.",
 				{ tag: false },
 			),
 		],
@@ -83,15 +89,19 @@ export type HostOptions = {
 	notify?: Notify;
 	/** Where scheduled jobs' reports go. Default: ntfy, or the server's output. The server sends them to Slack with `setDeliver`. */
 	deliver?: Deliver;
+	/** Replaces how the spend guard totals spend; tests use it. */
+	spend?: (harness: Harness) => Promise<number>;
 	/** Default: the secrets in the settings. */
 	redactor?: Redactor;
 	/** Replaces how the homelab extension reaches its feeds and hosts. */
 	homelab?: HomelabOptions;
 	/** How fetch_url resolves names and which addresses it refuses; tests replace them. */
 	fetch?: FetchOptions;
+	/** Replaces the settings' search backend; tests use it. */
+	search?: SearchBackend;
 	/** Machines gaidin can work on, and how to reach them. Default: the keys directory's `workspaces` file, over ssh. */
 	workspaces?: { list: Workspace[]; remote: Remote | undefined };
-	/** How long a request for approval waits for the owner. Default 30 minutes. */
+	/** Replaces the settings' approvals.waitHours, in milliseconds. */
 	approvalTimeoutMs?: number;
 	/** Replaces the settings' sandbox: "none" runs shell commands without bubblewrap. */
 	sandbox?: "bwrap" | "none";
@@ -105,7 +115,15 @@ export async function openHost(options: HostOptions = {}) {
 	// Transcripts and tool output live here.
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	mkdirSync(sandbox, { recursive: true });
-	const { models, model } = options.models && options.model ? { models: options.models, model: options.model } : modelFor(config);
+	const chosen = options.models && options.model ? { models: options.models, model: options.model } : modelFor(config);
+	const model = chosen.model;
+	// The guard refuses the model lookup each request makes once a spend limit is reached.
+	const ntfyText = ntfyReporter(config.ntfy);
+	let budgetNotify = (text: string) => ntfyText({ title: "budget", text });
+	const budget = createBudget({ limits: config.budget, notify: () => budgetNotify, ...(options.spend === undefined ? {} : { spend: options.spend }) });
+	const models = budget.guard(chosen.models);
+	// A run the guard refused says so, wherever it's reported.
+	const explain = (reason: string | undefined) => (reason === "no_model" ? budget.blocked() : undefined);
 	const owner = config.owner;
 	const reminders = createReminders(options.notify ?? ntfyNotifier(config.ntfy), owner);
 	const redactor = options.redactor ?? redactorFor(secretsOf(config));
@@ -118,12 +136,16 @@ export async function openHost(options: HostOptions = {}) {
 	registry.install(persona(owner));
 	registry.install(CodingTools);
 	registry.install(reminders.extension);
+	registry.install(createMemory(owner));
 	let deliver: Deliver = options.deliver ?? ntfyReporter(config.ntfy);
-	const jobs = createJobs({ deliver: () => deliver, owner });
+	const jobs = createJobs({ deliver: () => deliver, owner, explain });
 	registry.install(jobs.extension);
 	if (config.homelab !== undefined) registry.install(createHomelab(config.homelab, owner, config.keysDir, options.homelab));
 	const web = createFetch(options.fetch, owner);
 	registry.install(web.extension);
+	const searchBackend = options.search ?? backendFor(config.search);
+	const search = searchBackend === undefined ? undefined : webSearchTool(searchBackend, owner);
+	if (search !== undefined) registry.install(defineExtension({ name: "search", tools: [search] }));
 	const workspaces = createWorkspaces({
 		workspaces: options.workspaces?.list ?? readWorkspaces(config.keysDir),
 		remote: options.workspaces === undefined ? sshRemote(config.keysDir) : options.workspaces.remote,
@@ -135,6 +157,7 @@ export async function openHost(options: HostOptions = {}) {
 	let approvals: ApprovalService | undefined;
 	registry.install(approvalExtension(() => approvals!, owner));
 	// Last, so its afterTool sees what every other hook left.
+	registry.install(budget.extension);
 	registry.install(redactionExtension(redactor));
 
 	const harness = await Harness.open(
@@ -148,13 +171,18 @@ export async function openHost(options: HostOptions = {}) {
 		},
 		context,
 	);
-	approvals = new ApprovalService(harness, options.approvalTimeoutMs === undefined ? {} : { timeoutMs: options.approvalTimeoutMs });
+	approvals = new ApprovalService(harness, { timeoutMs: options.approvalTimeoutMs ?? config.approvals.waitHours * 3_600_000 });
 	const root = await harness.root(context, { agent: { model, cwd: sandbox } });
+	// After the root exists: the guard's first read would otherwise create it without its agent.
+	await budget.attach(harness);
 	harness.resume();
 	// The tools the web view can switch off: the coding tools, fetch_url (gaidin's only way to the internet) and the workspace tools.
-	const switchable = [...(CodingTools.tools ?? []), web.tool, ...workspaces.tools];
+	const switchable = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...workspaces.tools];
 	const setDeliver = (next: Deliver) => {
 		deliver = next;
 	};
-	return { harness, root, reminders, jobs, setDeliver, switchable, approvals, config };
+	const setBudgetNotify = (next: (text: string) => Promise<void>) => {
+		budgetNotify = next;
+	};
+	return { harness, root, reminders, jobs, setDeliver, budget, setBudgetNotify, explain, switchable, approvals, config };
 }
