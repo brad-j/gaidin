@@ -25,8 +25,20 @@
 
 ## Next
 
-Candidates:
+11. Search past conversations. Notes hold what gaidin needs every time; search finds the rest, such as "what did we decide about the NAS last week", in any conversation, Slack thread or job run.
+
+Candidates after that:
 
 - Branching from any message in the web view, and a timeline of what gaidin did and who approved it.
 - Release polish: a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
 - Push-to-talk in the web view. That would need more memory on the VM.
+
+### Search
+
+Pi Durable keeps every entry, including the ones compaction summarized away, but it has no text search. Node's own SQLite has FTS5, so search needs no new dependency.
+
+- An index in its own file, `<data>/search.sqlite`, filled from Pi Durable's entry scans rather than its tables, so a change to its schema can't break it. It catches up from the last entry it saw at start and after each run, and can be deleted and rebuilt.
+- What's indexed: the owner's messages and gaidin's answers, with their conversation, time and surface. Not tool output, which is long, mostly outside text, and already redacted but still noise.
+- `search_history(query)` returns matching messages with their time and where they were, newest first, and a way to read the messages around one. It makes no model calls.
+- One sentence in the instructions: before saying it doesn't know something the owner may have mentioned, search.
+- It's switchable in the web view. A result is the owner's own words and gaidin's, so it doesn't count as outside text.
