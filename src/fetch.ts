@@ -4,7 +4,8 @@
 // special ranges are refused. GET only, no cookies or credentials, size-capped.
 //
 // What comes back is someone else's text, so it's labelled as such. A URL can still carry data out in
-// its path or query; the approval hook is where that gets a check.
+// its path or query; the approval hook is where that gets a check. So a redirect is followed only on the
+// same host: one to another host comes back as `redirect`, and the next fetch of it is checked like any other.
 import { lookup as dnsLookup } from "node:dns";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -44,13 +45,14 @@ export type FetchOptions = { resolve?: Resolve; blocked?: BlockList; timeoutMs?:
 
 const MAX_REDIRECTS = 5;
 
-export type Fetched = { url: string; status: number; contentType: string; body: Buffer; truncated: boolean };
+/** `redirect`: where a redirect to another host points; it isn't followed. */
+export type Fetched = { url: string; status: number; contentType: string; body: Buffer; truncated: boolean; redirect?: string };
 
 function isBlocked(blocked: BlockList, address: string): boolean {
 	return blocked.check(address, isIP(address) === 6 ? "ipv6" : "ipv4");
 }
 
-/** GETs `url`, following redirects, refusing any hop that resolves to a blocked address. */
+/** GETs `url`, following redirects on its host, refusing any hop that resolves to a blocked address. */
 export async function fetchPublic(url: string, options: FetchOptions = {}): Promise<Fetched> {
 	const resolve = options.resolve ?? systemResolve;
 	const blocked = options.blocked ?? blockedRanges();
@@ -100,8 +102,10 @@ export async function fetchPublic(url: string, options: FetchOptions = {}): Prom
 		const location = response.headers.location;
 		if (status >= 300 && status < 400 && location !== undefined) {
 			response.resume();
+			const next = new URL(location, current);
+			if (next.hostname !== current.hostname) return { url: current.href, status, contentType: "", body: Buffer.alloc(0), truncated: false, redirect: next.href };
 			if (hop >= MAX_REDIRECTS) throw new Error(`More than ${MAX_REDIRECTS} redirects`);
-			current = new URL(location, current);
+			current = next;
 			continue;
 		}
 
@@ -175,6 +179,7 @@ export function htmlToText(html: string, base: string): string {
 
 /** The page as text the model can read, or why it can't. */
 export function render(fetched: Fetched, maxChars: number, owner = "the user"): string {
+	if (fetched.redirect !== undefined) return `${fetched.url} redirects (HTTP ${fetched.status}) to ${fetched.redirect}, on another host. Fetch that URL to follow it.`;
 	const type = fetched.contentType.split(";")[0]!.trim().toLowerCase();
 	const charset = /charset=([^;]+)/i.exec(fetched.contentType)?.[1]?.trim().replace(/"/g, "") ?? "utf-8";
 	const textual = type === "" || type.startsWith("text/") || type.includes("json") || type.includes("xml") || type.includes("javascript");

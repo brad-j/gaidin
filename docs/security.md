@@ -37,7 +37,7 @@ The draft is copied out of the sandbox through the sandbox's own file operations
 
 The sandbox has none. The server reaches the network for `fetch_url`, the homelab tools, the workspaces, Slack, ntfy, the push services and the model provider. `fetch_url` refuses every private, CGNAT, loopback, link-local and reserved address, checked at connect time and after each redirect ([Tools](tools.md#fetch_url)).
 
-A URL can carry data out in its path or query, which is why a fetch to a new host asks first.
+A URL can carry data out in its path or query, which is why a fetch to a new host asks first. Redirects are followed only on the same host, so an open redirect on a host you've allowed can't carry a URL on to one you haven't.
 
 ## Approvals
 

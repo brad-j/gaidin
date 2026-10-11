@@ -344,31 +344,38 @@ export function createSelf(options: {
 		return (await api.commit(async (tx) => assistantText(await tx.entry(settled.answer)), context))?.trim() ?? "";
 	}
 
-	async function fetchFor(url: string, tool: string, api: ToolExecutionApi, signal: AbortSignal): Promise<Fetched> {
-		const host = new URL(url).hostname;
-		const approvals = options.approvals();
-		if (!(await approvals.state()).fetchHosts.includes(host)) {
+	/** A tool's fetch: a host the owner hasn't allowed for good asks, including one a redirect leads to. */
+	function fetchFor(url: string, tool: string, api: ToolExecutionApi, signal: AbortSignal): Promise<Fetched> {
+		return fetchPage(url, async (host, next) => {
+			const approvals = options.approvals();
+			if ((await approvals.state()).fetchHosts.includes(host)) return;
 			const at = { conversationId: api.conversationId as number, taskId: api.taskId as number };
 			const request = await approvals.open(`self-fetch:${api.taskId}:${host}`, at, tool, {
-				summary: `fetch ${url}`,
+				summary: `fetch ${next}`,
 				always: { kind: "fetch-host", value: host, label: `Always allow ${host}`, done: `Always allowed ${host}` },
 			});
 			const done = await approvals.wait(request, signal);
 			if (done.status !== "approved") throw new Error(`${owner} didn't allow fetching from ${host}`);
+		});
+	}
+
+	/** A gate's fetch, which can't ask: only hosts allowed for good, redirects included. */
+	function fetchAllowed(url: string): Promise<Fetched> {
+		return fetchPage(url, async (host) => {
+			if (!(await options.approvals().state()).fetchHosts.includes(host)) throw new Error(`${owner} hasn't allowed ${host} for good, and a gate can't ask`);
+		});
+	}
+
+	/** Fetches `url`, following redirects to other hosts once `allow` lets each host through. */
+	async function fetchPage(url: string, allow: (host: string, url: string) => Promise<void>): Promise<Fetched> {
+		let next = url;
+		for (let hop = 0; ; hop += 1) {
+			await allow(new URL(next).hostname, next);
+			const page = await fetchPublic(next, options.fetch);
+			if (page.redirect === undefined) return { url: page.url, status: page.status, contentType: page.contentType, text: page.body.toString("utf8") };
+			if (hop >= 5) throw new Error("More than 5 redirects to other hosts");
+			next = page.redirect;
 		}
-		return fetchPage(url);
-	}
-
-	/** A gate's fetch, which can't ask: only hosts allowed for good. */
-	async function fetchAllowed(url: string): Promise<Fetched> {
-		const host = new URL(url).hostname;
-		if (!(await options.approvals().state()).fetchHosts.includes(host)) throw new Error(`${owner} hasn't allowed ${host} for good, and a gate can't ask`);
-		return fetchPage(url);
-	}
-
-	async function fetchPage(url: string): Promise<Fetched> {
-		const page = await fetchPublic(url, options.fetch);
-		return { url: page.url, status: page.status, contentType: page.contentType, text: page.body.toString("utf8") };
 	}
 
 	function toolFor(described: Described, runner: Runner): ToolRegistration {

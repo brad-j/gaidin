@@ -29,6 +29,9 @@ async function setup(t: TestContext): Promise<{ base: string; options: FetchOpti
 			case "/to-lan":
 				res.writeHead(302, { Location: "http://lan.test/admin" });
 				return res.end();
+			case "/to-other":
+				res.writeHead(302, { Location: `http://other.test:${req.headers.host?.split(":")[1]}/page?q=1` });
+				return res.end();
 			case "/to-page":
 				res.writeHead(301, { Location: "/page" });
 				return res.end();
@@ -70,11 +73,24 @@ test("private, LAN, tailnet and loopback addresses are refused, by name, literal
 	await refused(`http://ula.test:${port}/`, /fd7a/);
 	await refused("http://10.0.0.1/", /private or reserved/);
 	await refused("http://[::ffff:192.168.1.1]/", /private or reserved/);
-	await refused(`${base}/to-lan`, /lan\.test resolves to 192\.168\.3\.177/);
 	await refused("file:///etc/passwd", /Only http and https/);
 	await refused(`http://user:pass@public.test:${port}/`, /credentials/);
 	// Without the test's exception, loopback is refused too.
 	await refused(`http://127.0.0.1:${port}/page`, /private or reserved/, { ...options, blocked: blockedRanges() });
+});
+
+test("a redirect is followed on its host only; one to another host comes back unfollowed, so fetching it is asked about like any other", async (t) => {
+	const { base, options } = await setup(t);
+	const port = new URL(base).port;
+	// other.test resolves to nothing, so connecting to it would fail.
+	for (const path of ["/to-other", "/to-lan"]) {
+		const fetched = await fetchPublic(`${base}${path}`, options);
+		assert.equal(fetched.status, 302);
+		assert.equal(fetched.body.length, 0);
+		assert.equal(fetched.redirect, path === "/to-other" ? `http://other.test:${port}/page?q=1` : "http://lan.test/admin");
+	}
+	assert.equal(render(await fetchPublic(`${base}/to-other`, options), 20_000), `${base}/to-other redirects (HTTP 302) to http://other.test:${port}/page?q=1, on another host. Fetch that URL to follow it.`);
+	await assert.rejects(fetchPublic("http://lan.test/admin", options), /lan\.test resolves to 192\.168\.3\.177/);
 });
 
 test("pages come back as labelled, readable text", async (t) => {

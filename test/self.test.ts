@@ -63,7 +63,12 @@ type Step = (ctx: Parameters<FauxResponseFactory>[0]) => ReturnType<typeof fauxA
 /** The main conversation's steps in order; the reviewer answers `verdict`. */
 async function start(t: TestContext, steps: Step[], verdict = "OK", dir = mkdtempSync(join(tmpdir(), "gaidin-self-"))) {
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
-	const server = createServer((_req, res) => res.end("page text"));
+	// /hop redirects to b.test on the same server.
+	const server = createServer((req, res) => {
+		if (req.url !== "/hop") return res.end("page text");
+		res.writeHead(302, { Location: `http://b.test:${req.headers.host?.split(":")[1]}/` });
+		res.end();
+	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(() => new Promise((resolve) => server.close(resolve)));
 	const step: FauxResponseFactory = (ctx) => {
@@ -111,14 +116,17 @@ test("a checked draft is loaded after approval, runs in its box, fetches through
 	const steps = [call("load_extension", { name: "kit" }), call("add_numbers", { a: 2, b: 3 })];
 	const { host, dir, port } = await start(t, steps);
 	draft(dir, { "index.ts": INDEX, "test.ts": TEST });
-	steps.push(call("page_length", { url: `http://a.test:${port}/` }), call("can_read", { path: join(dir, "gaidin.sqlite") }));
+	steps.push(call("page_length", { url: `http://a.test:${port}/` }), call("page_length", { url: `http://a.test:${port}/hop` }), call("can_read", { path: join(dir, "gaidin.sqlite") }));
 
 	const asked = await runApproving(host, "load the kit");
 	assert.match(asked[0]!, /^load_extension: add extension kit with add_numbers, page_length, can_read \(\+\d+ −0 lines\)$/);
 	assert.match(asked[1]!, /^page_length: fetch http:\/\/a\.test:\d+\/$/);
+	// A redirect to another host asks for that host too.
+	assert.match(asked[2]!, /^page_length: fetch http:\/\/a\.test:\d+\/hop$/);
+	assert.match(asked[3]!, /^page_length: fetch http:\/\/b\.test:\d+\/$/);
 	const [loaded, ...ran] = await results(host);
 	assert.match(loaded!, /^Loaded kit\./);
-	assert.deepEqual(ran, ["5", "9", "false"]);
+	assert.deepEqual(ran, ["5", "9", "9", "false"]);
 	const request = Object.values((await host.approvals.state()).requests).find((r) => r.tool === "load_extension");
 	assert.match(request!.detail!, /\+export const tools = \[add, pageLength, canRead\];/);
 	assert.ok(host.switchable().some((tool) => tool.name === "add_numbers"));
@@ -200,11 +208,11 @@ test("a self-written tool is a gate, and its fetches reach only hosts allowed fo
 	assert.match((await results(host))[0]!, /^Loaded kit\./);
 
 	const url = `http://a.test:${port}/`;
-	const addJob = (title: string) =>
+	const addJob = (title: string, page = url) =>
 		host.root.commit(async (tx) => {
 			const firstAt = Date.now() + 200;
 			const id = await tx.createTask(host.jobs.JobTask, { title, firstAt }, { ownership: { kind: "conversation" }, background: true });
-			const fields = { instruction: "Read the page.", schedule: { kind: "every" as const, minutes: 0.01, from: firstAt }, mode: "report" as const, gate: { name: "page_gate", args: { url } } };
+			const fields = { instruction: "Read the page.", schedule: { kind: "every" as const, minutes: 0.01, from: firstAt }, mode: "report" as const, gate: { name: "page_gate", args: { url: page } } };
 			(await tx.doc(Jobs)).items.push({ taskId: id as number, title, ...fields, createdAt: Date.now(), nextAt: firstAt, runs: 0 });
 			return id as number;
 		}, context);
@@ -228,4 +236,9 @@ test("a self-written tool is a gate, and its fetches reach only hosts allowed fo
 	assert.equal((await job(open)).recent![0]!.text, "The page says page text.");
 	await until(async () => ((await job(open)).skipped ?? 0) >= 1);
 	await cancel(open);
+
+	// A redirect from a.test to b.test, which isn't allowed for good, fails the check too.
+	const redirected = await addJob("Redirected", `${url}hop`);
+	await until(async () => (await job(redirected)).failures === 1);
+	await cancel(redirected);
 });
