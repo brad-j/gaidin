@@ -104,7 +104,28 @@ export function deviceProblem(device: Pick<Device, "endpoint" | "p256dh" | "auth
 	return undefined;
 }
 
-const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
+/** `text` cut to `max` characters, counted as code points so none is split in two. */
+function clip(text: string, max: number): string {
+	const characters = [...text];
+	return characters.length > max ? `${characters.slice(0, max).join("")}…` : text;
+}
+
+/** The most a push can carry: 4,096 bytes less the encryption's header (86), tag (16) and padding delimiter (1). */
+const MAX_PLAINTEXT = 3993;
+
+/** `message` as the JSON a device gets, its body cut until it fits a push, however its characters escape. */
+function payloadOf(message: PushMessage): Buffer {
+	const title = clip(message.title, 100);
+	const characters = [...message.body];
+	let keep = Math.min(characters.length, 1000);
+	for (;;) {
+		const body = keep === characters.length ? message.body : `${characters.slice(0, keep).join("")}…`;
+		const payload = Buffer.from(JSON.stringify({ ...message, title, body }));
+		if (payload.length <= MAX_PLAINTEXT || keep === 0) return payload;
+		// No character is more than six bytes, as an escape, so this never cuts more than it must; it goes on until it fits.
+		keep = Math.max(0, keep - Math.ceil((payload.length - MAX_PLAINTEXT) / 6));
+	}
+}
 
 export function createPush(options: { harness: Harness; keys: PushKeys; subject: string; fetch?: typeof fetch }) {
 	const { harness, keys, subject } = options;
@@ -144,8 +165,7 @@ export function createPush(options: { harness: Harness; keys: PushKeys; subject:
 		 */
 		async send(message: PushMessage): Promise<number> {
 			const all = await devices();
-			// Well under the 3,993 bytes a push can carry, even with every character escaped.
-			const payload = Buffer.from(JSON.stringify({ ...message, title: clip(message.title, 100), body: clip(message.body, 1000) }));
+			const payload = payloadOf(message);
 			const errors: string[] = [];
 			const gone: string[] = [];
 			let sent = 0;

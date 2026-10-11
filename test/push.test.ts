@@ -151,3 +151,30 @@ test("reminders and requests reach signed-up devices, a device that's gone is dr
 	assert.deepEqual(await (await post("/api/push/unsubscribe", { endpoint: "https://push.test/phone" })).json(), { ok: true });
 	assert.deepEqual(await host.push!.devices(), []);
 });
+
+test("a push fits the 4,096 bytes a push service takes, however its text escapes, cut where it has to be", async (t) => {
+	const bodies: Buffer[] = [];
+	const pushFetch = (async (_url: string, init: RequestInit) => {
+		bodies.push(Buffer.from(init.body as Uint8Array));
+		return new Response(null, { status: 201 });
+	}) as typeof fetch;
+	const host = await startHost({ config: configFor({ web: { user: "me", port: 0, url: "https://gaidin.example.ts.net" } }), dataDir: dir(t), models: createModels(), model: { provider: "faux", modelId: "x" }, pushFetch });
+	t.after(() => host.harness.close(context));
+	const phone = device();
+	await host.push!.add({ endpoint: "https://push.test/phone", p256dh: phone.p256dh, auth: phone.authText, label: "phone" });
+
+	// Each control character escapes to six bytes in JSON, and an emoji is four bytes in UTF-8.
+	// The last is cut after the emoji, at 1,000 characters, not inside it.
+	for (const body of ["\u0001".repeat(1000), "😀".repeat(1000), `${"x".repeat(999)}😀y`]) {
+		await host.push!.send({ title: "\u0002".repeat(200), body, tag: "t" });
+		const sent = bodies.at(-1)!;
+		assert.ok(sent.length <= 4096, `${sent.length} bytes`);
+		const message = JSON.parse(decrypt(sent, phone.ecdh, phone.auth)) as { title: string; body: string };
+		assert.ok(message.body.endsWith("…"), "it says it was cut");
+		assert.ok(!/[\ud800-\udbff]…$/.test(message.body), "a character was split in two");
+		assert.ok(body.startsWith(message.body.slice(0, -1)));
+		assert.ok(message.title.endsWith("…"));
+	}
+	await host.push!.send({ title: "gaidin", body: "stretch" });
+	assert.deepEqual(JSON.parse(decrypt(bodies.at(-1)!, phone.ecdh, phone.auth)), { title: "gaidin", body: "stretch" });
+});
