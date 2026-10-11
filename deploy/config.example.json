@@ -18,7 +18,8 @@
     "userId": "U0123ABCD"
   },
   "web": {
-    "user": "alex@example.com"
+    "user": "alex@example.com",
+    "url": "https://gaidin.<your tailnet>.ts.net"
   },
   "search": {
     "provider": "tavily",

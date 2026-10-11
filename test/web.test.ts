@@ -20,7 +20,7 @@ async function start(t: TestContext) {
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const host = await openHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, notify: async () => {} });
-	const server = createWebServer({ harness: host.harness, root: host.root, user: BRAD, switchable: host.switchable, approvals: host.approvals });
+	const server = createWebServer({ harness: host.harness, root: host.root, user: BRAD, switchable: host.switchable, approvals: host.approvals, snooze: host.reminders.snooze });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(async () => {
 		server.closeAllConnections();
@@ -140,6 +140,23 @@ test("reminders are listed and can be cancelled", async (t) => {
 	assert.deepEqual(listed.map((r) => r.text), ["water the plants"]);
 	assert.deepEqual(await (await post("/api/reminders/cancel", { id: listed[0]!.taskId })).json(), { ok: true });
 	assert.deepEqual(await (await call("/api/reminders")).json(), []);
+});
+
+test("a fired reminder is snoozed from its push's button", async (t) => {
+	const { host, call, post } = await start(t);
+	const fired = await host.root.commit((tx) => tx.createTask(host.reminders.ReminderTask, { text: "take the bread out", at: Date.now() }, { ownership: { kind: "conversation" }, background: true }), context);
+	await host.harness.waitForTask(fired, context);
+
+	const before = Date.now();
+	const response = await post("/api/reminders/snooze", { id: fired, minutes: 10 });
+	assert.equal(response.status, 200);
+	const { at } = (await response.json()) as { at: number };
+	assert.ok(at >= before + 10 * 60_000 && at <= Date.now() + 10 * 60_000);
+	const listed = (await (await call("/api/reminders")).json()) as { text: string; at: number }[];
+	assert.deepEqual(listed.map((r) => [r.text, r.at]), [["take the bread out", at]]);
+
+	assert.equal((await post("/api/reminders/snooze", { id: 999_999, minutes: 10 })).status, 404);
+	assert.equal((await post("/api/reminders/snooze", { id: fired, minutes: 0 })).status, 400);
 });
 
 test("scheduled jobs are listed and can be cancelled", async (t) => {

@@ -56,7 +56,7 @@ export async function serve(config: Config) {
 		process.exit(1);
 	}
 
-	const { harness, root, switchable, approvals, setDeliver, setBudgetNotify, budget, explain, timeline, sandbox } = await openHost({ config });
+	const { harness, root, switchable, approvals, setDeliver, setBudgetNotify, budget, explain, timeline, sandbox, reminders } = await openHost({ config });
 
 	let slack: { stop(): void } | undefined;
 	if (config.slack !== undefined) {
@@ -80,7 +80,7 @@ export async function serve(config: Config) {
 
 	const web = config.web === undefined
 		? undefined
-		: createWebServer({ harness, root, user: config.web.user, switchable, approvals, models: config.model.choices, budget, timeline });
+		: createWebServer({ harness, root, user: config.web.user, switchable, approvals, models: config.model.choices, budget, timeline, snooze: reminders.snooze });
 	if (web !== undefined) {
 		const port = config.web!.port;
 		// Loopback only: tailscale serve is the way in, and it vouches for who's asking.

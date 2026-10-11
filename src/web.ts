@@ -10,14 +10,14 @@ import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { resolve } from "node:path";
-import { type Conversation, type Harness, type ModelRef, type ToolRegistration, watchEvents } from "@earendil-works/pi-durable";
+import { type Conversation, type Harness, type ModelRef, type ToolRegistration, type Tx, watchEvents } from "@earendil-works/pi-durable";
 import type { ApprovalService, Decision } from "./approvals.ts";
 import type { BudgetGuard } from "./budget.ts";
 import { context } from "./host.ts";
 import type { createHistory } from "./history.ts";
 import { describeSchedule, Jobs, removeJob } from "./jobs.ts";
 import { addNote, forgetNote, Memory } from "./memory.ts";
-import { Reminders, removeReminder } from "./reminders.ts";
+import { type Reminder, Reminders, removeReminder } from "./reminders.ts";
 import { stamp } from "./time.ts";
 
 const WEB_DIR = resolve(import.meta.dirname, "../web");
@@ -41,6 +41,8 @@ export function createWebServer(options: {
 	/** Model ids the page offers, from the settings' model.choices. */
 	models?: readonly string[];
 	budget?: BudgetGuard;
+	/** Sets a fired reminder again, for the snooze buttons on its push. */
+	snooze?: (tx: Tx, id: number, minutes: number) => Promise<Reminder | undefined>;
 	/** What gaidin did, for /timeline. */
 	timeline?: ReturnType<typeof createHistory>["timeline"];
 }) {
@@ -158,6 +160,14 @@ export function createWebServer(options: {
 			case "/api/abort":
 				await root.abort(context);
 				return json(response, { ok: true });
+			case "/api/reminders/snooze": {
+				// A reminder push's button, pressed on the owner's phone.
+				const minutes = Number(body.minutes);
+				if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) throw new HttpError(400, "minutes must be 1 to 1440");
+				const snoozed = await root.commit((tx) => options.snooze?.(tx, Number(body.id), minutes), context);
+				if (snoozed === undefined) throw new HttpError(404, "No such reminder");
+				return json(response, { ok: true, at: snoozed.at });
+			}
 			case "/api/reminders/cancel": {
 				const removed = await root.commit((tx) => removeReminder(tx, Number(body.id)), context);
 				return json(response, { ok: removed !== undefined });

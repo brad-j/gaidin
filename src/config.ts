@@ -30,7 +30,8 @@ export type Config = {
 	/** `icon` is the URL of a PNG or JPEG the ntfy app shows beside each push. */
 	ntfy?: { url: string; token?: string; icon?: string };
 	slack?: { botToken: string; appToken: string; channelId: string; userId: string };
-	web?: { user: string; port: number };
+	/** `url` is where the owner reaches the web view, for links and buttons in pushes. */
+	web?: { user: string; port: number; url?: string };
 	sandbox: "bwrap" | "none";
 	/** Spend limits in dollars; 0 is no limit. */
 	budget: { daily: number; monthly: number };
@@ -184,6 +185,8 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	const portValue = e.webPort ?? webSection.port ?? 8410;
 	const port = Number(portValue);
 	if (!Number.isInteger(port) || port < 1 || port > 65535) errors.push(`web.port must be a port number, not ${JSON.stringify(portValue)}`);
+	const webUrl = text("web.url", webSection.url)?.replace(/\/+$/, "");
+	if (webUrl !== undefined && !/^https?:\/\/[^/]+$/.test(webUrl)) errors.push("web.url must be the web view's address, like https://gaidin.example.ts.net");
 
 	// Sandbox
 	const sandbox = e.sandbox ?? text("sandbox", raw.sandbox) ?? "bwrap";
@@ -265,7 +268,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 			? {}
 			: { ntfy: { url: ntfyUrl, ...(ntfyToken === undefined ? {} : { token: ntfyToken }), ...(ntfyIcon === undefined ? {} : { icon: ntfyIcon }) } }),
 		...(slackGiven.length === 4 ? { slack: slack as NonNullable<Config["slack"]> } : {}),
-		...(webUser === undefined ? {} : { web: { user: webUser, port } }),
+		...(webUser === undefined ? {} : { web: { user: webUser, port, ...(webUrl === undefined ? {} : { url: webUrl }) } }),
 		sandbox: sandbox as Config["sandbox"],
 		budget,
 		...(search === undefined ? {} : { search }),

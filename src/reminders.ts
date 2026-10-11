@@ -1,5 +1,5 @@
 import { Type } from "@earendil-works/pi-ai";
-import { defineDoc, defineEntry, defineExtension, defineTask, defineTool, type TaskId, type Tx } from "@earendil-works/pi-durable";
+import { type ConversationId, defineDoc, defineEntry, defineExtension, defineTask, defineTool, type TaskId, type Tx } from "@earendil-works/pi-durable";
 import { formatTime } from "./time.ts";
 
 export type Reminder = { taskId: number; text: string; at: number };
@@ -86,6 +86,22 @@ export function createReminders(notify: Notify, owner = "the user") {
 		},
 	});
 
+	async function add(tx: Tx, conversationId: ConversationId, text: string, at: number): Promise<number> {
+		// Background: the conversation goes idle while it waits, and Esc doesn't cancel it.
+		const id = await tx.createTask(ReminderTask, { text, at }, { ownership: { kind: "conversation" }, conversationId, background: true });
+		(await tx.doc(Reminders)).items.push({ taskId: id, text, at });
+		return id;
+	}
+
+	/** Sets a reminder that has fired again, `minutes` from now, in the same conversation. Nothing if `id` isn't a reminder. */
+	async function snooze(tx: Tx, id: number, minutes: number): Promise<Reminder | undefined> {
+		const task = await tx.task(id as TaskId);
+		if (task === undefined || task.kind !== "gaidin.reminder") return undefined;
+		const { text } = task.input as { text: string };
+		const at = Date.now() + minutes * 60_000;
+		return { taskId: await add(tx, task.conversationId, text, at), text, at };
+	}
+
 	const remind = defineTool({
 		name: "remind",
 		description:
@@ -101,16 +117,7 @@ export function createReminders(notify: Notify, owner = "the user") {
 			const at = args.at === undefined ? Date.now() + args.inMinutes! * 60_000 : Date.parse(args.at);
 			if (Number.isNaN(at)) throw new Error(`Can't parse at: ${args.at}`);
 			if (at < Date.now() - 60_000) throw new Error(`${formatTime(at)} is in the past.`);
-			const taskId = await api.commit(async (tx) => {
-				// Background: the conversation goes idle while it waits, and Esc doesn't cancel it.
-				const id = await tx.createTask(ReminderTask, { text: args.text, at }, {
-					ownership: { kind: "conversation" },
-					conversationId: api.conversationId,
-					background: true,
-				});
-				(await tx.doc(Reminders)).items.push({ taskId: id, text: args.text, at });
-				return id;
-			}, context);
+			const taskId = await api.commit((tx) => add(tx, api.conversationId, args.text, at), context);
 			return { content: [{ type: "text", text: `Reminder ${taskId} set for ${formatTime(at)}: ${args.text}` }] };
 		},
 	});
@@ -143,6 +150,7 @@ export function createReminders(notify: Notify, owner = "the user") {
 
 	return {
 		ReminderTask,
+		snooze,
 		extension: defineExtension({
 			name: "reminders",
 			tools: [remind, listReminders, cancelReminder],

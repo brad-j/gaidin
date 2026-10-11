@@ -150,3 +150,9 @@ test("ntfy.icon is read, kept when masked, and must be a URL", (t) => {
 	const bad = loadConfig({ file: file(t, { model: { apiKey: KEY }, ntfy: { url: "https://ntfy.sh/gaidin-abc123def456", icon: "icon.png" } }), env: {} });
 	assert.ok(bad.errors.some((error) => /ntfy.icon must be the URL/.test(error)));
 });
+
+test("web.url is the web view's address, without a trailing slash", (t) => {
+	const read = (url: string) => loadConfig({ file: file(t, { model: { apiKey: KEY }, web: { user: "brad@example.com", url } }), env: {} });
+	assert.equal(read("https://gaidin.example.ts.net/").config.web?.url, "https://gaidin.example.ts.net");
+	assert.ok(read("gaidin.example.ts.net").errors.some((error) => /web\.url must be the web view's address/.test(error)));
+});

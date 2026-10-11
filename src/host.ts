@@ -129,7 +129,7 @@ export async function openHost(options: HostOptions = {}) {
 	// A run the guard refused says so, wherever it's reported.
 	const explain = (reason: string | undefined) => (reason === "no_model" ? budget.blocked() : undefined);
 	const owner = config.owner;
-	const reminders = createReminders(options.notify ?? ntfyNotifier(config.ntfy), owner);
+	const reminders = createReminders(options.notify ?? ntfyNotifier(config.ntfy, config.web?.url), owner);
 	const redactor = options.redactor ?? redactorFor(secretsOf(config));
 	const mode = options.sandbox ?? config.sandbox;
 	const bwrap = mode === "bwrap" ? findBwrap() : undefined;

@@ -94,6 +94,7 @@ The settings file is JSON: the first of `--config`, `GAIDIN_CONFIG`, `./gaidin.j
 | `slack.userId` | `SLACK_USER_ID` | | The one Slack user it answers. |
 | `web.user` | `GAIDIN_WEB_USER` | | Tailscale login allowed into the web view. Without it there's no web view. |
 | `web.port` | `GAIDIN_WEB_PORT` | `8410` | Loopback port for the web view. |
+| `web.url` | | | The web view's address on the tailnet, such as `https://gaidin.<tailnet>.ts.net`. With it, tapping a reminder's push opens the web view, and the push has buttons to snooze it. |
 | `sandbox` | `GAIDIN_SANDBOX` | `bwrap` | `none` runs tools without bubblewrap. |
 | `search.provider` | | | `tavily`; without it there's no `web_search`. |
 | `search.apiKey` | `TAVILY_API_KEY` | | A Tavily key, `tvly-...`. Setting the variable alone also turns search on. |
