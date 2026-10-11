@@ -17,7 +17,6 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { dirname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Duplex } from "node:stream";
-import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import type { Context } from "@earendil-works/chord";
 import { Type } from "@earendil-works/pi-ai";
@@ -197,8 +196,18 @@ class Runner {
 	}
 
 	async tools(): Promise<Described[]> {
-		const late = sleep(LOAD_MS, undefined, { ref: false }).then(() => Promise.reject(new Error(`index.ts didn't load in ${LOAD_MS / 1000} seconds`)));
-		return Promise.race([(await this.#start()).tools, late]);
+		const { tools } = await this.#start();
+		// The box and its pipes don't keep the server running, so this timer does while it waits: at start, before
+		// anything else is open, nothing else would, and the server would exit with the load unfinished.
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const late = new Promise<never>((_, reject) => {
+			timer = setTimeout(() => reject(new Error(`index.ts didn't load in ${LOAD_MS / 1000} seconds`)), LOAD_MS);
+		});
+		try {
+			return await Promise.race([tools, late]);
+		} finally {
+			clearTimeout(timer);
+		}
 	}
 
 	async call(name: string, args: Json, fetch: Call["fetch"], signal: AbortSignal, timeoutMs: number): Promise<Reply> {

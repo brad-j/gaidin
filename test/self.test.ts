@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import test, { type TestContext } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type FauxResponseFactory } from "@earendil-works/pi-ai/providers/faux";
@@ -131,6 +133,21 @@ test("a checked draft is loaded after approval, runs in its box, fetches through
 	assert.match(request!.detail!, /\+export const tools = \[add, pageLength, canRead\];/);
 	assert.ok(host.switchable().some((tool) => tool.name === "add_numbers"));
 	await host.harness.close(context);
+
+	// A server starting on its own loads the extension before anything else keeps it running, and must wait for it.
+	const opening = `
+		import { createModels } from "@earendil-works/pi-ai/models";
+		import { fauxProvider } from "@earendil-works/pi-ai/providers/faux";
+		import { configFor } from "${pathToFileURL(join(import.meta.dirname, "../src/config.ts"))}";
+		import { context, openHost } from "${pathToFileURL(join(import.meta.dirname, "../src/host.ts"))}";
+		const models = createModels();
+		models.setProvider(fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] }).provider);
+		const host = await openHost({ config: configFor({ owner: "Brad" }), dataDir: ${JSON.stringify(dir)}, models, model: { provider: "faux", modelId: "faux-1" } });
+		console.log(host.switchable().map((tool) => tool.name).join(" "));
+		await host.harness.close(context);`;
+	const opened = spawnSync(process.execPath, ["--no-warnings", "--input-type=module", "-e", opening], { cwd: join(import.meta.dirname, ".."), encoding: "utf8", timeout: 60_000 });
+	assert.equal(opened.status, 0, `the server exited with ${opened.status}:\n${opened.stderr}`);
+	assert.match(opened.stdout, /\badd_numbers\b/);
 
 	const again = await start(t, [call("add_numbers", { a: 1, b: 1 }), call("remove_extension", { name: "kit" })], "OK", dir);
 	const removing = await runApproving(again.host, "add and remove");

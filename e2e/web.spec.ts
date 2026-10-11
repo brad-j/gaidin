@@ -222,3 +222,14 @@ test("on a phone only the console has the prompt, and a new reminder starts ther
 	await expect(page.locator("#message")).toHaveValue("Remind me to ");
 	await expect(page.locator("#message")).toBeFocused();
 });
+
+test("while the server can't be reached, the page's own refreshes don't fill the log with errors", async ({ page }) => {
+	// The stream never connects and every request fails, as when the server is down behind tailscale serve.
+	await page.route("**/events", (route) => route.abort());
+	await page.route("**/api/**", (route) => route.fulfill({ status: 502, body: "" }));
+	await page.clock.install();
+	await page.goto("/");
+	await expect(page.locator("#statusline .status")).toHaveText("reconnecting");
+	await page.clock.runFor(5 * 60_000);
+	await expect(page.locator("#log .row.err")).toHaveCount(0);
+});

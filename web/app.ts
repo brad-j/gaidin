@@ -482,6 +482,11 @@ function notice(text: string) {
 	if (text !== "") say("err", text);
 }
 
+/** A refresh the page makes by itself that failed. While the server can't be reached the status line says so, and each retry would add a line. */
+function refreshFailed(text: string) {
+	if (state.connected) notice(text);
+}
+
 async function loadSpend() {
 	try {
 		const usage = await load("/api/usage");
@@ -489,7 +494,7 @@ async function loadSpend() {
 		state.budget = await load("/api/budget");
 		schedule();
 	} catch (error) {
-		notice(String(error));
+		refreshFailed(String(error));
 	}
 }
 
@@ -518,7 +523,7 @@ async function loadReminders() {
 		reminders = await load("/api/reminders");
 		renderHorizon();
 	} catch (error) {
-		notice(String(error));
+		refreshFailed(String(error));
 	}
 }
 
@@ -527,7 +532,7 @@ async function loadJobs() {
 		jobs = await load("/api/jobs");
 		renderHorizon();
 	} catch (error) {
-		notice(String(error));
+		refreshFailed(String(error));
 	}
 }
 
@@ -536,7 +541,7 @@ async function loadSettings() {
 		current = await load("/api/settings");
 		schedule();
 	} catch (error) {
-		notice(String(error));
+		refreshFailed(String(error));
 	}
 }
 
@@ -562,7 +567,7 @@ async function loadApprovals() {
 		renderApprovals();
 		schedule();
 	} catch (error) {
-		notice(String(error));
+		refreshFailed(String(error));
 	}
 }
 
