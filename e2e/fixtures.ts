@@ -20,7 +20,10 @@ async function start(): Promise<{ child: ChildProcess; base: string }> {
 	return { child, base: `http://127.0.0.1:${port}` };
 }
 
-/** Each test gets its own server and data directory, and a browser signed in as the owner the way tailscale serve does it. */
+/**
+ * Each test gets its own server and data directory, and a browser signed in as the owner the way tailscale serve does it.
+ * A test fails if the page breaks its Content-Security-Policy.
+ */
 export const test = base.extend<{ server: string }>({
 	// oxlint-disable-next-line no-empty-pattern -- Playwright reads a fixture's dependencies from this pattern, and this one has none
 	server: async ({}, use) => {
@@ -34,5 +37,14 @@ export const test = base.extend<{ server: string }>({
 		const context = await browser.newContext({ baseURL: server, extraHTTPHeaders: { "Tailscale-User-Login": USER }, serviceWorkers: "block" });
 		await use(context);
 		await context.close();
+	},
+	page: async ({ page }, use) => {
+		const violations: string[] = [];
+		page.on("console", (message) => {
+			// frame-ancestors refusals are another page framing this one, which a test does on purpose.
+			if (message.text().includes("Content Security Policy") && !message.text().includes("frame-ancestors")) violations.push(message.text());
+		});
+		await use(page);
+		if (violations.length > 0) throw new Error(`The page broke its Content-Security-Policy:\n${violations.join("\n")}`);
 	},
 });

@@ -58,6 +58,16 @@ test("only Brad's tailnet login gets in", async (t) => {
 	}
 });
 
+test("every response forbids framing and runs only the page's own script", async (t) => {
+	const { call } = await start(t);
+	for (const response of [await call("/"), await call("/api/settings"), await call("/", { as: "someone@example.com" })]) {
+		assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
+		assert.match(response.headers.get("content-security-policy") ?? "", /script-src 'self';/);
+		assert.equal(response.headers.get("x-frame-options"), "DENY");
+		assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+	}
+});
+
 test("a post from another site is refused", async (t) => {
 	const { call } = await start(t);
 	const form = await call("/api/message", { method: "POST", body: "content=hi", headers: { "Content-Type": "application/x-www-form-urlencoded" } });

@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 
@@ -9,6 +11,19 @@ async function send(page: Page, text: string) {
 test("without the owner's tailnet login the page is refused", async ({ server }) => {
 	expect((await fetch(server)).status).toBe(403);
 	expect((await fetch(server, { headers: { "Tailscale-User-Login": "someone@example.com" } })).status).toBe(403);
+});
+
+test("another site can't put the page in a frame", async ({ page, server }) => {
+	// Another origin, served from loopback too, so Chrome's local network checks don't refuse the frame before the page's headers do.
+	const other = createServer((_request, response) => response.end(`<iframe src="${server}/"></iframe>`));
+	await new Promise<void>((resolve) => other.listen(0, "127.0.0.1", resolve));
+	try {
+		// The outer page's load waits for its frame's, so the frame has loaded or been refused by now.
+		await page.goto(`http://127.0.0.1:${(other.address() as AddressInfo).port}/`, { waitUntil: "load" });
+		await expect(page.frameLocator("iframe").locator("#message")).toHaveCount(0);
+	} finally {
+		other.close();
+	}
 });
 
 test("a message is answered in the log", async ({ page }) => {

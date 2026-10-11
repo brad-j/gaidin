@@ -76,7 +76,7 @@ The homelab extension's `container_logs` reads Docker logs through a dedicated a
 
 ## The web view and the socket
 
-The web view trusts the identity header Tailscale Serve adds, and listens only on loopback so nothing else can supply that header from the network. Anything else on the server running as the service's user can reach the loopback port and the Unix socket, the same access the CLI has. The agent's shell can't: it has no network and doesn't see the data directory.
+The web view trusts the identity header Tailscale Serve adds, and listens only on loopback so nothing else can supply that header from the network. A site open in the owner's browser can make requests with that identity too, so a post must be JSON from the page's own origin, and every response forbids framing (`frame-ancestors 'none'`), so another site can't put the page under its own and trick a click onto Allow. Its Content-Security-Policy runs only the page's own script, a second layer behind the Markdown renderer, which builds elements and never HTML. Anything else on the server running as the service's user can reach the loopback port and the Unix socket, the same access the CLI has. The agent's shell can't: it has no network and doesn't see the data directory.
 
 ## Known gaps
 

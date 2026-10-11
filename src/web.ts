@@ -22,6 +22,19 @@ import { type Reminder, Reminders, removeReminder } from "./reminders.ts";
 import { stamp } from "./time.ts";
 
 const WEB_DIR = resolve(import.meta.dirname, "../web");
+
+/**
+ * On every response. Another site can't frame the page, which would carry the owner's tailnet identity, and trick a
+ * click onto Allow; and the page runs only its own script, so text that got past the Markdown renderer couldn't run.
+ */
+const SECURITY_HEADERS = {
+	"Content-Security-Policy":
+		"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; " +
+		"object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+	"X-Frame-Options": "DENY",
+	"X-Content-Type-Options": "nosniff",
+	"Referrer-Policy": "no-referrer",
+};
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 export type Settings = {
@@ -104,6 +117,7 @@ export function createWebServer(options: {
 
 	async function events(response: ServerResponse) {
 		response.writeHead(200, {
+			...SECURITY_HEADERS,
 			"Content-Type": "text/event-stream",
 			"Cache-Control": "no-store",
 			"X-Accel-Buffering": "no",
@@ -293,7 +307,7 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
 }
 
 function reply(response: ServerResponse, status: number, body: string | Buffer, type: string) {
-	response.writeHead(status, { "Content-Type": type, "Cache-Control": "no-store" });
+	response.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": type, "Cache-Control": "no-store" });
 	response.end(body);
 }
 
