@@ -94,7 +94,7 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 	padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
-/* --- horizon: the next 24 hours ---------------------------------------------------------------- */
+/* --- horizon: what's next ----------------------------------------------------------------------- */
 
 #horizon {
 	display: flex; align-items: center; gap: var(--space-md); height: 44px; padding: 0 var(--space-md);
@@ -105,29 +105,6 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 #next-up { min-width: 0; max-width: 34ch; flex: none; color: var(--color-ink-2); }
 #next-up span { overflow: hidden; text-overflow: ellipsis; }
 #next-up .soon { color: var(--color-warn); }
-#track { position: relative; flex: 1; min-width: 0; height: 100%; }
-#track::before { content: ""; position: absolute; left: 0; right: 0; top: 60%; border-top: 1px dashed var(--color-rule-2); }
-#track .tick {
-	position: absolute; top: 4px; transform: translateX(-50%); color: var(--color-ink-3); font-size: var(--text-2xs);
-	font-variant-numeric: tabular-nums; pointer-events: none;
-}
-#track .tick::after { content: ""; position: absolute; left: 50%; top: calc(100% + 2px); height: 7px; border-left: 1px solid var(--color-rule-2); }
-#track .now { position: absolute; left: 0; top: 60%; width: 7px; height: 7px; transform: translate(-50%, -50%); border-radius: 50%; background: var(--color-accent); }
-#track .marker {
-	position: absolute; top: 60%; transform: translate(-50%, -50%); width: 20px; height: 20px; min-height: 0; padding: 0;
-	justify-content: center; background: transparent; border: 0; border-radius: 50%;
-}
-#track .marker::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--color-warn); }
-#track .marker.job::before { border-radius: 1px; transform: rotate(45deg); background: var(--color-accent); }
-#track .marker .tip {
-	display: none; position: absolute; top: calc(100% + 4px); left: 50%; transform: translateX(-50%); z-index: 4;
-	padding: var(--space-2xs) var(--space-xs); background: var(--color-paper-3); border: 1px solid var(--color-rule-2); border-radius: var(--radius-sm);
-	color: var(--color-ink); font-size: var(--text-xs); white-space: nowrap;
-}
-#track .marker:hover .tip, #track .marker:focus-visible .tip { display: block; }
-#track .empty { position: absolute; left: var(--space-md); top: 60%; transform: translateY(-50%); padding: 0 var(--space-xs); background: var(--color-paper); color: var(--color-ink-3); }
-#later { flex: none; }
-#later[hidden] { display: none; }
 
 /* --- the log ----------------------------------------------------------------------------------- */
 
@@ -292,13 +269,9 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 
 /* --- narrow screens --------------------------------------------------------------------------- */
 
-@media (max-width: 760px) {
-	#track .tick.minor { display: none; }
-}
 @media (max-width: 600px) {
 	:root { --col-label: 6ch; --col-gap: 1.5ch; }
 	#horizon { gap: var(--space-sm); padding: 0 var(--space-sm); }
-	#track { display: none; }
 	#next-up { flex: 1; max-width: none; }
 	#log, #dock-inner { padding-left: var(--space-sm); padding-right: var(--space-sm); }
 	.row { grid-template-columns: var(--col-label) minmax(0, 1fr); }
@@ -330,8 +303,6 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 	<header id="horizon">
 		<h1><img src="/logo.svg" alt="gaidin" width="32" height="32"></h1>
 		<button id="next-up" class="plain" type="button" title="Upcoming reminders and jobs (/next)"><span>…</span></button>
-		<div id="track" aria-label="The next 24 hours"></div>
-		<button id="later" class="plain" type="button" hidden></button>
 	</header>
 	<main id="scroll">
 		<div id="log" role="log" aria-live="polite" aria-relevant="additions"></div>

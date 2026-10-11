@@ -41,7 +41,7 @@ Give gaidin its own channel. In a channel shared with another bot, both would an
 
 The web view is a console on the root conversation, live from every surface:
 
-- The horizon along the top shows the next 24 hours: reminders as dots and scheduled job runs as diamonds, with the next one named.
+- The header names the next reminder or scheduled job run; click it for the full list (`/next`).
 - The log shows your messages and gaidin's answers, rendered as Markdown, with thinking and tool calls folded to one line each; open one to see its input and output, which streams while it runs. Fired reminders and job reports appear in it too.
 - The dock holds pending approvals and questions above the prompt. Approvals have Allow, the wider grant where there is one, and Deny (Alt+Y, Alt+A, Alt+N for the oldest). Questions have a button per choice, and whatever you type at the prompt next is taken as the answer.
 - The status line shows whether a run is going, with Esc or Ctrl+C to stop it, the model, thinking level and tools, and the cost of the conversation and today's spend against any limit. When the spend guard has stopped gaidin, it shows a button to allow more today.

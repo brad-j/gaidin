@@ -582,9 +582,8 @@ function renderStatusline() {
 }
 
 // --- horizon ----------------------------------------------------------------------------------
-// The next 24 hours as a line: reminders as dots, scheduled job runs as diamonds.
+// The next reminder or scheduled job run, named in the header.
 
-const HORIZON = 24 * 3_600_000;
 let reminders: Reminder[] = [];
 let jobs: Job[] = [];
 
@@ -608,36 +607,6 @@ function upcoming(): Upcoming[] {
 function renderHorizon() {
 	const now = Date.now();
 	const items = upcoming();
-	const track = $("track");
-	const nodes: HTMLElement[] = [el("span", "now")];
-	const tick = new Date(now);
-	tick.setMinutes(0, 0, 0);
-	do tick.setHours(tick.getHours() + 1);
-	while (tick.getHours() % 3 !== 0);
-	for (; tick.getTime() < now + HORIZON; tick.setHours(tick.getHours() + 3)) {
-		const mark = el("span", `tick${tick.getHours() % 6 === 0 ? "" : " minor"}`, clock.format(tick));
-		mark.style.left = `${((tick.getTime() - now) / HORIZON) * 100}%`;
-		nodes.push(mark);
-	}
-	const soon = items.filter((i) => i.at !== undefined && i.at < now + HORIZON);
-	for (const item of soon) {
-		const marker = el("button", `marker ${item.kind}`);
-		marker.type = "button";
-		marker.style.left = `${Math.max(0, ((item.at! - now) / HORIZON) * 100)}%`;
-		const label = `${item.text} · ${clock.format(item.at!)} · ${fromNow(item.at!)}`;
-		marker.setAttribute("aria-label", label);
-		marker.append(el("span", "tip", label));
-		marker.addEventListener("click", () => void runCommand("/next"));
-		nodes.push(marker);
-	}
-	if (items.length === 0) nodes.push(el("span", "empty", "nothing scheduled"));
-	track.replaceChildren(...nodes);
-
-	const later = items.length - soon.length;
-	const laterButton = $<HTMLButtonElement>("later");
-	laterButton.hidden = later === 0;
-	laterButton.textContent = `+${later} later`;
-
 	const next = items[0];
 	const nextUp = $("next-up");
 	const text = el("span");
@@ -1426,7 +1395,6 @@ $("jump").addEventListener("click", () => {
 	$("jump").hidden = true;
 });
 $("next-up").addEventListener("click", () => void runCommand("/next"));
-$("later").addEventListener("click", () => void runCommand("/next"));
 
 // The service worker shows notifications, and a short page when the server can't be reached.
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch((error) => notice(String(error)));
