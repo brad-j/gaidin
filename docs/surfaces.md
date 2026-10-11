@@ -39,13 +39,15 @@ Give gaidin its own channel. In a channel shared with another bot, both would an
 
 ## Web view
 
-The web view is a console on the root conversation, live from every surface, with pages beside it. The header switches between them (`#/`, `#/schedule`, `#/memory`, `#/skills`, `#/activity` and `#/settings`, so the back button and a reload keep your place) and names the next reminder or scheduled job run. The console:
+The web view is a console on the root conversation, live from every surface, with pages beside it. The header switches between them (`#/`, `#/history`, `#/schedule`, `#/memory`, `#/skills`, `#/activity` and `#/settings`, so the back button and a reload keep your place) and names the next reminder or scheduled job run. The console:
 
 - The log shows your messages and gaidin's answers, rendered as Markdown, with thinking and tool calls folded to one line each; open one to see its input and output, which streams while it runs. Fired reminders and job reports appear in it too.
 - The dock holds pending approvals and questions above the prompt. Approvals have Allow, the wider grant where there is one, and Deny (Alt+Y, Alt+A, Alt+N for the oldest). Questions have a button per choice, and whatever you type at the prompt next is taken as the answer.
-- The status line shows whether a run is going, with Esc or Ctrl+C to stop it, the model, thinking level and tools, and the cost of the conversation and today's spend against any limit. When the spend guard has stopped gaidin, it shows a button to allow more today. Stopping a run leaves gaidin a note that you withdrew the request, so it doesn't take it up again with your next message; ask again to have it done.
+- The status line shows whether a run is going, with Esc or Ctrl+C to stop it (from the console's prompt, or with nothing else focused: Esc in another page's text box only leaves that box), the model, thinking level and tools, and the cost of the conversation and today's spend against any limit. When the spend guard has stopped gaidin, it shows a button to allow more today. Stopping a run leaves gaidin a note that you withdrew the request, so it doesn't take it up again with your next message; ask again to have it done.
 
 On a phone, the views are tabs across the top, scrolling sideways when they don't fit, the log gives its whole width to the text, and the prompt is one line that grows as you type. Only the console has the prompt there; approvals and questions stay docked on every page, and the schedule page's new-reminder and new-job buttons go to the console to ask.
+
+The history page lists Slack threads and job runs, alert investigations included, the most recently active first, with the last answer in each. One opens to its transcript, read-only, drawn as the console draws the main conversation; a thread shows the answer it replies to above it, and a job run labels its prompts "job".
 
 The schedule page lists open reminders and scheduled jobs, soonest first. Each job shows its schedule, gate, runs and last result, and opens to show its instruction and the last reports it sent. Jobs pause, resume and cancel from there, and reminders cancel; cancelling takes a second press. A paused or failing job turns the page's count in the header amber. New reminders and jobs are asked of gaidin at the prompt, so they go through its approvals; the dock stays on every page, and sending from it goes back to the console.
 

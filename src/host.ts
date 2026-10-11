@@ -88,6 +88,33 @@ function persona(owner: string) {
 	});
 }
 
+/**
+ * When a conversation's history is summarised. Anthropic charges five times as much for every token of a request with over
+ * 100,000 tokens of input, and Pi Durable times compaction from the model's context window, which is 1M for Haiku and
+ * Sonnet 5.5, so the main conversation would cross that line long before compacting. gaidin gives Pi Durable a smaller
+ * window instead (`workingWindow`): a summary starts in the background at about 60,000 tokens, and a request waits for
+ * one above 85,000. The summary itself is held to 80% of `reserveTokens`.
+ */
+const COMPACTION = { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000, backgroundTokens: 25_000 };
+const WORKING_WINDOW = 85_000 + COMPACTION.reserveTokens;
+
+/** `models` with each model's context window cut to `tokens`. Only compaction reads the window; requests are unchanged. */
+export function workingWindow(models: Models, tokens = WORKING_WINDOW): Models {
+	return new Proxy(models, {
+		get(target, key) {
+			if (key === "getModel") {
+				return (provider: string, id: string) => {
+					const model = target.getModel(provider, id);
+					return model === undefined ? undefined : { ...model, contextWindow: Math.min(model.contextWindow, tokens) };
+				};
+			}
+			// SAFETY: a get trap is only asked for keys of the object it wraps.
+			const value = target[key as keyof Models];
+			return value instanceof Function ? value.bind(target) : value;
+		},
+	});
+}
+
 /** A run the owner stopped. Its note tells the model the request was withdrawn, so the next message doesn't pick it up again. */
 export const RunStopped = defineEntry("gaidin.stopped");
 
@@ -143,7 +170,7 @@ export async function openHost(options: HostOptions = {}) {
 	};
 	// The guard refuses the model lookup each request makes once a spend limit is reached.
 	const budget = createBudget({ limits: config.budget, notify: (text) => tell({ kind: "budget", text }), spend: options.spend });
-	const models = budget.guard(chosen.models);
+	const models = workingWindow(budget.guard(chosen.models));
 	// A run the guard refused says so, wherever it's reported.
 	const explain = (reason: string | undefined) => (reason === "no_model" ? budget.blocked() : undefined);
 	const owner = config.owner;
@@ -206,6 +233,7 @@ export async function openHost(options: HostOptions = {}) {
 		{
 			models,
 			registry,
+			settings: { compaction: COMPACTION },
 			env: ({ cwd }) => new SandboxEnv({ root: sandbox, cwd: cwd ?? sandbox, redactor, bwrap, hide }),
 			onReport: (error) => console.error("[report]", error),
 		},
@@ -246,7 +274,7 @@ export async function openHost(options: HostOptions = {}) {
 	// and the self-written ones.
 	const builtIn = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...history.tools, ...workspaces.tools];
 	const switchable = () => [...builtIn, ...(self?.tools() ?? [])];
-	return { harness, root, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, skills, sandbox, push, start, stop };
+	return { harness, root, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation }, skills, sandbox, push, start, stop };
 }
 
 export type Host = Awaited<ReturnType<typeof openHost>>;

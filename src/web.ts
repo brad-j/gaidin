@@ -14,7 +14,8 @@ import { type AgentEvent, type Conversation, type Harness, type ModelRef, type S
 import type { ApprovalRequest, ApprovalService, Decision } from "./approvals.ts";
 import type { BudgetGuard, BudgetStatus } from "./budget.ts";
 import { context } from "./host.ts";
-import type { createHistory } from "./history.ts";
+import type { ConversationSummary, createHistory } from "./history.ts";
+import { conversationId } from "./ids.ts";
 import { describeSchedule, type Job, Jobs, pauseJob, removeJob, resumeJob } from "./jobs.ts";
 import { addNote, forgetNote, MAX_NOTE, MAX_TOTAL, Memory, type Note, updateNote } from "./memory.ts";
 import { array, integer, literal, number, object, optional, ParseError, type Parser, parseJson, string } from "./parse.ts";
@@ -95,6 +96,10 @@ export type Gets = {
 	"/api/approvals": ApprovalRequest[];
 	"/api/push": PushInfo | null;
 	"/api/skills": { skills: ListedSkill[]; problems: string[] };
+	/** `?before=` continues from the cursor the last page gave. */
+	"/api/conversations": { items: ConversationSummary[]; next?: number };
+	/** `?id=`: a Slack thread or job run, and its transcript as the event stream starts it. */
+	"/api/conversation": { conversation: Omit<ConversationSummary, "startedAt" | "lastAt" | "messages">; snapshot: SnapshotEvent };
 	/** `?name=&file=`: one of a skill's files; SKILL.md when no file is given. */
 	"/api/skills/file": { name: string; file: string; text: string };
 };
@@ -144,6 +149,8 @@ export function createWebServer(options: {
 	snooze?: (tx: Tx, id: number, minutes: number) => Promise<Reminder | undefined>;
 	/** What gaidin did, for /timeline. */
 	timeline?: ReturnType<typeof createHistory>["timeline"];
+	/** Slack threads and job runs, for the history page. */
+	history?: Pick<ReturnType<typeof createHistory>, "conversations" | "conversation">;
 	/** Notifications to the devices that sign up here. */
 	push?: Push;
 	/** Stops the root conversation's run and tells the model it was withdrawn (host.ts). Default: just stop it. */
@@ -161,7 +168,7 @@ export function createWebServer(options: {
 	const page = readFileSync(resolve(WEB_DIR, "index.html"));
 	const script = (name: string) => stripTypeScriptTypes(readFileSync(resolve(WEB_DIR, name), "utf8"));
 	// app.ts imports the other modules by their .ts names, which the browser asks for beside /app.js.
-	const modules = ["activity.ts", "api.ts", "dom.ts", "markdown.ts", "memory.ts", "page.ts", "schedule.ts", "settings.ts", "skills.ts", "transcript.ts"];
+	const modules = ["activity.ts", "api.ts", "dom.ts", "history.ts", "log.ts", "markdown.ts", "memory.ts", "page.ts", "schedule.ts", "settings.ts", "skills.ts", "transcript.ts"];
 	const scripts = new Map([["/app.js", script("app.ts")], ...modules.map((name) => [`/${name}`, script(name)] as const)]);
 	const asset = (name: string, type: string) => ({ body: readFileSync(resolve(import.meta.dirname, "..", name)), type });
 	const files = new Map([
@@ -262,6 +269,20 @@ export function createWebServer(options: {
 			skills: (options.skills?.list() ?? []).map(listed),
 			problems: [...(options.skills?.problems() ?? [])],
 		}),
+		"/api/conversations": async (url) => {
+			const before = Number(url.searchParams.get("before"));
+			return (await options.history?.conversations(Number.isInteger(before) && before > 0 ? before : undefined)) ?? { items: [] };
+		},
+		"/api/conversation": async (url) => {
+			const id = Number(url.searchParams.get("id"));
+			// Only threads and job runs: the main conversation is the console's.
+			const conversation = Number.isInteger(id) ? await options.history?.conversation(id) : undefined;
+			if (conversation === undefined) throw new HttpError(404, `No thread or job run ${url.searchParams.get("id")}`);
+			const stream = await watchEvents(harness, conversationId(id), context);
+			// Never started, so there's nothing to stop but the stream's own watch.
+			await stream.stop();
+			return { conversation, snapshot: stream.snapshot };
+		},
 		"/api/skills/file": async (url) => {
 			const name = url.searchParams.get("name") ?? "";
 			const file = url.searchParams.get("file") ?? "SKILL.md";

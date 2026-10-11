@@ -117,3 +117,25 @@ test("the timeline lists what gaidin did and who allowed it, newest first, and i
 	const again = await start(t, [], dir);
 	assert.deepEqual(pick((await again.timeline()).items), pick(items));
 });
+
+test("Slack threads are listed with their first message, last answer and the answer they fork at; the main conversation isn't", async (t) => {
+	const host = await start(t, [say("The NAS is in the hall closet."), say("The key is on the hook by the door.")], dataDir(t));
+	await ask(host.root, "where's the NAS?");
+	const answer = (await host.root.entries({}, 1, undefined, context)).items[0]!;
+	const thread = await host.root.fork(answer.id, { ownership: { kind: "ownerless" } }, context);
+	await ask(thread, "and the key for the closet?");
+
+	const { items, next } = await host.history.conversations();
+	assert.equal(next, undefined);
+	assert.equal(items.length, 1);
+	const [listed] = items;
+	assert.deepEqual(
+		{ id: listed!.id, place: listed!.place, title: listed!.title, preview: listed!.preview, messages: listed!.messages, forkedAt: listed!.forkedAt },
+		{ id: thread.id, place: "thread", title: "and the key for the closet?", preview: "The key is on the hook by the door.", messages: 2, forkedAt: answer.id },
+	);
+	assert.equal((await host.history.conversation(thread.id))?.title, "and the key for the closet?");
+	assert.equal(await host.history.conversation(host.root.id), undefined);
+	assert.equal(await host.history.conversation(99_999), undefined);
+	// The cursor lists only conversations whose newest message is older than it: nothing is older than the first.
+	assert.deepEqual((await host.history.conversations(1)).items, []);
+});

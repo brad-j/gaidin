@@ -20,6 +20,10 @@ Delivery of reminder pushes and Slack posts is at least once: a crash between se
 
 Every message carries a request id, and submitting the same id again returns the stored submission instead of asking twice. `gaidin ask --id <id>` uses this to reattach to a run after the CLI or the server went away.
 
+## Compaction
+
+Every request sends the conversation so far, so a long conversation makes every step slower and dearer, and Anthropic charges five times as much for every token of a request with over 100,000 tokens of input. Pi Durable's compaction summarises older messages and sends the summary in their place; the messages themselves stay in storage and in the [history index](tools.md#past-conversations). It times compaction from the model's context window, 1M tokens for Haiku and Sonnet 5.5, so `src/host.ts` gives it a smaller one: a summary starts in the background once a conversation reaches about 60,000 tokens and keeps the last 20,000 or so as they are, and a request waits for one above 85,000. A conversation that was already past that, as the main one can be after an upgrade, is summarised before its next answer. The log shows a "summary" line where it happened, which opens to what the model reads instead.
+
 ## Forks
 
 A reply in a Slack thread forks the root conversation at the answer the thread hangs off. The fork starts with the root's history up to that answer and continues on its own: the thread sees nothing said in the channel afterwards, and the channel never sees the thread. Later replies in the same thread continue the same fork. A fork starts with the agent settings the root had at that point.

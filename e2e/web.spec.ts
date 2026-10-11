@@ -183,7 +183,7 @@ test("on a phone only the console has the prompt, and a new reminder starts ther
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto("/#/schedule");
 	await expect(page.locator("#message")).toBeHidden();
-	await expect(page.locator("#views a")).toHaveCount(6);
+	await expect(page.locator("#views a")).toHaveCount(7);
 	await page.getByRole("button", { name: "+ new reminder" }).click();
 	await expect(page).toHaveURL(/#\/$/);
 	await expect(page.locator("#message")).toBeVisible();
@@ -310,4 +310,44 @@ test("the owner creates a skill, adds a file and edits it, and removes the skill
 	// The built-in skill has nothing to change.
 	await skills.getByRole("link", { name: /gaidin/ }).click();
 	await expect(skills.getByRole("button", { name: "edit" })).toHaveCount(0);
+});
+
+test("Esc in a text box on another page leaves the run going; on the console it stops it", async ({ page }) => {
+	await page.goto("/");
+	await send(page, "ask me something");
+	await expect(page.locator("#approvals")).toContainText("Keep the old branch?");
+	await page.getByRole("navigation", { name: "Views" }).getByRole("link", { name: "memory" }).click();
+	await page.getByRole("textbox", { name: "A new note" }).press("Escape");
+	await page.keyboard.press("Escape");
+	await expect(page.locator("#statusline .status")).toHaveText("working");
+	await expect(page.locator("#approvals")).toContainText("Keep the old branch?");
+
+	await page.getByRole("navigation", { name: "Views" }).getByRole("link", { name: "console" }).click();
+	await page.locator("#message").press("Escape");
+	await expect(page.locator("#log .row.stopped")).toHaveCount(1);
+	await expect(page.locator("#approvals")).toBeEmpty();
+});
+
+test("the history page lists a job run and opens its transcript", async ({ page }) => {
+	await page.goto("/");
+	await send(page, "check the weather soon");
+	await page.locator("#approvals").getByRole("button", { name: "Allow once" }).click();
+	// The run reports into the console when it's done.
+	await expect(page.locator("#log .row.job")).toContainText("Quick weather check", { timeout: 15_000 });
+
+	await page.getByRole("navigation", { name: "Views" }).getByRole("link", { name: "history" }).click();
+	const history = page.locator("#history");
+	const run = history.locator(".convo-row", { hasText: "Quick weather check" });
+	await expect(run).toContainText("job run");
+	await expect(run).toContainText("2 messages");
+	await run.click();
+	await expect(page).toHaveURL(/#\/history\/\d+$/);
+	await expect(history.locator(".convo-title")).toHaveText("Quick weather check");
+	await expect(history.locator(".log .row.prompt")).toContainText("Check the weather once.");
+	await expect(history.locator(".log .row.gaidin")).toContainText("Hello, Brad.");
+	await page.reload();
+	await expect(history.locator(".convo-title")).toHaveText("Quick weather check");
+
+	await page.goto("/#/history/1");
+	await expect(history.locator(".page-problem")).toHaveText("No thread or job run 1");
 });

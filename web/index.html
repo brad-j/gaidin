@@ -136,6 +136,8 @@ main[hidden], #scroll[hidden] { display: none; }
 .row.you .k, .row.cmd .k { color: var(--color-accent); }
 .row.you .b { color: var(--color-ink); font-weight: 600; white-space: pre-wrap; }
 .row.cmd .b { color: var(--color-ink-2); white-space: pre-wrap; }
+.row.prompt .k { color: var(--color-voice); }
+.row.prompt .b { color: var(--color-ink-2); font-size: var(--text-xs); white-space: pre-wrap; }
 .row.gaidin .k { color: var(--color-voice); }
 .row.remind .k, .row.job .k { color: var(--color-warn); }
 .row.remind .b, .row.job .b { color: var(--color-ink); font-weight: 600; }
@@ -402,6 +404,28 @@ button.switch:active:not(:disabled) { transform: none; }
 .page > section > button { margin-top: var(--space-sm); }
 .page button.primary { min-height: 30px; padding: 0 var(--space-md); border-radius: var(--radius-md); }
 
+/* --- history: threads and job runs ----------------------------------------------------------- */
+
+.convo-list { margin: var(--space-sm) 0 0; padding: 0; list-style: none; border-top: 1px solid var(--color-rule); }
+.convo-row {
+	display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "head meta" "preview preview"; column-gap: var(--col-gap); row-gap: var(--space-2xs);
+	padding: var(--space-sm) var(--space-xs); border-bottom: 1px solid var(--color-rule); color: var(--color-ink); text-decoration: none;
+	transition: background-color var(--dur-short) var(--ease-out);
+}
+@media (hover: hover) { .convo-row:hover { background: var(--color-paper-2); } .convo-row:hover .title { text-decoration: underline; text-underline-offset: 3px; } }
+.convo-row .head { grid-area: head; display: flex; align-items: baseline; gap: var(--space-xs); min-width: 0; }
+.convo-row .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-body); font-size: var(--text-md); font-weight: 600; }
+.convo-row .meta { grid-area: meta; display: flex; gap: 1ch; color: var(--color-ink-3); font-size: var(--text-2xs); white-space: nowrap; }
+.convo-row .meta > span + span::before { content: "·"; margin-right: 1ch; }
+.convo-row .preview { grid-area: preview; margin: 0; max-width: 90ch; color: var(--color-ink-2); font-family: var(--font-body); font-size: var(--text-sm); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.tag.job { color: var(--color-voice); }
+.tag.thread { color: var(--color-accent); }
+.convo-title { overflow-wrap: anywhere; }
+.log.readonly { padding-top: var(--space-sm); border-top: 1px solid var(--color-rule); }
+.log.readonly > .row.start:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.replying { margin-bottom: var(--space-md); padding: var(--space-xs) var(--space-sm); background: var(--color-paper-2); border-left: 2px solid var(--color-rule-2); border-radius: var(--radius-sm); opacity: 0.85; }
+.replying .label { margin-bottom: var(--space-2xs); color: var(--color-ink-3); font-size: var(--text-2xs); }
+
 /* --- skill editing ----------------------------------------------------------------------------- */
 
 .skill-head .head-actions { margin-left: auto; }
@@ -516,7 +540,8 @@ button.switch:active:not(:disabled) { transform: none; }
 	.row.start .t { display: block; grid-area: t; padding-top: 3px; }
 	.row.start { margin-top: var(--space-sm); padding-top: var(--space-sm); }
 	.row.you .b { padding-left: var(--space-sm); border-left: 2px solid var(--color-accent); font-family: var(--font-body); font-size: var(--text-md); line-height: 1.45; }
-	.row.cmd .b { padding-left: var(--space-sm); border-left: 2px solid var(--color-rule-2); }
+	.row.cmd .b, .row.prompt .b { padding-left: var(--space-sm); border-left: 2px solid var(--color-rule-2); }
+	.row.prompt .b { border-left-color: var(--color-voice); }
 	.row.tool .b, .row.think .b { font-size: var(--text-xs); }
 	.row.think summary::before { content: "thinking"; flex: none; color: var(--color-ink-3); font-family: var(--font-mono); }
 	.row.think .args { font-size: var(--text-xs); }
@@ -559,7 +584,8 @@ button.switch:active:not(:disabled) { transform: none; }
 	.sched-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "due actions" "body body"; row-gap: var(--space-2xs); padding: var(--space-sm) 0; }
 	.sched-row .due { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 1ch; }
 	.sched-row .due span { white-space: nowrap; }
-	.skill-row, .note-row, .field, .event, .devices li { padding-left: 0; padding-right: 0; }
+	.skill-row, .note-row, .field, .event, .devices li, .convo-row { padding-left: 0; padding-right: 0; }
+	.convo-row { grid-template-areas: "head head" "meta meta" "preview preview"; }
 	.note-row { grid-template-areas: "text text" "meta actions"; align-items: center; }
 	.field { grid-template-columns: minmax(0, 1fr); row-gap: var(--space-xs); }
 	.field-name { flex-direction: row; align-items: baseline; gap: var(--space-xs); padding-top: 0; }
@@ -602,6 +628,7 @@ button.switch:active:not(:disabled) { transform: none; }
 		<h1><img src="/logo.svg" alt="gaidin" width="32" height="32"></h1>
 		<nav id="views" aria-label="Views">
 			<a href="#/" data-view="console">console</a>
+			<a href="#/history" data-view="history">history</a>
 			<a href="#/schedule" data-view="schedule">schedule <span id="schedule-count" class="count"></span></a>
 			<a href="#/memory" data-view="memory">memory</a>
 			<a href="#/skills" data-view="skills">skills</a>
@@ -612,6 +639,9 @@ button.switch:active:not(:disabled) { transform: none; }
 	</header>
 	<main id="scroll" data-view="console">
 		<div id="log" role="log" aria-live="polite" aria-relevant="additions"></div>
+	</main>
+	<main id="history-view" data-view="history" hidden>
+		<div id="history" class="page"></div>
 	</main>
 	<main id="schedule-view" data-view="schedule" hidden>
 		<div id="schedule" class="page"></div>

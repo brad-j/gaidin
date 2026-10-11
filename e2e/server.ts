@@ -27,7 +27,7 @@ type Context = { messages: readonly { role: string; content?: unknown }[] };
 
 /**
  * "fetch" fetches site.test, "ask" asks a question, "remind" sets a reminder due now, "dentist" one due in two hours,
- * "briefing" schedules a weekday job, and "markdown" gets a long answer; then it says what came back, in short for a fetch.
+ * "briefing" schedules a weekday job, "soon" a one-off job three seconds away, and "markdown" gets a long answer; then it says what came back, in short for a fetch.
  */
 function step(ctx: Context) {
 	const last = ctx.messages.at(-1);
@@ -42,6 +42,7 @@ function step(ctx: Context) {
 	if (said.includes("ask")) return call("ask_owner", { question: "Keep the old branch?", choices: ["Yes", "No"] });
 	if (said.includes("markdown")) return fauxAssistantMessage(fauxText(RICH));
 	if (said.includes("dentist")) return call("remind", { text: "Call the dentist", inMinutes: 120 });
+	if (said.includes("soon")) return call("schedule_job", { title: "Quick weather check", instruction: "Check the weather once.", at: new Date(Date.now() + 3000).toISOString() });
 	if (said.includes("briefing")) return call("schedule_job", { title: "Morning briefing", instruction: "Summarise the weather and today's calendar.", time: "07:30", days: "weekdays" });
 	if (said.includes("remind")) return call("remind", { text: "stretch", inMinutes: 0 });
 	return fauxAssistantMessage(fauxText("Hello, Brad."));
@@ -90,6 +91,7 @@ const web = createWebServer({
 	approvals: host.approvals,
 	budget: host.budget,
 	timeline: host.timeline,
+	history: host.history,
 	skills: host.skills,
 	stop: host.stop,
 	snooze: host.reminders.snooze,

@@ -1,13 +1,13 @@
 // Client for src/web.ts. Served with its types stripped, so it keeps to erasable TypeScript, and imports the
 // server's types with `import type`, which stripping removes. The conversation itself is transcript.ts's copy,
 // rebuilt from the server's event stream; this draws it, and does what else an event calls for.
-import type { Message } from "@earendil-works/pi-ai";
 import type { ApprovalRequest } from "../src/approvals.ts";
 import type { Gets, Posts, StreamEvent } from "../src/web.ts";
 import { load, post } from "./api.ts";
-import { $, argsSummary, clock, el, fromNow, isFields, isNumber, isText, money, when } from "./dom.ts";
-import { markdown } from "./markdown.ts";
+import { $, clock, el, fromNow, money, when } from "./dom.ts";
+import { createLog, row, splitStamp, textOf } from "./log.ts";
 import { renderActivity } from "./activity.ts";
+import { historyRoute, renderHistory } from "./history.ts";
 import { renderMemory } from "./memory.ts";
 import { renderSchedule, troubled } from "./schedule.ts";
 import { LEVELS, renderSettings, settingsChanged } from "./settings.ts";
@@ -15,9 +15,6 @@ import { renderSkills, skillRoute } from "./skills.ts";
 import { applyEvent, newTranscript } from "./transcript.ts";
 
 
-type Transcript = ReturnType<typeof newTranscript>;
-type Block = NonNullable<Transcript["partial"]>["content"][number];
-type Part = { type: string; text?: string };
 type Reminder = Gets["/api/reminders"][number];
 type Job = Gets["/api/jobs"][number];
 type Settings = Gets["/api/settings"];
@@ -32,8 +29,6 @@ type State = {
 	budget: Gets["/api/budget"] | undefined;
 };
 const state: State = { connected: false, allSpend: undefined, budget: undefined };
-/** Tool calls and thinking blocks the owner has opened, so a re-render keeps them open. */
-const opened = new Set<string>();
 
 // --- events -----------------------------------------------------------------------------------
 
@@ -99,106 +94,8 @@ function schedule() {
 	});
 }
 
-function textOf(content: string | Part[]): string {
-	return Array.isArray(content) ? content.map((p) => p.text ?? `[${p.type}]`).join("") : content;
-}
-
-/** The owner's messages start with the local time in brackets; show it apart from the text. */
-function splitStamp(text: string): { time?: string; text: string } {
-	const match = /^\[([^\]]+)\] /.exec(text);
-	return match ? { time: match[1], text: text.slice(match[0].length) } : { text };
-}
-
-/** "Sat 2026-10-10 19:31 GMT-4" (src/time.ts) as "19:31" today, or "Oct 10" another day. */
-function shortStamp(stamp: string): string {
-	const match = /^\w+ (\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})/.exec(stamp);
-	if (!match) return stamp;
-	const [, year, month, day, time] = match;
-	const now = new Date();
-	if (Number(year) === now.getFullYear() && Number(month) === now.getMonth() + 1 && Number(day) === now.getDate()) return time;
-	return new Date(Number(year), Number(month) - 1, Number(day)).toLocaleString(undefined, { month: "short", day: "numeric" });
-}
-
-
-/** Rendered answers by key, so a re-render while text streams in only re-parses the block that changed. */
-let rendered = new Map<string, { text: string; node: HTMLElement }>();
-let nextRendered = new Map<string, { text: string; node: HTMLElement }>();
-
-function answer(key: string, text: string): HTMLElement {
-	const cached = rendered.get(key);
-	const node = cached !== undefined && cached.text === text ? cached.node : markdown(text);
-	nextRendered.set(key, { text, node });
-	return node;
-}
-
-// --- the log ----------------------------------------------------------------------------------
-// Everything on screen is a row: the time on the first row of an exchange, a label saying what kind of
-// line it is, and the body. Command output lives here too, between the entries it followed.
-
-function row(kind: string, label: string, ...body: (Node | string)[]): HTMLElement {
-	const node = el("div", `row ${kind}`);
-	const b = el("div", "b");
-	b.append(...body);
-	node.append(el("span", "t"), el("span", "k", label), b);
-	return node;
-}
-
-function fold(key: string, summary: HTMLElement[], sections: [string | undefined, string][]): HTMLDetailsElement {
-	const details = el("details");
-	details.open = opened.has(key);
-	const head = el("summary");
-	head.append(...summary);
-	details.append(head);
-	// The body is built on first open; most folds are never opened.
-	const fill = () => {
-		if (!details.open || details.childElementCount > 1) return;
-		const body = el("div", "fold");
-		for (const [label, text] of sections) {
-			if (label) body.append(el("div", "label", label));
-			body.append(el("pre", undefined, text));
-		}
-		details.append(body);
-	};
-	details.addEventListener("toggle", () => {
-		if (details.open) opened.add(key);
-		else opened.delete(key);
-		fill();
-	});
-	fill();
-	return details;
-}
-
-function lastLines(text: string, count: number): string {
-	return text.replace(/\s+$/, "").split("\n").slice(-count).join("\n");
-}
-
-function renderBlocks(blocks: Block[], key: string, results: Map<string, Extract<Message, { role: "toolResult" }>>, out: HTMLElement[]) {
-	blocks.forEach((block, index) => {
-		if (block.type === "text" && block.text.trim() !== "") {
-			const line = row("gaidin", "gaidin", answer(`${key}:${index}`, block.text));
-			line.lastElementChild!.classList.add("prose");
-			out.push(line);
-		} else if (block.type === "thinking") {
-			// A model with thinking off can still send an empty block.
-			if (!block.redacted && block.thinking.trim() === "") return;
-			const preview = block.redacted ? "redacted" : block.thinking.replace(/\s+/g, " ").trim();
-			out.push(row("think", "think", fold(`${key}:${index}`, [el("span", "args", preview)], [[undefined, block.redacted ? "Redacted by the provider." : block.thinking]])));
-		} else if (block.type === "toolCall") {
-			const result = results.get(block.id);
-			const slot = transcript.tools.get(block.id);
-			const status = result ? (result.isError ? "error" : "done") : slot ? "running" : transcript.running ? "waiting" : "no result";
-			const output = result ? textOf(result.content) : slot?.output ?? "";
-			const args = block.arguments ?? {};
-			const sections: [string | undefined, string][] = [["input", block.name === "bash" && isText(args.command) ? args.command : JSON.stringify(args, null, 2)]];
-			if (result || slot) sections.push(["output", output || "(no output)"]);
-			const details = fold(block.id, [el("span", "name", block.name), el("span", "args", argsSummary(block.name, args)), el("span", "state", status)], sections);
-			const line = row(`tool s-${status.replace(" ", "-")}`, "tool", details);
-			// A running tool shows the end of its output without being opened.
-			if (status === "running" && output.trim() !== "" && !details.open) line.lastElementChild!.append(el("pre", "tail", lastLines(output, 6)));
-			out.push(line);
-		}
-	});
-}
+/** The live conversation's log; a fired reminder there has snooze buttons. */
+const log = createLog({ reminderActions: (id) => snoozeButtons(id) });
 
 /** Command output and errors, kept on screen until the page reloads or /clear. */
 const local: { after: number; row: HTMLElement }[] = [];
@@ -230,79 +127,10 @@ function render() {
 	const scroller = $("scroll");
 	const atBottom = stick || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48;
 
-	const entries = [...transcript.entries.values()].sort((a, b) => a.id - b.id);
-	const results = new Map<string, Extract<Message, { role: "toolResult" }>>();
-	for (const entry of entries) for (const m of entry.model ?? []) if (m.role === "toolResult") results.set(m.toolCallId, m);
-
-	const rows: HTMLElement[] = [];
-	let shown = 0;
-	const flush = (upTo: number) => {
-		while (shown < local.length && local[shown].after <= upTo) rows.push(local[shown++].row);
-	};
-	for (const entry of entries) {
-		const out: HTMLElement[] = [];
-		let starts = false;
-		let time: string | undefined;
-		if (entry.kind === "gaidin.reminder-fired") {
-			const data = isFields(entry.data) ? entry.data : {};
-			starts = true;
-			const line = row("remind", "remind", String(data.text ?? ""));
-			if (!data.delivered) line.lastElementChild!.append(el("span", "why", `push failed: ${data.error}`));
-			if (isNumber(data.taskId)) line.lastElementChild!.append(snoozeButtons(data.taskId));
-			out.push(line);
-		}
-		if (entry.kind === "gaidin.job-reported") {
-			const data = isFields(entry.data) ? entry.data : {};
-			starts = true;
-			const line = row("job", "job", String(data.title ?? ""));
-			if (!data.delivered) line.lastElementChild!.append(el("span", "why", `not delivered: ${data.error}`));
-			const report = row("gaidin", "gaidin", answer(`${entry.id}:report`, String(data.text ?? "")));
-			report.lastElementChild!.classList.add("prose");
-			out.push(line, report);
-		}
-		// The note a stop leaves for the model (host.ts stop) says the same as the "Stopped." above it, and more.
-		if (entry.kind === "gaidin.stopped") {
-			const text = "Stopped. gaidin will drop that request unless you ask again.";
-			const last = rows.at(-1);
-			if (last?.classList.contains("stopped")) last.lastElementChild!.textContent = text;
-			else out.push(row("sys stopped", "sys", text));
-		}
-		for (const message of entry.kind === "gaidin.stopped" ? [] : entry.model ?? []) {
-			if (message.role === "user") {
-				const split = splitStamp(textOf(message.content));
-				if (entry.kind === "pi.user") {
-					starts = true;
-					time = split.time;
-					out.push(row("you", "you", split.text));
-				} else out.push(row("sys", "note", `${entry.kind}: ${split.text}`));
-			} else if (message.role === "assistant") {
-				renderBlocks(message.content, String(entry.id), results, out);
-				if (message.stopReason === "error") out.push(row("err", "error", message.errorMessage ?? "The model returned an error."));
-				if (message.stopReason === "aborted") out.push(row("sys stopped", "sys", "Stopped."));
-			}
-		}
-		if (out.length > 0) {
-			if (starts) {
-				out[0].classList.add("start");
-				if (time) {
-					const stamp = out[0].firstElementChild;
-					if (stamp instanceof HTMLElement) {
-						stamp.textContent = shortStamp(time);
-						stamp.title = time;
-					}
-				}
-			}
-			rows.push(...out);
-		}
-		flush(entry.id);
-	}
-	if (transcript.partial !== undefined) renderBlocks(transcript.partial.content, "partial", results, rows);
-	flush(Infinity);
+	const rows = log.render(transcript, local);
 	if (rows.length === 0) rows.push(row("sys", "gaidin", "No messages yet. Type below, or / for commands."));
 
 	$("log").replaceChildren(...rows);
-	rendered = nextRendered;
-	nextRendered = new Map();
 
 	if (atBottom) scroller.scrollTop = scroller.scrollHeight;
 	else if (scroller.scrollHeight > lastHeight) $("jump").hidden = false;
@@ -430,7 +258,7 @@ function renderHorizon() {
 // The console is the conversation; the others are pages beside it. The dock stays on every view, so
 // approvals are never out of sight, and anything sent from it goes back to the console to be answered.
 
-const VIEWS = ["console", "schedule", "memory", "skills", "activity", "settings"] as const;
+const VIEWS = ["console", "history", "schedule", "memory", "skills", "activity", "settings"] as const;
 type View = (typeof VIEWS)[number];
 
 /** The view an address names by its first part: #/schedule, #/skills/gaidin. */
@@ -461,7 +289,8 @@ function showView() {
 	if (shown === "console") {
 		stick = true;
 		schedule();
-	} else if (shown === "schedule") renderHorizon();
+	} else if (shown === "history") void renderHistory($("history"), historyRoute(location.hash));
+	else if (shown === "schedule") renderHorizon();
 	else if (shown === "memory") void renderMemory($("memory"));
 	else if (shown === "skills") void renderSkills($("skills"), skillRoute(location.hash));
 	else if (shown === "activity") void renderActivity($("activity"), { budgetChanged: (budget) => {
@@ -1051,13 +880,18 @@ document.addEventListener("keydown", (press) => {
 			return;
 		}
 	}
-	if (key === "Escape" && transcript.running) {
+	const target = press.target;
+	const typing = target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+	// Esc and Ctrl+C stop a run only on the console, from the prompt or with nothing else to type in: a stopped request
+	// is dropped, so an Esc that closes an editor on another page mustn't throw it away.
+	const stoppable = view() === "console" && (!typing || target === input);
+	if (key === "Escape" && transcript.running && stoppable) {
 		press.preventDefault();
 		void stop();
 		return;
 	}
 	// Ctrl+C stops a run, as in a terminal, unless there's a selection to copy.
-	if (ctrlKey && !metaKey && !altKey && (key === "c" || key === "C")) {
+	if (ctrlKey && !metaKey && !altKey && (key === "c" || key === "C") && stoppable) {
 		const selected = (window.getSelection()?.toString() ?? "") !== "" || input.selectionStart !== input.selectionEnd;
 		if (selected) return;
 		press.preventDefault();
@@ -1066,8 +900,6 @@ document.addEventListener("keydown", (press) => {
 		return;
 	}
 	// Typing anywhere goes to the prompt.
-	const target = press.target;
-	const typing = target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 	if (!typing && !ctrlKey && !metaKey && !altKey && key.length === 1) input.focus();
 });
 
