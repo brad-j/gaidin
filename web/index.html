@@ -27,14 +27,15 @@
 	--color-bad: oklch(71% 0.13 22);
 	--color-bad-wash: oklch(71% 0.13 22 / 0.1);
 	--color-focus: oklch(80% 0.09 240);
+	--color-focus-quiet: oklch(46% 0.02 245);
 
 	--font-body: Seravek, "Gill Sans Nova", Ubuntu, "Noto Sans", "Open Sans", Calibri, "DejaVu Sans", sans-serif;
 	--font-mono: "SF Mono", ui-monospace, "JetBrains Mono", "Cascadia Mono", "Noto Sans Mono", "DejaVu Sans Mono", monospace;
 
-	--text-2xs: 0.6875rem;
-	--text-xs: 0.75rem;
-	--text-sm: 0.8125rem;
-	--text-md: 0.9375rem;
+	--text-2xs: 0.75rem;
+	--text-xs: 0.8125rem;
+	--text-sm: 0.9375rem;
+	--text-md: 1.0625rem;
 
 	--space-3xs: 2px;
 	--space-2xs: 4px;
@@ -65,7 +66,7 @@ html, body { height: 100%; margin: 0; overflow: clip; }
 body { background: var(--color-paper); color: var(--color-ink); -webkit-font-smoothing: antialiased; }
 button, textarea, input { font: inherit; color: inherit; }
 pre { margin: 0; font-family: var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
-:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+:focus-visible { outline: 1px solid var(--color-focus-quiet); outline-offset: 1px; }
 
 button {
 	display: inline-flex; align-items: center; gap: var(--space-2xs); min-height: 26px; padding: 0 var(--space-xs);
@@ -208,7 +209,7 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 #dock { position: relative; border-top: 1px solid var(--color-rule); background: var(--color-paper); }
 #jump { position: absolute; bottom: calc(100% + var(--space-sm)); left: 50%; transform: translateX(-50%); background: var(--color-paper-3); }
 #jump[hidden] { display: none; }
-#dock-inner { position: relative; max-width: var(--measure); margin: 0 auto; padding: var(--space-xs) var(--space-md); }
+#dock-inner { position: relative; max-width: var(--measure); margin: 0 auto; padding: var(--space-sm) var(--space-md) var(--space-md); }
 
 #approvals:empty { display: none; }
 #approvals { display: flex; flex-direction: column; gap: var(--space-xs); margin-bottom: var(--space-xs); }
@@ -224,20 +225,22 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 .approval .buttons { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); margin: var(--space-xs) var(--space-sm) 0 0; }
 .approval .expires { color: var(--color-ink-3); font-size: var(--text-xs); margin-left: auto; }
 
+/* The composer: a roomy text area, with the status line as its bottom bar. */
 #prompt {
-	display: grid; grid-template-columns: var(--col-time) var(--col-label) minmax(0, 1fr) auto; column-gap: var(--col-gap); align-items: baseline;
-	padding: var(--space-xs) 0; background: var(--color-paper-2); border: 1px solid var(--color-rule-2); border-radius: var(--radius-md);
-	transition: border-color var(--dur-short) var(--ease-out);
+	display: flex; flex-direction: column; background: var(--color-paper-2); border: 1px solid var(--color-rule-2); border-radius: 10px;
+	transition: border-color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
 }
-#prompt:focus-within { border-color: var(--color-accent); }
-#prompt .k { color: var(--color-accent); text-align: right; font-weight: 600; }
-#prompt .t { padding-left: var(--space-xs); color: var(--color-ink-3); font-size: var(--text-xs); }
+#prompt:focus-within { border-color: var(--color-focus-quiet); background: oklch(19.5% 0.01 250); }
 #message {
-	display: block; width: 100%; min-height: 1.55em; max-height: 40vh; padding: 0; margin: 0; resize: none; overflow-y: auto;
-	background: transparent; border: 0; outline: none; color: var(--color-ink); line-height: 1.55;
+	display: block; width: 100%; min-height: calc(3 * 1.55em + 2 * var(--space-md)); max-height: 45vh; margin: 0; resize: none; overflow-y: auto;
+	padding: var(--space-md) var(--space-md) var(--space-xs); background: transparent; border: 0; outline: none;
+	color: var(--color-ink); font-size: var(--text-md); line-height: 1.55;
 }
+#message:focus-visible { outline: none; }
 #message::placeholder { color: var(--color-ink-3); }
-#send { display: none; margin-right: var(--space-xs); align-self: center; }
+#bar { display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-2xs) var(--space-xs) var(--space-xs); }
+#send { flex: none; min-height: 30px; padding: 0 var(--space-sm); border-radius: var(--radius-md); }
+#send kbd { opacity: 0.7; }
 
 #menu {
 	position: absolute; left: var(--space-md); right: var(--space-md); bottom: calc(100% - var(--space-xs)); z-index: 3;
@@ -252,11 +255,12 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 #menu .item.active .v, #menu .item.active .h, #menu .item.active .a { color: var(--color-accent-ink); }
 
 #statusline {
-	display: flex; align-items: center; gap: var(--space-2xs); height: 28px; padding: 0 var(--space-xs);
-	background: var(--color-paper-2); border-top: 1px solid var(--color-rule); font-size: var(--text-xs); color: var(--color-ink-3);
-	overflow-x: auto; white-space: nowrap; scrollbar-width: none;
+	display: flex; flex: 1; min-width: 0; align-items: center; gap: var(--space-2xs);
+	font-size: var(--text-xs); color: var(--color-ink-3); overflow-x: auto; white-space: nowrap; scrollbar-width: none;
 }
-#statusline .seg { min-height: 22px; padding: 0 var(--space-xs); color: var(--color-ink-2); }
+#statusline .seg { min-height: 26px; padding: 0 var(--space-xs); border-radius: 999px; color: var(--color-ink-2); background: var(--color-paper-3); }
+@media (hover: hover) { #statusline .seg:hover:not(:disabled) { background: var(--color-rule-2); color: var(--color-ink); } }
+#statusline .seg.hint { background: transparent; color: var(--color-ink-3); }
 #statusline .status { display: inline-flex; align-items: center; gap: var(--space-xs); padding: 0 var(--space-xs); }
 #statusline .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--color-ink-3); }
 #statusline .status.running { color: var(--color-accent); }
@@ -280,9 +284,11 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 	#track { display: none; }
 	#next-up { flex: 1; max-width: none; }
 	#log, #dock-inner { padding-left: var(--space-sm); padding-right: var(--space-sm); }
-	.row, #prompt { grid-template-columns: var(--col-label) minmax(0, 1fr); }
-	#prompt { grid-template-columns: var(--col-label) minmax(0, 1fr) auto; }
-	.row .t, #prompt .t { display: none; }
+	.row { grid-template-columns: var(--col-label) minmax(0, 1fr); }
+	.row .t { display: none; }
+	#message { min-height: calc(2 * 1.55em + 2 * var(--space-sm)); padding: var(--space-sm) var(--space-sm) var(--space-2xs); }
+	/* The chips scroll sideways; the fade says there's more. */
+	#statusline { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
 	.row.start .t { display: none; }
 	#menu { left: var(--space-sm); right: var(--space-sm); }
 	.out { grid-template-columns: auto minmax(0, 1fr) auto; }
@@ -291,10 +297,10 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 	.help .a { display: none; }
 }
 @media (pointer: coarse) {
-	#send { display: inline-flex; min-height: 36px; }
-	#statusline { height: 36px; }
+	#send { min-height: 36px; }
+	#send kbd { display: none; }
 	#statusline .seg { min-height: 32px; }
-	#message { font-size: 16px; }
+	#message { font-size: max(16px, var(--text-md)); }
 }
 @media (prefers-reduced-motion: reduce) {
 	*, *::before { transition-duration: 0s !important; animation: none !important; }
@@ -319,13 +325,13 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 			<div id="approvals"></div>
 			<div id="menu" role="listbox" aria-label="Commands" hidden></div>
 			<form id="prompt">
-				<span class="t"></span>
-				<label class="k" for="message">you ›</label>
-				<textarea id="message" rows="1" placeholder="message gaidin · / for commands" aria-controls="menu" autocomplete="off" spellcheck="true"></textarea>
-				<button id="send" class="primary" type="submit">Send</button>
+				<textarea id="message" rows="3" placeholder="Message gaidin, or / for commands" aria-label="Message gaidin" aria-controls="menu" autocomplete="off" spellcheck="true"></textarea>
+				<div id="bar">
+					<div id="statusline"></div>
+					<button id="send" class="primary" type="submit">Send <kbd>↵</kbd></button>
+				</div>
 			</form>
 		</div>
-		<div id="statusline"></div>
 	</footer>
 </div>
 <script type="module" src="/app.js"></script>

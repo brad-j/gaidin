@@ -649,7 +649,7 @@ function renderStatusline() {
 		if (budget?.reason) line.title = budget.reason;
 		segs.push(line);
 	}
-	segs.push(el("span", "spacer"), segment("/ commands", "Show the commands", () => prefill("/")));
+	segs.push(el("span", "spacer"), segment("/ commands", "Show the commands", () => prefill("/"), "hint"));
 	$("statusline").replaceChildren(...segs);
 }
 
