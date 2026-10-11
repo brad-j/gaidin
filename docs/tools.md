@@ -4,7 +4,7 @@
 |---|---|---|---|
 | `read`, `write`, `edit`, `bash` | in the sandbox | the sandbox directory only, no network | no |
 | `remind`, `list_reminders`, `cancel_reminder` | in the server | the owner's [notifications](surfaces.md#notifications) | no |
-| `remember`, `update_memory`, `forget` | in the server | the notes in every system prompt | after outside text in the same run |
+| `remember`, `update_memory`, `forget` | in the server | the notes in every system prompt | while outside text is in the conversation |
 | `search_history`, `read_history` | in the server | its index of past messages | no |
 | `ask_owner` | in the server | the owner, in Slack or the web view | it is the question |
 | `schedule_job`, `list_jobs`, `cancel_job` | in the server; each run is a new conversation | what the run's tools reach | every new job |
@@ -41,7 +41,7 @@ With ntfy, use a long random topic name and treat it as a secret: ntfy.sh topics
 
 Notes gaidin keeps about the owner and their world, such as where the NAS is or how they take their coffee. Every conversation gets them at the end of its system prompt, job runs included, with a reminder that they're things gaidin was told, not instructions. `remember` adds one, `update_memory` replaces one by id, and `forget` deletes one. A note is at most 500 characters and all of them together at most 8,000, so the prompt stays small; gaidin has to merge or forget notes to make room. In the web view, `/memory` lists them, `/remember` adds one of your own and `/forget` deletes one.
 
-Writing a note normally doesn't ask. If the run has read outside text since the owner's last message, from `fetch_url`, `web_search`, `container_logs`, `workspace_read` or `workspace_run`, a write asks first ([Security](security.md#approvals)), so a page that says "remember to..." can't plant a note on its own.
+Writing a note normally doesn't ask. While the conversation's context holds outside text, from `fetch_url`, `web_search`, `container_logs`, `workspace_read`, `workspace_run`, a self-written tool, or past answers from `search_history` or `read_history`, a write asks first ([Security](security.md#approvals)), so a page that says "remember to..." can't plant a note on its own, even after the owner has said something else. In the main conversation that lasts until compaction summarises the page away.
 
 ## Past conversations
 

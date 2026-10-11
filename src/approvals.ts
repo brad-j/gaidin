@@ -75,16 +75,19 @@ type ApprovalState = { requests: Record<string, ApprovalRequest>; fetchHosts: st
 /** What a call needs approval for, or nothing. `detail` holds what the summary can't, so the owner sees all of what they allow. */
 type Ask = Pick<ApprovalRequest, "summary" | "always" | "detail"> | undefined;
 /**
- * What a call needs approval for, or nothing. `untrusted` lists the tools whose outside text the run has
- * read since the owner's last message; it reads the transcript, so call it only when it matters.
+ * What a call needs approval for, or nothing. `untrusted` lists the tools whose outside text is in the conversation's
+ * context; it reads the context, so call it only when it matters.
  */
 export type Policy = (call: ToolCall, state: ApprovalState, conversationId: number, untrusted: () => Promise<string[]>) => Ask | Promise<Ask>;
 
 /** Why a call can't succeed, read from the current state, or nothing. Checked before asking and again after an approval. */
 export type Refusal = (call: ToolCall, read: DocumentReader, context: Context) => string | undefined | Promise<string | undefined>;
 
-/** Tools whose results are text from outside: web pages, other programs' logs, files and output on a workspace. */
-export const UNTRUSTED_TOOLS = new Set(["fetch_url", "web_search", "container_logs", "workspace_read", "workspace_run"]);
+/**
+ * Tools whose results are text from outside: web pages, other programs' logs, files and output on a workspace, and past
+ * answers, which can repeat any of those. Self-written tools are added as they're loaded.
+ */
+export const UNTRUSTED_TOOLS = new Set(["fetch_url", "web_search", "container_logs", "workspace_read", "workspace_run", "search_history", "read_history"]);
 
 const WORKSPACE_GRANT_MS = 60 * 60_000;
 const clip = (text: string, max = 1500) => (text.length > max ? `${text.slice(0, max)}… (${text.length} characters)` : text);
@@ -399,23 +402,21 @@ export function signalOf(api: ToolExecutionApi | HookApi, context: Context): Abo
 }
 
 /**
- * The untrusted tools whose results are in the conversation since its last user message, and the job's gate when that
- * message holds what a gate found. The hook's api is the tool task's runtime, which can read the conversation's context.
+ * The untrusted tools whose results are in the conversation's context, and the job's gate when a message there holds
+ * what a gate found. Text the model has read stays able to steer it for as long as it's in the context, whoever spoke
+ * since; compaction is what takes it out. The hook's api is the tool task's runtime, which can read that context.
  */
-export async function untrustedSince(api: HookApi, context: Context): Promise<string[]> {
-	if (!("context" in api) || !(api.context instanceof Function)) return [];
+export async function untrustedIn(api: HookApi, context: Context): Promise<string[]> {
+	// Without the context there's no telling what was read, so it counts as outside text.
+	if (!("context" in api) || !(api.context instanceof Function)) return ["a conversation it couldn't check"];
 	// SAFETY: in Pi Durable 1.1.0 the hook's api is the tool task's runtime, whose context(id) gives the conversation's
 	// model context; HookApi's type doesn't declare it, so it's checked for above.
 	const read = api.context as (id: ConversationId, context: Context) => Promise<{ messages: readonly Message[] }>;
 	const { messages } = await read.call(api, api.conversationId, context);
 	const found = new Set<string>();
-	for (let i = messages.length - 1; i >= 0; i -= 1) {
-		const message = messages[i]!;
-		if (message.role === "user") {
-			// A job run a gate woke starts with what the gate found.
-			if (JSON.stringify(message.content).includes(GATE_FINDINGS)) found.add("the job's gate");
-			break;
-		}
+	for (const message of messages) {
+		// A job run a gate woke starts with what the gate found.
+		if (message.role === "user" && JSON.stringify(message.content).includes(GATE_FINDINGS)) found.add("the job's gate");
 		if (message.role === "toolResult" && UNTRUSTED_TOOLS.has(message.toolName)) found.add(message.toolName);
 	}
 	return [...found];
@@ -465,7 +466,7 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 					const approvals = service();
 					const impossible = await refused(call, api, context);
 					if (impossible !== undefined) return { block: impossible };
-					const ask = await policy(call, await approvals.state(), api.conversationId, () => untrustedSince(api, context));
+					const ask = await policy(call, await approvals.state(), api.conversationId, () => untrustedIn(api, context));
 					if (ask === undefined) return undefined;
 					// The same id for every run of this call's phase, so a restart doesn't ask twice.
 					const id = await api.memo<string>("gaidin.approval", randomUUID(), context);

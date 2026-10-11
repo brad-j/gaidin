@@ -3,8 +3,8 @@
 // read, add and delete them in the web view.
 //
 // Notes outlive the conversation that wrote them, which makes them the place a planted instruction
-// would want to land. So a write asks the owner first when the run has read outside text since the
-// owner last spoke (approvals.ts, untrustedSince).
+// would want to land. So a write asks the owner first while outside text is in the conversation's
+// context (approvals.ts, untrustedIn).
 import { Type } from "@earendil-works/pi-ai";
 import { defineDoc, defineExtension, defineTool, section, type Tx } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";

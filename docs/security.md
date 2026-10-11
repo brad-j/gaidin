@@ -48,7 +48,7 @@ A URL can carry data out in its path or query, which is why a fetch to a new hos
 | `fetch_url` | for a host not allowed for good | always allow that host |
 | `workspace_*` | every call | allow that workspace for an hour, in that conversation only |
 | `schedule_job` | every new job | none |
-| `remember`, `update_memory` | when the run has read outside text since the owner's last message | none |
+| `remember`, `update_memory` | while outside text is in the conversation's context | none |
 
 A request shows all of what it allows. What doesn't fit its one line goes under "all of it" in the web view, and up to about 2,600 characters of it in Slack, which says where it's cut: a long command or job instruction in full, the content a workspace write puts in a file, each edit's old and new text, and a self-written extension's diff. A note is shown as it will be stored, with its spaces collapsed. A request waits up to `approvals.waitHours` (7 days by default); the run is stored meanwhile and costs nothing. Deny, no answer in time, Stop, or a new message from the owner in that conversation blocks the call, and the model is told which. A new message closes the request as skipped, so the owner never has to answer an old request before saying something else. The request id comes from a memo on the tool task, so after a restart the same call waits on the same request without asking again. Only the configured Slack user's presses in the configured channel count, and the web view only answers its configured login. Requests, always-allowed hosts and hour grants are stored in a session document and survive restarts.
 
@@ -56,7 +56,7 @@ Before the policy is asked, the hook checks whether the call can succeed at all,
 
 Each request's outcome (allowed once or always, denied, answered, no answer in time, stopped, skipped) and where it was given is also written into its conversation as an entry the model doesn't see. The web view's `/timeline` lists these outcomes with the tool calls, job reports and reminders around them, from the transcript index ([Tools](tools.md#past-conversations)), so the record outlives the request, which is dropped a week after it's decided. The timeline leaves out the sandbox's coding tools and the tools that only read gaidin's own state.
 
-The policy can also see which tools that return outside text (`UNTRUSTED_TOOLS`: `fetch_url`, `web_search`, `container_logs`, `workspace_read`, `workspace_run`) the run has used since the owner's last message, plus self-written tools and, in a job run a [gate](tools.md#gates) woke, what the gate found; memory writes use that. A tool that changes anything outside the sandbox should go through this policy ([Extending](extending.md#tools-that-reach-outside)).
+The policy can also see which tools that return outside text (`UNTRUSTED_TOOLS`: `fetch_url`, `web_search`, `container_logs`, `workspace_read`, `workspace_run`, and `search_history` and `read_history`, whose past answers can repeat any of those) have results in the conversation's context, plus self-written tools and, in a job run a [gate](tools.md#gates) woke, what the gate found; memory writes use that. It's the whole context, not just the current run: text the model has read can steer it for as long as it's there, whatever the owner says in between. If the context can't be read, that counts as outside text too. A tool that changes anything outside the sandbox should go through this policy ([Extending](extending.md#tools-that-reach-outside)).
 
 ## Workspaces
 
@@ -85,7 +85,7 @@ The web view trusts the identity header Tailscale Serve adds, and listens only o
 - Workspace secret masking goes by file name.
 - Anything gaidin writes into a project can run later as you.
 - The tools that don't ask (sandbox, reminders, homelab reads) can still be steered: a manipulated model could set reminders or fill the sandbox. Any steered run also spends money, which the [spend limits](deploy.md#spend-limits) cap.
-- A note the owner approves, or one written before any outside text was read, goes into every later prompt. The web view shows them all, and deleting one takes it out.
+- A note the owner approves, or one written before any outside text was read, goes into every later prompt. Once compaction summarises a conversation, its summary can carry what a page said, and note writes stop asking until outside text is read again. The web view shows them all, and deleting one takes it out.
 - A self-written tool's fetch to a host you've always allowed can carry data in its URL without asking, as `fetch_url` can.
 - A job's gate runs without asking at every check. The homelab gate only reads the monitoring feeds; a self-written gate fetches only from hosts you've allowed for good, with whatever arguments the approved job gave it.
 - Alert text comes from monitoring systems, and the run that investigates it has only read-only tools, so it can't write notes, set reminders or jobs, use a workspace or load tools. Its `fetch_url` calls still ask for a new host.
