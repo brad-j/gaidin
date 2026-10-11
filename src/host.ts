@@ -72,6 +72,7 @@ function persona(owner: string) {
 					`Use schedule_job for work to do later or on a schedule: briefings, regular checks, and watches. ` +
 					`When you tell ${owner} you'll check on something later, schedule it, so it happens. ` +
 					`When you need a decision only ${owner} can make, ask with ask_owner and wait for the answer rather than guessing. ` +
+					`When ${owner} asks for the same kind of thing again and load_extension is available, offer to write a tool for it, and write it only once ${owner} says yes. ` +
 					"The bash tool runs in a sandbox with no network: curl, package installs and git clone fail there. " +
 					"Reach the internet with fetch_url, and web_search when it's available. If a tool fails, say what failed rather than guessing a cause.",
 				{ tag: false },
