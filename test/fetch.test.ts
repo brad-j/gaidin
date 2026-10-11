@@ -45,16 +45,16 @@ async function setup(t: TestContext): Promise<{ base: string; options: FetchOpti
 	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(() => new Promise((resolve) => server.close(resolve)));
-	const names: Record<string, string[]> = {
+	const names = new Map(Object.entries({
 		"public.test": ["127.0.0.1"],
 		"lan.test": ["192.168.3.177"],
 		"tailnet.test": ["100.79.108.50"],
 		"mixed.test": ["127.0.0.1", "10.0.0.5"],
 		"ula.test": ["fd7a:115c:a1e0::1"],
-	};
+	}));
 	const options: FetchOptions = {
 		blocked: blockedRanges({ allowLoopback: true }),
-		resolve: async (host) => (names[host] ?? []).map((address) => ({ address, family: address.includes(":") ? 6 : 4 })),
+		resolve: async (host) => (names.get(host) ?? []).map((address) => ({ address, family: address.includes(":") ? 6 : 4 })),
 		maxBytes: 10_000,
 	};
 	return { base: `http://public.test:${(server.address() as AddressInfo).port}`, options };
@@ -123,4 +123,8 @@ test("the agent can call fetch_url, and an error status is an error result", asy
 	assert.match(JSON.stringify(results[0]), /Batter - light/);
 	assert.equal((results[1] as { isError?: boolean }).isError, true);
 	assert.ok(host.switchable().some((tool) => tool.name === "fetch_url"));
+});
+
+test("htmlToText leaves an entity it doesn't know as it is, even one named like an object's property", () => {
+	assert.equal(htmlToText("<p>&constructor; &toString; &bogus; &AMP;</p>", "https://example.com/"), "&constructor; &toString; &bogus; &");
 });

@@ -66,13 +66,21 @@ export async function fetchPublic(url: string, options: FetchOptions = {}): Prom
 
 		// Checked at connect time, so a second DNS answer can't swap in a private address.
 		const lookup: LookupFunction = (hostname, lookupOptions, callback) => {
-			resolve(hostname).then((addresses) => {
-				const bad = addresses.find((a) => isBlocked(blocked, a.address));
-				if (bad !== undefined) throw new Error(`${hostname} resolves to ${bad.address}, a private or reserved address`);
-				if (addresses.length === 0) throw new Error(`${hostname} has no addresses`);
+			void (async () => {
+				let addresses: Awaited<ReturnType<typeof resolve>>;
+				try {
+					addresses = await resolve(hostname);
+					const bad = addresses.find((a) => isBlocked(blocked, a.address));
+					if (bad !== undefined) throw new Error(`${hostname} resolves to ${bad.address}, a private or reserved address`);
+					if (addresses.length === 0) throw new Error(`${hostname} has no addresses`);
+				} catch (error) {
+					callback(error as NodeJS.ErrnoException, "", 0);
+					return;
+				}
+				// Called once, outside the try, so a throw from the socket's side isn't reported as a failed lookup.
 				if (lookupOptions.all) (callback as (e: null, a: typeof addresses) => void)(null, addresses);
 				else callback(null, addresses[0]!.address, addresses[0]!.family);
-			}).catch((error: Error) => callback(error as NodeJS.ErrnoException, "", 0));
+			})();
 		};
 
 		const response = await new Promise<IncomingMessage>((resolveResponse, reject) => {
@@ -120,7 +128,7 @@ export async function fetchPublic(url: string, options: FetchOptions = {}): Prom
 	}
 }
 
-const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "-", mdash: "-", hellip: "...", rsquo: "'", lsquo: "'", rdquo: '"', ldquo: '"' };
+const ENTITIES = new Map(Object.entries({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "-", mdash: "-", hellip: "...", rsquo: "'", lsquo: "'", rdquo: '"', ldquo: '"' }));
 
 function decodeEntities(text: string): string {
 	return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, name: string) => {
@@ -128,7 +136,7 @@ function decodeEntities(text: string): string {
 			const code = name[1] === "x" || name[1] === "X" ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
 			return Number.isFinite(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : match;
 		}
-		return ENTITIES[name.toLowerCase()] ?? match;
+		return ENTITIES.get(name.toLowerCase()) ?? match;
 	});
 }
 
