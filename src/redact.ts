@@ -13,7 +13,7 @@ import type { ShellExecOptions, ShellOutputInfo } from "@earendil-works/pi-durab
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 
 /** Environment variables that hold credentials. */
-export const SECRET_NAMES = ["ANTHROPIC_API_KEY", "NTFY_URL", "NTFY_TOKEN", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"] as const;
+export const SECRET_NAMES = ["ANTHROPIC_API_KEY", "NTFY_URL", "NTFY_TOKEN", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "TAVILY_API_KEY"] as const;
 
 // Shorter values would redact ordinary text.
 const MIN_LENGTH = 8;

@@ -66,7 +66,7 @@ type Ask = Pick<ApprovalRequest, "summary" | "always"> | undefined;
 export type Policy = (call: ToolCall, state: ApprovalState, conversationId: number, untrusted: () => Promise<string[]>) => Ask | Promise<Ask>;
 
 /** Tools whose results are text from outside: web pages, other programs' logs, files and output on a workspace. */
-export const UNTRUSTED_TOOLS = new Set(["fetch_url", "container_logs", "workspace_read", "workspace_run"]);
+export const UNTRUSTED_TOOLS = new Set(["fetch_url", "web_search", "container_logs", "workspace_read", "workspace_run"]);
 
 const WORKSPACE_GRANT_MS = 60 * 60_000;
 const clip = (text: string, max = 1500) => (text.length > max ? `${text.slice(0, max)}… (${text.length} characters)` : text);

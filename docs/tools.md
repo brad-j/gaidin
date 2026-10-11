@@ -8,6 +8,7 @@
 | `ask_owner` | in the server | the owner, in Slack or the web view | it is the question |
 | `schedule_job`, `list_jobs`, `cancel_job` | in the server; each run is a new conversation | what the run's tools reach | every new job |
 | `fetch_url` | in the server | the public internet only | for a host not allowed for good |
+| `web_search` | in the server | the configured search backend | no |
 | `workspace_run`, `workspace_read`, `workspace_write`, `workspace_edit` | on a workspace, under bubblewrap | that machine's project roots, and the network | every call |
 | `homelab_status` | in the server | the homelab's monitoring feeds | no |
 | `container_logs` | in the server, over SSH | Docker logs on two hosts | no |
@@ -34,7 +35,7 @@ ntfy.sh topics have no password, so use a long random topic name and treat it as
 
 Notes gaidin keeps about the owner and their world, such as where the NAS is or how they take their coffee. Every conversation gets them at the end of its system prompt, job runs included, with a reminder that they're things gaidin was told, not instructions. `remember` adds one, `update_memory` replaces one by id, and `forget` deletes one. A note is at most 500 characters and all of them together at most 8,000, so the prompt stays small; gaidin has to merge or forget notes to make room. The web view lists them, with Delete and a box for adding your own.
 
-Writing a note normally doesn't ask. If the run has read outside text since the owner's last message, from `fetch_url`, `container_logs`, `workspace_read` or `workspace_run`, a write asks first ([Security](security.md#approvals)), so a page that says "remember to..." can't plant a note on its own.
+Writing a note normally doesn't ask. If the run has read outside text since the owner's last message, from `fetch_url`, `web_search`, `container_logs`, `workspace_read` or `workspace_run`, a write asks first ([Security](security.md#approvals)), so a page that says "remember to..." can't plant a note on its own.
 
 ## Scheduled jobs
 
@@ -59,6 +60,12 @@ A GET of a public web page or API, returned as text. HTML is reduced to the page
 - Downloads stop at 2 MB after decompression. The text is cut to 20,000 characters unless the model asks for more, up to 200,000.
 
 A fetch to a host you haven't allowed for good waits for your [approval](security.md#approvals).
+
+## web_search
+
+Finds pages for `fetch_url` to read: titles, URLs and snippets, best first, up to 10 (default 5). `topic: "news"` searches current events, and `timeRange` keeps results from the last day, week, month or year. Results are labelled as text from the web, and count as outside text for the [memory guard](#memory).
+
+The backend is a setting ([Deploying](deploy.md#settings)). Tavily is the one implemented: a search API with a free tier, called from the server with `search.apiKey`. The query goes only to the backend, so a search doesn't ask first, but whatever the model puts in a query reaches Tavily. Without a backend there's no `web_search`, and gaidin can only fetch URLs it already knows. A self-hosted engine such as SearXNG can be added as another backend; `src/search.ts` has one function per backend.
 
 ## Workspaces
 

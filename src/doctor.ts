@@ -8,6 +8,7 @@ import type { Config, Loaded } from "./config.ts";
 import { fetchFeeds } from "./extensions/homelab/status.ts";
 import { sshRunner } from "./extensions/homelab/logs.ts";
 import { bwrapArgs, findBwrap } from "./sandbox.ts";
+import { tavilyUsage } from "./search.ts";
 import { isListening, socketPathFor } from "./server.ts";
 import { readWorkspaces, sshRemote } from "./workspaces.ts";
 
@@ -37,6 +38,7 @@ export async function runChecks(loaded: Loaded, options: { push?: boolean } = {}
 		ntfy(config, options.push === true),
 		slack(config),
 		web(config),
+		search(config),
 		workspaces(config),
 		homelab(config),
 	];
@@ -137,6 +139,17 @@ async function web(config: Config): Promise<Check[]> {
 		area: "web",
 		detail: served ? `tailscale serve proxies to 127.0.0.1:${config.web.port}, for ${config.web.user}` : `tailscale serve isn't proxying to port ${config.web.port}; run: sudo tailscale serve --bg --yes ${config.web.port}`,
 	}];
+}
+
+async function search(config: Config): Promise<Check[]> {
+	if (config.search === undefined) return [{ status: "skip", area: "search", detail: "not set up; no web_search" }];
+	try {
+		const { used, limit } = await tavilyUsage(config.search.apiKey);
+		const nearly = limit !== null && used >= limit * 0.9;
+		return [{ status: nearly ? "warn" : "ok", area: "search", detail: `Tavily key works; ${used}${limit === null ? "" : ` of ${limit}`} credits used this cycle` }];
+	} catch (error) {
+		return [{ status: "fail", area: "search", detail: message(error) }];
+	}
 }
 
 async function workspaces(config: Config): Promise<Check[]> {

@@ -18,6 +18,7 @@ import { ntfyNotifier, ntfyReporter } from "./ntfy.ts";
 import { type Redactor, redactionExtension, redactorFor } from "./redact.ts";
 import { createReminders, type Notify } from "./reminders.ts";
 import { findBwrap, SandboxEnv } from "./sandbox.ts";
+import { backendFor, type SearchBackend, webSearchTool } from "./search.ts";
 import { setTimeZone, timeZone } from "./time.ts";
 import { createWorkspaces, readWorkspaces, type Remote, sshRemote, type Workspace } from "./workspaces.ts";
 
@@ -94,6 +95,8 @@ export type HostOptions = {
 	homelab?: HomelabOptions;
 	/** How fetch_url resolves names and which addresses it refuses; tests replace them. */
 	fetch?: FetchOptions;
+	/** Replaces the settings' search backend; tests use it. */
+	search?: SearchBackend;
 	/** Machines gaidin can work on, and how to reach them. Default: the keys directory's `workspaces` file, over ssh. */
 	workspaces?: { list: Workspace[]; remote: Remote | undefined };
 	/** Replaces the settings' approvals.waitHours, in milliseconds. */
@@ -138,6 +141,9 @@ export async function openHost(options: HostOptions = {}) {
 	if (config.homelab !== undefined) registry.install(createHomelab(config.homelab, owner, config.keysDir, options.homelab));
 	const web = createFetch(options.fetch, owner);
 	registry.install(web.extension);
+	const searchBackend = options.search ?? backendFor(config.search);
+	const search = searchBackend === undefined ? undefined : webSearchTool(searchBackend, owner);
+	if (search !== undefined) registry.install(defineExtension({ name: "search", tools: [search] }));
 	const workspaces = createWorkspaces({
 		workspaces: options.workspaces?.list ?? readWorkspaces(config.keysDir),
 		remote: options.workspaces === undefined ? sshRemote(config.keysDir) : options.workspaces.remote,
@@ -169,7 +175,7 @@ export async function openHost(options: HostOptions = {}) {
 	await budget.attach(harness);
 	harness.resume();
 	// The tools the web view can switch off: the coding tools, fetch_url (gaidin's only way to the internet) and the workspace tools.
-	const switchable = [...(CodingTools.tools ?? []), web.tool, ...workspaces.tools];
+	const switchable = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...workspaces.tools];
 	const setDeliver = (next: Deliver) => {
 		deliver = next;
 	};

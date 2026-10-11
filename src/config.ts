@@ -16,6 +16,9 @@ export type HomelabConfig = {
 	logHosts: Record<string, string>;
 };
 
+/** The search backend web_search uses. */
+export type SearchConfig = { provider: "tavily"; apiKey: string };
+
 export type Config = {
 	/** The file the settings came from, if any. */
 	file?: string;
@@ -30,6 +33,8 @@ export type Config = {
 	sandbox: "bwrap" | "none";
 	/** Spend limits in dollars; 0 is no limit. */
 	budget: { daily: number; monthly: number };
+	/** Without it there's no web_search. */
+	search?: SearchConfig;
 	/** How long approvals and questions wait for the owner. */
 	approvals: { waitHours: number };
 	/** SSH keys for workspaces and container logs, and the workspace list. */
@@ -40,7 +45,7 @@ export type Config = {
 export type Loaded = { config: Config; errors: string[]; warnings: string[] };
 
 const DEFAULT_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
-const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "slack", "web", "sandbox", "budget", "approvals", "keys", "extensions"];
+const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "slack", "web", "sandbox", "budget", "approvals", "search", "keys", "extensions"];
 
 /** The settings file to use: `explicit`, GAIDIN_CONFIG, or the first default location that exists. */
 export function findConfigFile(explicit?: string, env: NodeJS.ProcessEnv = process.env, search = true): string | undefined {
@@ -75,6 +80,7 @@ function fromEnv(env: NodeJS.ProcessEnv) {
 		daily: pick("GAIDIN_BUDGET_DAILY"),
 		monthly: pick("GAIDIN_BUDGET_MONTHLY"),
 		waitHours: pick("GAIDIN_APPROVAL_WAIT_HOURS"),
+		tavilyKey: pick("TAVILY_API_KEY"),
 		homelabFeeds: pick("GAIDIN_HOMELAB_DATA"),
 		kumaUrl: pick("GAIDIN_KUMA_URL"),
 	};
@@ -201,6 +207,18 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	// Node's timers stop at about 24 days.
 	if (!Number.isFinite(waitHours) || waitHours <= 0 || waitHours > 24 * 24) errors.push(`approvals.waitHours must be between 0 and 576 hours, not ${JSON.stringify(waitValue)}`);
 
+	// Search
+	const searchSection = section("search");
+	let search: SearchConfig | undefined;
+	const searchProvider = text("search.provider", searchSection.provider) ?? (e.tavilyKey === undefined ? undefined : "tavily");
+	if (searchProvider !== undefined) {
+		if (searchProvider !== "tavily") errors.push(`search.provider must be "tavily", not "${searchProvider}"`);
+		const key = e.tavilyKey ?? text("search.apiKey", searchSection.apiKey);
+		if (key === undefined) errors.push("search.apiKey is missing (or set TAVILY_API_KEY)");
+		else if (!key.startsWith("tvly-")) errors.push("search.apiKey should start with tvly-");
+		else if (searchProvider === "tavily") search = { provider: "tavily", apiKey: key };
+	}
+
 	// Extensions
 	const extensions = section("extensions");
 	for (const key of Object.keys(extensions)) {
@@ -229,7 +247,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	}
 
 	// A file holding secrets should be readable by its owner and the service only.
-	const secretsInFile = [model.apiKey, ntfySection.url, ntfySection.token, slackSection.botToken, slackSection.appToken].some((v) => v !== undefined);
+	const secretsInFile = [model.apiKey, ntfySection.url, ntfySection.token, slackSection.botToken, slackSection.appToken, searchSection.apiKey].some((v) => v !== undefined);
 	if (file !== undefined && secretsInFile && existsSync(file) && (statSync(file).mode & 0o007) !== 0) {
 		warnings.push(`${file} holds secrets and anyone on the machine can read it; chmod o-rwx it`);
 	}
@@ -245,6 +263,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 		...(webUser === undefined ? {} : { web: { user: webUser, port } }),
 		sandbox: sandbox as Config["sandbox"],
 		budget,
+		...(search === undefined ? {} : { search }),
 		approvals: { waitHours: Number.isFinite(waitHours) && waitHours > 0 && waitHours <= 576 ? waitHours : 168 },
 		keysDir: path(e.keys ?? text("keys", raw.keys) ?? "/var/lib/gaidin/keys"),
 		...(homelab === undefined ? {} : { homelab }),
@@ -265,6 +284,7 @@ export function secretsOf(config: Config): Record<string, string | undefined> {
 		NTFY_TOKEN: config.ntfy?.token,
 		SLACK_BOT_TOKEN: config.slack?.botToken,
 		SLACK_APP_TOKEN: config.slack?.appToken,
+		TAVILY_API_KEY: config.search?.apiKey,
 	};
 }
 
@@ -277,5 +297,6 @@ export function maskedConfig(config: Config): Config {
 		model: { ...config.model, ...(config.model.apiKey === undefined ? {} : { apiKey: mask(config.model.apiKey)! }) },
 		...(config.ntfy === undefined ? {} : { ntfy: { url: ntfyMask(config.ntfy.url), ...(config.ntfy.token === undefined ? {} : { token: mask(config.ntfy.token)! }) } }),
 		...(config.slack === undefined ? {} : { slack: { ...config.slack, botToken: mask(config.slack.botToken)!, appToken: mask(config.slack.appToken)! } }),
+		...(config.search === undefined ? {} : { search: { ...config.search, apiKey: mask(config.search.apiKey)! } }),
 	};
 }

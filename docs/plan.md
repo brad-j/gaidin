@@ -20,10 +20,11 @@
 6. Memory: notes in every system prompt, kept by gaidin and editable in the web view, with writes after outside text asking first.
 7. A spend guard: daily and monthly limits that stop model requests and tell the owner, with a way to allow more from the web view.
 8. Longer waits: approvals and `ask_owner` questions wait days, answered from Slack or the web view, and a new message skips a waiting approval.
+9. Web search through a configurable backend, Tavily first.
 
 ## Next
 
-9. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
+10. Self-extension: the agent edits its own extension code, runs the tests, and reloads the registry.
 
 Candidates after that:
 

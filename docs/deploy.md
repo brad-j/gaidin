@@ -15,7 +15,7 @@ gaidin config                   # print the settings in use, secrets shortened
 
 From a checkout, `pnpm gaidin ...` runs it, and `pnpm serve`, `pnpm ask`, `pnpm watch` and `pnpm doctor` are shortcuts. On the VM, `setup.sh` installs `/usr/local/bin/gaidin`, which runs it as the service's user with the service's settings.
 
-`gaidin doctor` doesn't start the server and spends no tokens. It checks the settings, Node, the data directory, that bubblewrap can start a sandbox, the API key and model (by looking the model up), the ntfy topic, both Slack tokens, `tailscale serve`, each workspace, and the homelab feeds and log hosts, and says what to fix.
+`gaidin doctor` doesn't start the server and spends no tokens. It checks the settings, Node, the data directory, that bubblewrap can start a sandbox, the API key and model (by looking the model up), the ntfy topic, both Slack tokens, the search key and its remaining credits, `tailscale serve`, each workspace, and the homelab feeds and log hosts, and says what to fix.
 
 ## Running it locally
 
@@ -94,12 +94,14 @@ The settings file is JSON: the first of `--config`, `GAIDIN_CONFIG`, `./gaidin.j
 | `web.user` | `GAIDIN_WEB_USER` | | Tailscale login allowed into the web view. Without it there's no web view. |
 | `web.port` | `GAIDIN_WEB_PORT` | `8410` | Loopback port for the web view. |
 | `sandbox` | `GAIDIN_SANDBOX` | `bwrap` | `none` runs tools without bubblewrap. |
+| `search.provider` | | | `tavily`; without it there's no `web_search`. |
+| `search.apiKey` | `TAVILY_API_KEY` | | A Tavily key, `tvly-...`. Setting the variable alone also turns search on. |
 | `budget.daily` | `GAIDIN_BUDGET_DAILY` | `5` | Dollars a day; 0 is no daily limit. See [Spend limits](#spend-limits). |
 | `budget.monthly` | `GAIDIN_BUDGET_MONTHLY` | `0` | Dollars a calendar month; 0 is no monthly limit. |
 | `approvals.waitHours` | `GAIDIN_APPROVAL_WAIT_HOURS` | `168` | How long approvals and questions wait, up to 576. |
 | `extensions.homelab` | | off | The [homelab extension](extending.md#the-homelab-extension). |
 
-The secrets are `model.apiKey`, the ntfy URL and token, and the two Slack tokens. Keep the file readable only by you or the service; `gaidin doctor` warns when anyone else can read it.
+The secrets are `model.apiKey`, the ntfy URL and token, the two Slack tokens, and `search.apiKey`. Keep the file readable only by you or the service; `gaidin doctor` warns when anyone else can read it.
 
 ## Spend limits
 
