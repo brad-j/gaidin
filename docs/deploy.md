@@ -119,4 +119,6 @@ The total is read after each model response, so the request that crosses a limit
 
 ## Checks
 
-`pnpm check` runs the type checker, Oxlint with the anti-slop rules (`.oxlintrc.json`; the ones about parsing outside input are warnings for now) and the tests. The sandbox tests run bubblewrap for real and are skipped where it isn't installed. The Socket Mode client and the web page itself have no automated tests.
+`pnpm check` runs the type checker, Oxlint with the anti-slop rules (`.oxlintrc.json`; the ones about parsing outside input are warnings for now) and the tests. The sandbox tests run bubblewrap for real and are skipped where it isn't installed. The Socket Mode client has no automated tests.
+
+`pnpm e2e` drives the web view in Chromium with Playwright: messages, approvals and their keys, questions, notes, snoozing, and refusing a request without the owner's login. Each test starts `e2e/server.ts`, the web view on a scripted model with a fresh data directory, so it needs no key or network. It's separate from `pnpm check` because it needs a browser: `pnpm exec playwright install chromium-headless-shell` once. Playwright is a development dependency, so `setup.sh` doesn't install it on the VM.
