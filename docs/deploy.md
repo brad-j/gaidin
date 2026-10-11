@@ -119,4 +119,4 @@ The total is read after each model response, so the request that crosses a limit
 
 ## Checks
 
-`pnpm check` runs the type checker and the tests. The sandbox tests run bubblewrap for real and are skipped where it isn't installed. The Socket Mode client and the web page itself have no automated tests.
+`pnpm check` runs the type checker, Oxlint with the anti-slop rules (`.oxlintrc.json`; the ones about parsing outside input are warnings for now) and the tests. The sandbox tests run bubblewrap for real and are skipped where it isn't installed. The Socket Mode client and the web page itself have no automated tests.

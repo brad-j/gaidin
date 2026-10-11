@@ -55,6 +55,7 @@ const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 
 /** Terminal colors and cursor codes, which many programs write to their logs. */
 export function stripAnsi(text: string): string {
+	// oxlint-disable-next-line no-control-regex -- matching escape codes is the point
 	return text.replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g, "");
 }
 

@@ -15,16 +15,19 @@ function escape(text: string): string {
 	return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-const OUTCOME: Record<Exclude<ApprovalRequest["status"], "pending">, string> = {
+const OUTCOME = {
 	approved: "Allowed",
 	denied: "Denied",
 	answered: "Answered",
 	expired: "No answer in time",
 	cancelled: "No longer needed: the run stopped",
 	superseded: "Skipped: you sent a new message instead",
-};
+} satisfies Record<Exclude<ApprovalRequest["status"], "pending">, string>;
 
-function questionBlocks(request: ApprovalRequest): { text: string; blocks: unknown[] } {
+/** A Slack message's fallback text and its blocks. */
+type Message = { text: string; blocks: unknown[] };
+
+function questionBlocks(request: ApprovalRequest): Message {
 	const question = escape(request.summary);
 	if (request.status !== "pending") {
 		const outcome = request.status === "answered" ? `Answered: ${escape(request.answer ?? "")}` : OUTCOME[request.status];
@@ -49,7 +52,7 @@ function questionBlocks(request: ApprovalRequest): { text: string; blocks: unkno
 	return { text: `gaidin asks: ${request.summary}`, blocks };
 }
 
-export function blocksFor(request: ApprovalRequest): { text: string; blocks: unknown[] } {
+export function blocksFor(request: ApprovalRequest): Message {
 	if (request.kind === "question") return questionBlocks(request);
 	const what = `\`${escape(request.summary)}\``;
 	if (request.status !== "pending") {
@@ -92,7 +95,7 @@ export function createSlackApprovals(options: { harness: Harness; approvals: App
 
 	async function ask(request: ApprovalRequest) {
 		const thread = await threadOf(request.conversationId);
-		const { ts } = await api("chat.postMessage", { channel, ...blocksFor(request), ...(thread === undefined ? {} : { thread_ts: thread }) });
+		const { ts } = await api("chat.postMessage", { channel, ...blocksFor(request), thread_ts: thread });
 		if (ts !== undefined) await approvals.note(request.id, { slackTs: ts });
 	}
 

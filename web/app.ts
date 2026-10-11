@@ -1457,10 +1457,12 @@ input.addEventListener("keydown", (press) => {
 	}
 });
 
+const SHORTCUTS = new Map<string, Decision>([["KeyY", "once"], ["KeyA", "always"], ["KeyN", "deny"]]);
+
 document.addEventListener("keydown", (press) => {
 	const { key, code, altKey, ctrlKey, metaKey } = press;
 	if (altKey && !ctrlKey && !metaKey && firstApproval() !== undefined) {
-		const decision = ({ KeyY: "once", KeyA: "always", KeyN: "deny" } as Record<string, Decision>)[code];
+		const decision = SHORTCUTS.get(code);
 		if (decision !== undefined) {
 			press.preventDefault();
 			void decide(decision);

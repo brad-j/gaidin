@@ -152,7 +152,7 @@ test("a fired reminder is snoozed from its push's button", async (t) => {
 	await host.harness.waitForTask(fired, context);
 	// The transcript's record of it carries its id, for the web view's snooze buttons.
 	const record = (await host.root.entries({}, 5, undefined, context)).items.find((e) => e.kind === "gaidin.reminder-fired");
-	assert.equal((record?.data as { taskId?: number }).taskId, fired);
+	assert.equal((record?.data as { taskId?: number } | undefined)?.taskId, fired);
 
 	const before = Date.now();
 	const response = await post("/api/reminders/snooze", { id: fired, minutes: 10 });

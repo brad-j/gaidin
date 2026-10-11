@@ -48,7 +48,7 @@ export const fetchJson: FetchJson = async (url) => {
 	return response.json();
 };
 
-const MONITOR_STATES: Record<number, string> = { 0: "down", 1: "up", 2: "pending", 3: "maintenance" };
+const MONITOR_STATES = new Map([[0, "down"], [1, "up"], [2, "pending"], [3, "maintenance"]]);
 
 /** Fetches every feed at once; one failing doesn't stop the others. */
 export async function fetchFeeds(sources: Pick<HomelabConfig, "feeds" | "kuma">, get: FetchJson = fetchJson): Promise<FetchedFeeds> {
@@ -78,7 +78,7 @@ export async function fetchFeeds(sources: Pick<HomelabConfig, "feeds" | "kuma">,
 				const uptime = heartbeat.uptimeList?.[`${monitor.id}_24`];
 				return {
 					name: monitor.name,
-					status: latest === undefined ? "unknown" : (MONITOR_STATES[latest.status] ?? "unknown"),
+					status: latest === undefined ? "unknown" : (MONITOR_STATES.get(latest.status) ?? "unknown"),
 					message: latest?.msg ?? "",
 					uptime24: typeof uptime === "number" ? uptime : null,
 				};
@@ -91,7 +91,7 @@ export async function fetchFeeds(sources: Pick<HomelabConfig, "feeds" | "kuma">,
 	return { kuma, beszel, docker, backups };
 }
 
-const ORDER: Record<Severity, number> = { critical: 0, warning: 1, notice: 2 };
+const ORDER = { critical: 0, warning: 1, notice: 2 } satisfies Record<Severity, number>;
 
 function stale(generatedAt: string | undefined, maxAgeMs: number, now: number): boolean {
 	const time = generatedAt === undefined ? NaN : Date.parse(generatedAt);

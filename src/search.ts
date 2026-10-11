@@ -24,8 +24,8 @@ export function tavily(apiKey: string, fetchImpl: typeof fetch = fetch): SearchB
 				max_results: q.maxResults,
 				topic: q.topic,
 				search_depth: "basic",
-				...(q.timeRange === undefined ? {} : { time_range: q.timeRange }),
-				...(q.topic === "news" ? {} : { include_published_date: true }),
+				time_range: q.timeRange,
+				include_published_date: q.topic === "news" ? undefined : true,
 			}),
 			signal: AbortSignal.timeout(20_000),
 		});
@@ -37,7 +37,11 @@ export function tavily(apiKey: string, fetchImpl: typeof fetch = fetch): SearchB
 		const body = (await response.json()) as { results?: { title?: string; url?: string; content?: string; published_date?: string | null }[] };
 		return (body.results ?? [])
 			.filter((r) => typeof r.url === "string")
-			.map((r) => ({ title: r.title ?? r.url!, url: r.url!, snippet: (r.content ?? "").replace(/\s+/g, " ").trim(), ...(r.published_date ? { published: r.published_date } : {}) }));
+			.map((r) => {
+				const result: SearchResult = { title: r.title ?? r.url!, url: r.url!, snippet: (r.content ?? "").replace(/\s+/g, " ").trim() };
+				if (r.published_date) result.published = r.published_date;
+				return result;
+			});
 	};
 }
 
@@ -73,12 +77,9 @@ export function webSearchTool(backend: SearchBackend, owner: string) {
 		execute: async (args) => {
 			const query = args.query.trim();
 			if (query === "") throw new Error("Empty query");
-			const results = await backend({
-				query,
-				maxResults: Math.round(args.maxResults ?? 5),
-				topic: args.topic ?? "general",
-				...(args.timeRange === undefined ? {} : { timeRange: args.timeRange }),
-			});
+			const request: SearchQuery = { query, maxResults: Math.round(args.maxResults ?? 5), topic: args.topic ?? "general" };
+			if (args.timeRange !== undefined) request.timeRange = args.timeRange;
+			const results = await backend(request);
 			const lines = results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}${r.published ? ` (${r.published.slice(0, 10)})` : ""}\n   ${r.snippet.slice(0, 600)}`);
 			const text = [
 				`Search results for "${query}".`,

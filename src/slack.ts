@@ -170,7 +170,9 @@ export function createSlackSurface(options: {
 			return false;
 		}
 		// The time is fixed here, so a resubmission after a restart sends the same text.
-		const pending: Pending = { conversationId, content: stamp(text), ...(threadTs === undefined ? {} : { threadTs }), ...(files.length === 0 ? {} : { files }) };
+		const pending: Pending = { conversationId, content: stamp(text) };
+		if (threadTs !== undefined) pending.threadTs = threadTs;
+		if (files.length > 0) pending.files = files;
 		await root.commit(async (tx) => {
 			(await tx.doc(SlackState)).pending[ts] = pending;
 		}, context);
@@ -282,7 +284,6 @@ export function slackApi(botToken: string): SlackApi {
 	};
 }
 
-/** chat.postMessage with Slack rendering the markdown. Longer answers go out in several messages. */
 export function slackDownload(botToken: string): SlackDownload {
 	return async (url) => {
 		const response = await fetch(url, { headers: { Authorization: `Bearer ${botToken}` }, signal: AbortSignal.timeout(30_000) });
@@ -293,11 +294,12 @@ export function slackDownload(botToken: string): SlackDownload {
 	};
 }
 
+/** chat.postMessage with Slack rendering the markdown. Longer answers go out in several messages. */
 export function slackPoster(api: SlackApi): SlackPost {
 	return async (channel, markdown, threadTs) => {
 		const posted: string[] = [];
 		for (const chunk of chunks(markdown, 12_000)) {
-			const { ts } = await api("chat.postMessage", { channel, markdown_text: chunk, ...(threadTs === undefined ? {} : { thread_ts: threadTs }) });
+			const { ts } = await api("chat.postMessage", { channel, markdown_text: chunk, thread_ts: threadTs });
 			if (ts === undefined) throw new Error("chat.postMessage: no ts");
 			posted.push(ts);
 		}

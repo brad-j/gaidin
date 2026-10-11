@@ -121,13 +121,9 @@ export function redactionExtension(redactor: Redactor) {
 			hook(ToolTask, {
 				afterTool: (_call, result) => {
 					if (redactor.longest === 0 || result.content === undefined) return undefined;
-					return {
-						...result,
-						content: result.content.map((part) => (part.type === "text" ? { ...part, text: redactor.redact(part.text) } : part)),
-						...(result.diagnostics === undefined
-							? {}
-							: { diagnostics: result.diagnostics.map((d) => ({ ...d, message: redactor.redact(d.message) })) }),
-					};
+					const redacted = { ...result, content: result.content.map((part) => (part.type === "text" ? { ...part, text: redactor.redact(part.text) } : part)) };
+					if (result.diagnostics !== undefined) redacted.diagnostics = result.diagnostics.map((d) => ({ ...d, message: redactor.redact(d.message) }));
+					return redacted;
 				},
 			}),
 		],

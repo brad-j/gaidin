@@ -27,7 +27,7 @@ pnpm doctor                                  # checks the settings and everythin
 pnpm serve                                   # the agent
 pnpm ask "remind me in 10 minutes to check the oven"
 pnpm watch                                   # everything the agent does, from any surface
-pnpm check                                   # type check and tests
+pnpm check                                   # type check, lint and tests
 ```
 
 `pnpm gaidin --help` lists the commands, and `deploy/config.example.json` shows every section of the settings. `GAIDIN_MODEL=faux pnpm serve` runs a scripted model with no key and no network. Without `web.url` or `ntfy.url`, reminders print to the server's output.

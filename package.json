@@ -11,7 +11,8 @@
     "ask": "node --no-warnings --env-file-if-exists=.env src/main.ts ask",
     "watch": "node --no-warnings --env-file-if-exists=.env src/main.ts watch",
     "doctor": "node --no-warnings --env-file-if-exists=.env src/main.ts doctor",
-    "check": "tsc && pnpm test",
+    "check": "tsc && pnpm lint && pnpm test",
+    "lint": "oxlint --quiet src web test",
     "test": "node --no-warnings --test test/*.test.ts"
   },
   "devEngines": {

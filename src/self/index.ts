@@ -92,7 +92,10 @@ function gateResult(reply: Reply, tool: string): GateResult {
 	}
 	const { wake, data, topic } = (typeof parsed === "object" && parsed !== null ? parsed : {}) as Record<string, unknown>;
 	if (typeof wake !== "boolean") throw new Error(`${tool}'s answer has no "wake": true or false`);
-	return { wake, ...(data === undefined ? {} : { data: typeof data === "string" ? data : JSON.stringify(data) }), ...(typeof topic === "string" ? { topic } : {}) };
+	const result: GateResult = { wake };
+	if (data !== undefined) result.data = typeof data === "string" ? data : JSON.stringify(data);
+	if (typeof topic === "string") result.topic = topic;
+	return result;
 }
 
 /** What a failed command printed, cut to its end, or nothing if it succeeded. */

@@ -46,7 +46,7 @@ export async function totalSpend(harness: Harness): Promise<number> {
 }
 
 /** The local day and month, in the configured time zone. */
-export function localDay(ms = Date.now()): { day: string; month: string } {
+export function localDay(ms = Date.now()) {
 	const day = new Intl.DateTimeFormat("en-CA", { timeZone: timeZone(), year: "numeric", month: "2-digit", day: "2-digit" }).format(ms);
 	return { day, month: day.slice(0, 7) };
 }
@@ -100,7 +100,8 @@ export function createBudget(options: {
 				doc.warned = day;
 				warn = `gaidin has spent ${money(today)} today, 80% of the daily limit of ${money(dailyLimit)}.`;
 			}
-			const next: BudgetStatus = { today, month: thisMonth, dailyLimit, monthlyLimit: limits.monthly, stopped: reason !== undefined, ...(reason === undefined ? {} : { reason }) };
+			const next: BudgetStatus = { today, month: thisMonth, dailyLimit, monthlyLimit: limits.monthly, stopped: reason !== undefined };
+			if (reason !== undefined) next.reason = reason;
 			return { state: next, warn };
 		}, background);
 		status = state;
@@ -135,7 +136,8 @@ export function createBudget(options: {
 				if (key === "getModel") {
 					return (provider: string, id: string) => (blocked() === undefined ? target.getModel(provider, id) : undefined);
 				}
-				const value = Reflect.get(target, key, target);
+				// SAFETY: a get trap is only asked for keys of the object it wraps.
+				const value = target[key as keyof Models];
 				return typeof value === "function" ? value.bind(target) : value;
 			},
 		});

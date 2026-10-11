@@ -22,7 +22,7 @@ import { formatTime } from "./time.ts";
 type Place = "main" | "thread" | "job";
 type Row = { id: number; conversation: number; place: Place; role: string; at: number; text: string };
 
-const PLACES: Record<Place, string> = { main: "main conversation", thread: "Slack thread", job: "job run" };
+const PLACES = { main: "main conversation", thread: "Slack thread", job: "job run" } satisfies Record<Place, string>;
 
 /** Tools left off the timeline: the sandbox's, ask_owner (its approval entry has the question and answer), and ones that only read gaidin's own state. */
 const QUIET = new Set(["read", "write", "edit", "bash", "ask_owner", "list_reminders", "list_jobs", "search_history", "read_history"]);
@@ -41,10 +41,12 @@ export type Activity = {
 	outcome: string;
 };
 
-const WHERE: Record<string, string> = { slack: " in Slack", web: " in the web view" };
+const WHERE = new Map([["slack", " in Slack"], ["web", " in the web view"]]);
 
 /** What an entry adds to the timeline. `update` is a tool call's outcome, by its call id. */
-function activityOf(entry: EntryRecord): { rows: (Omit<Activity, "place"> & { ref: string })[]; update?: [string, string] } {
+type Contribution = { rows: (Omit<Activity, "place"> & { ref: string })[]; update?: [string, string] };
+
+function activityOf(entry: EntryRecord): Contribution {
 	const id = entry.id as number;
 	if (AssistantEntry.is(entry)) {
 		const message = entry.model?.[0];
@@ -62,7 +64,7 @@ function activityOf(entry: EntryRecord): { rows: (Omit<Activity, "place"> & { re
 	}
 	if (ApprovalSettled.is(entry)) {
 		const d = entry.data;
-		const where = WHERE[d.by ?? ""] ?? "";
+		const where = WHERE.get(d.by ?? "") ?? "";
 		const outcome = d.kind === "question" ? (d.status === "answered" ? `answered${where}: ${d.answer}` : d.status)
 			: d.status === "approved" ? `${d.decision === "always" ? "always allowed" : "allowed once"}${where}`
 			: d.status === "denied" ? `denied${where}`

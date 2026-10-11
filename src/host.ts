@@ -37,7 +37,9 @@ export function assistantText(entry: EntryRecord | undefined): string | undefine
 
 // The faux model runs a script with no network or key: it calls bash once (`sleep`, so there is time
 // to kill the process), then answers with the tool output.
-function modelFor(config: Config): { models: Models; model: ModelRef } {
+type Chosen = { models: Models; model: ModelRef };
+
+function modelFor(config: Config): Chosen {
 	if (config.model.provider === "faux") {
 		const models = createModels();
 		const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
@@ -151,7 +153,7 @@ export async function openHost(options: HostOptions = {}) {
 	}
 	// The guard refuses the model lookup each request makes once a spend limit is reached.
 	let budgetNotify = (text: string) => tell({ title: "gaidin: budget", body: text, tag: "budget" }, ntfyReport && (() => ntfyReport({ title: "budget", text })));
-	const budget = createBudget({ limits: config.budget, notify: () => budgetNotify, ...(options.spend === undefined ? {} : { spend: options.spend }) });
+	const budget = createBudget({ limits: config.budget, notify: () => budgetNotify, spend: options.spend });
 	const models = budget.guard(chosen.models);
 	// A run the guard refused says so, wherever it's reported.
 	const explain = (reason: string | undefined) => (reason === "no_model" ? budget.blocked() : undefined);
@@ -224,7 +226,7 @@ export async function openHost(options: HostOptions = {}) {
 	history.attach(harness);
 	approvals = new ApprovalService(harness, { timeoutMs: options.approvalTimeoutMs ?? config.approvals.waitHours * 3_600_000 });
 	if (pushKeys !== undefined) {
-		push = createPush({ harness, keys: pushKeys, subject: config.web!.url!, ...(options.pushFetch === undefined ? {} : { fetch: options.pushFetch }) });
+		push = createPush({ harness, keys: pushKeys, subject: config.web!.url!, fetch: options.pushFetch });
 		// Requests and questions wait on the owner, so they go to the owner's devices whatever else is set up.
 		approvals.onChange((request) => {
 			if (request.status !== "pending") return;

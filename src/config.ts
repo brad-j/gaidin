@@ -263,9 +263,9 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 		homelab = {
 			feeds: (feeds ?? "").replace(/\/+$/, ""),
 			kuma: { url: (kumaUrl ?? "").replace(/\/+$/, ""), page: text("extensions.homelab.kuma.page", kuma.page) ?? "" },
-			...(typeof h.dashboard === "string" ? { dashboard: h.dashboard } : {}),
 			logHosts,
 		};
+		if (typeof h.dashboard === "string") homelab.dashboard = h.dashboard;
 	}
 
 	// A file holding secrets should be readable by its owner and the service only.
@@ -275,24 +275,33 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	}
 
 	const config: Config = {
-		...(file === undefined ? {} : { file }),
 		owner,
 		timeZone,
 		dataDir: path(e.data ?? text("data", raw.data) ?? "data"),
-		model: { provider: provider as Config["model"]["provider"], id: provider === "faux" ? "faux-1" : id, ...(apiKey === undefined ? {} : { apiKey }), choices },
-		...(ntfyUrl === undefined
-			? {}
-			: { ntfy: { url: ntfyUrl, ...(ntfyToken === undefined ? {} : { token: ntfyToken }), ...(ntfyIcon === undefined ? {} : { icon: ntfyIcon }) } }),
-		...(alertsUrl === undefined ? {} : { alerts: { url: alertsUrl, ...(alertsToken === undefined ? {} : { token: alertsToken }) } }),
-		...(slackGiven.length === 4 ? { slack: slack as NonNullable<Config["slack"]> } : {}),
-		...(webUser === undefined ? {} : { web: { user: webUser, port, ...(webUrl === undefined ? {} : { url: webUrl }) } }),
+		model: { provider: provider as Config["model"]["provider"], id: provider === "faux" ? "faux-1" : id, choices },
 		sandbox: sandbox as Config["sandbox"],
 		budget,
-		...(search === undefined ? {} : { search }),
 		approvals: { waitHours: Number.isFinite(waitHours) && waitHours > 0 && waitHours <= 576 ? waitHours : 168 },
 		keysDir: path(e.keys ?? text("keys", raw.keys) ?? "/var/lib/gaidin/keys"),
-		...(homelab === undefined ? {} : { homelab }),
 	};
+	if (file !== undefined) config.file = file;
+	if (apiKey !== undefined) config.model.apiKey = apiKey;
+	if (ntfyUrl !== undefined) {
+		config.ntfy = { url: ntfyUrl };
+		if (ntfyToken !== undefined) config.ntfy.token = ntfyToken;
+		if (ntfyIcon !== undefined) config.ntfy.icon = ntfyIcon;
+	}
+	if (alertsUrl !== undefined) {
+		config.alerts = { url: alertsUrl };
+		if (alertsToken !== undefined) config.alerts.token = alertsToken;
+	}
+	if (slackGiven.length === 4) config.slack = slack as NonNullable<Config["slack"]>;
+	if (webUser !== undefined) {
+		config.web = { user: webUser, port };
+		if (webUrl !== undefined) config.web.url = webUrl;
+	}
+	if (search !== undefined) config.search = search;
+	if (homelab !== undefined) config.homelab = homelab;
 	return { config, errors, warnings };
 }
 
@@ -302,7 +311,7 @@ export function configFor(change: Partial<Config> = {}, env: NodeJS.ProcessEnv =
 }
 
 /** Secret values by name, for redaction. */
-export function secretsOf(config: Config): Record<string, string | undefined> {
+export function secretsOf(config: Config) {
 	return {
 		ANTHROPIC_API_KEY: config.model.apiKey,
 		NTFY_URL: config.ntfy?.url,
@@ -317,16 +326,19 @@ export function secretsOf(config: Config): Record<string, string | undefined> {
 
 /** The settings with secrets shown as their first few characters. */
 export function maskedConfig(config: Config): Config {
-	const mask = (value: string | undefined) => (value === undefined ? undefined : `${value.slice(0, 6)}…`);
+	const mask = (value: string) => `${value.slice(0, 6)}…`;
 	const ntfyMask = (url: string) => url.replace(/[^/]+$/, (topic) => `${topic.slice(0, 4)}…`);
-	return {
-		...config,
-		model: { ...config.model, ...(config.model.apiKey === undefined ? {} : { apiKey: mask(config.model.apiKey)! }) },
-		...(config.ntfy === undefined
-			? {}
-			: { ntfy: { ...config.ntfy, url: ntfyMask(config.ntfy.url), ...(config.ntfy.token === undefined ? {} : { token: mask(config.ntfy.token)! }) } }),
-		...(config.alerts === undefined ? {} : { alerts: { url: ntfyMask(config.alerts.url), ...(config.alerts.token === undefined ? {} : { token: mask(config.alerts.token)! }) } }),
-		...(config.slack === undefined ? {} : { slack: { ...config.slack, botToken: mask(config.slack.botToken)!, appToken: mask(config.slack.appToken)! } }),
-		...(config.search === undefined ? {} : { search: { ...config.search, apiKey: mask(config.search.apiKey)! } }),
-	};
+	const masked: Config = { ...config, model: { ...config.model } };
+	if (config.model.apiKey !== undefined) masked.model.apiKey = mask(config.model.apiKey);
+	if (config.ntfy !== undefined) {
+		masked.ntfy = { ...config.ntfy, url: ntfyMask(config.ntfy.url) };
+		if (config.ntfy.token !== undefined) masked.ntfy.token = mask(config.ntfy.token);
+	}
+	if (config.alerts !== undefined) {
+		masked.alerts = { url: ntfyMask(config.alerts.url) };
+		if (config.alerts.token !== undefined) masked.alerts.token = mask(config.alerts.token);
+	}
+	if (config.slack !== undefined) masked.slack = { ...config.slack, botToken: mask(config.slack.botToken), appToken: mask(config.slack.appToken) };
+	if (config.search !== undefined) masked.search = { ...config.search, apiKey: mask(config.search.apiKey) };
+	return masked;
 }

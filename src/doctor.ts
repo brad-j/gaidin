@@ -109,7 +109,10 @@ async function ntfy(config: Config, push: boolean): Promise<Check[]> {
 	if (config.ntfy === undefined) return [{ status: "skip", area: "ntfy", detail: "not set up; notifications go only to devices signed up in the web view" }];
 	const headers = config.ntfy.token === undefined ? undefined : { Authorization: `Bearer ${config.ntfy.token}` };
 	if (push) {
-		const response = await fetch(config.ntfy.url, { method: "POST", body: "gaidin doctor: test push", headers: { Title: "gaidin", ...(config.ntfy.icon ? { Icon: config.ntfy.icon } : {}), ...headers }, signal: AbortSignal.timeout(10_000) });
+		const pushHeaders = new Headers(headers);
+		pushHeaders.set("Title", "gaidin");
+		if (config.ntfy.icon) pushHeaders.set("Icon", config.ntfy.icon);
+		const response = await fetch(config.ntfy.url, { method: "POST", body: "gaidin doctor: test push", headers: pushHeaders, signal: AbortSignal.timeout(10_000) });
 		return [{ status: response.ok ? "ok" : "fail", area: "ntfy", detail: response.ok ? "test push sent; check your phone" : `the push failed (${response.status})` }];
 	}
 	// Reads the topic's recent messages, which sends nothing.

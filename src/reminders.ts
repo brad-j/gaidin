@@ -65,9 +65,8 @@ export function createReminders(notify: Notify, owner = "the user") {
 						return { status: "running", checkpoint: { phase: "notify", attempt: attempt + 1, retryAt: runtime.now() + delay } };
 					}
 					doc.items = doc.items.filter((r) => r.taskId !== task.id);
-					await tx.appendEntry(ReminderFired, task.conversationId, {
-						data: { ...task.input, taskId: task.id, delivered: error === undefined, ...(error === undefined ? {} : { error }) },
-					});
+					const data = { ...task.input, taskId: task.id, delivered: error === undefined };
+					await tx.appendEntry(ReminderFired, task.conversationId, { data: error === undefined ? data : { ...data, error } });
 					return {
 						status: "terminal",
 						outcome: error === undefined

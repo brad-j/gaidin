@@ -40,7 +40,7 @@ function recorder() {
 	const posts: { text: string; threadTs?: string; ts: string }[] = [];
 	const post: SlackPost = async (_channel, text, threadTs) => {
 		const ts = `bot.${posts.length + 1}`;
-		posts.push({ text, ts, ...(threadTs === undefined ? {} : { threadTs }) });
+		posts.push(threadTs === undefined ? { text, ts } : { text, ts, threadTs });
 		return [ts];
 	};
 	return { posts, post };
@@ -221,7 +221,7 @@ test("images in a message go to the model, other files are saved in the sandbox,
 	await until(() => posts.length === 2);
 });
 
-test("a fired reminder is posted with snooze buttons, and Brad's press snoozes it and says until when", async (t) => {
+test("a fired reminder is posted with snooze buttons, and Brad's press snoozes it and says until when", async () => {
 	const calls: { method: string; body: Record<string, unknown> }[] = [];
 	const api = async (method: string, body: Record<string, unknown>) => {
 		calls.push({ method, body });

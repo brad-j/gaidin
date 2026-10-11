@@ -96,7 +96,7 @@ export async function serve(config: Config) {
 
 	const web = config.web === undefined
 		? undefined
-		: createWebServer({ harness, root, user: config.web.user, switchable, approvals, models: config.model.choices, budget, timeline, snooze: reminders.snooze, ...(push === undefined ? {} : { push }) });
+		: createWebServer({ harness, root, user: config.web.user, switchable, approvals, models: config.model.choices, budget, timeline, snooze: reminders.snooze, push });
 	if (web !== undefined) {
 		const port = config.web!.port;
 		// Loopback only: tailscale serve is the way in, and it vouches for who's asking.

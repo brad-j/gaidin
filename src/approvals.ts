@@ -402,11 +402,9 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 		execute: async (args, api, context) => {
 			const approvals = service();
 			const choices = (args.choices ?? []).map((c) => c.trim()).filter((c) => c !== "").map((c) => c.slice(0, 75));
-			const request = await approvals.open(`question:${api.taskId}`, { conversationId: api.conversationId as number, taskId: api.taskId as number }, "ask_owner", {
-				summary: args.question.trim(),
-				kind: "question",
-				...(choices.length === 0 ? {} : { choices }),
-			});
+			const ask: Parameters<ApprovalService["open"]>[3] = { summary: args.question.trim(), kind: "question" };
+			if (choices.length > 0) ask.choices = choices;
+			const request = await approvals.open(`question:${api.taskId}`, { conversationId: api.conversationId as number, taskId: api.taskId as number }, "ask_owner", ask);
 			const done = await approvals.wait(request, signalOf(api, context));
 			const text = done.status === "answered" ? `${owner} answered: ${done.answer}`
 				: done.status === "expired" ? `${owner} didn't answer in time.`

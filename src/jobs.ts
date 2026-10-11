@@ -225,6 +225,8 @@ export function parseSchedule(args: { at?: string; every?: string; time?: string
 
 /** A failed run: the first in a row, one after it, which the owner isn't told about, or the one that paused the job. */
 type Failure = "first" | "repeat" | "pause";
+/** A counted failure and what to tell the owner about it. */
+type Counted = { failure: Failure; text: string };
 
 type State =
 	| { phase: "wait"; at: number; firing: number }
@@ -296,7 +298,7 @@ export function createJobs(options: {
 	}
 
 	/** Counts a failed run against `job`, which pauses at MAX_FAILURES. Returns which failure it was and what to tell the owner. */
-	function countFailure(job: Job, text: string, now: number): { failure: Failure; text: string } {
+	function countFailure(job: Job, text: string, now: number): Counted {
 		job.failures = (job.failures ?? 0) + 1;
 		const failure = job.failures === 1 ? "first" : job.failures < MAX_FAILURES ? "repeat" : "pause";
 		if (failure !== "pause") return { failure, text };
@@ -397,7 +399,9 @@ export function createJobs(options: {
 					}
 					const topic = result.topic ?? result.data ?? "";
 					if (result.wake && topic !== job.gateTopic) {
-						return { status: "running", checkpoint: { phase: "run", at, firing, gateTopic: topic, ...(result.data === undefined ? {} : { found: result.data }) } };
+						const checkpoint: State = { phase: "run", at, firing, gateTopic: topic };
+						if (result.data !== undefined) checkpoint.found = result.data;
+						return { status: "running", checkpoint };
 					}
 					// Nothing new: no run. Once the gate finds nothing, the same thing found again is new.
 					if (!result.wake) delete job.gateTopic;
@@ -423,7 +427,8 @@ export function createJobs(options: {
 						if (job === undefined) return { status: "terminal", outcome: { status: "completed", result: "cancelled" } };
 						const created = await tx.createConversation({ ownership: { kind: "task", taskId: runtime.taskId } });
 						const tools = job.tools === undefined ? undefined : runtime.registry.tools().flatMap((t) => (job.tools!.includes(t.tool.name) ? [t.tool] : []));
-						await configure(tx, created.id, { extensions: { remove: [extension] }, ...(tools === undefined ? {} : { tools }) });
+						if (tools === undefined) await configure(tx, created.id, { extensions: { remove: [extension] } });
+						else await configure(tx, created.id, { extensions: { remove: [extension] }, tools });
 						return { status: "running", checkpoint: { ...task.state.checkpoint, conversationId: created.id as number } };
 					}, context);
 					return;
@@ -452,10 +457,11 @@ export function createJobs(options: {
 						const job = await findJob(tx, task.id);
 						if (job !== undefined && why === undefined && settled.reason !== "aborted") ({ failure, text } = countFailure(job, text, runtime.now()));
 					}
-					return {
-						status: "running",
-						checkpoint: { phase: "deliver", at, firing, conversationId, text, ...(answer === undefined ? {} : { answer }), ...(failure === undefined ? {} : { failure }), ...(gateTopic === undefined ? {} : { gateTopic }), attempt: 1, retryAt: 0 },
-					};
+					const checkpoint: State = { phase: "deliver", at, firing, conversationId, text, attempt: 1, retryAt: 0 };
+					if (answer !== undefined) checkpoint.answer = answer;
+					if (failure !== undefined) checkpoint.failure = failure;
+					if (gateTopic !== undefined) checkpoint.gateTopic = gateTopic;
+					return { status: "running", checkpoint };
 				}, context);
 			},
 			deliver: async (task, runtime, context) => {
@@ -468,9 +474,9 @@ export function createJobs(options: {
 					title: task.input.title,
 					text: state.text,
 					conversationId: state.conversationId,
-					...(state.answer === undefined ? {} : { answer: state.answer as EntryId }),
-					...(state.failure === "pause" ? { paused: true } : {}),
 				};
+				if (state.answer !== undefined) report.answer = state.answer as EntryId;
+				if (state.failure === "pause") report.paused = true;
 				// At least once: a crash after delivering and before this commit delivers again.
 				let error: string | undefined;
 				if (!silent) {
@@ -487,9 +493,8 @@ export function createJobs(options: {
 					const doc = await tx.doc(Jobs);
 					const job = doc.items.find((j) => j.taskId === task.id);
 					if (!silent) {
-						await tx.appendEntry(JobReported, task.conversationId, {
-							data: { ...report, answer: undefined, at: state.at, delivered: error === undefined, ...(error === undefined ? {} : { error }) } as never,
-						});
+						const data = { ...report, answer: undefined, at: state.at, delivered: error === undefined };
+						await tx.appendEntry(JobReported, task.conversationId, { data: (error === undefined ? data : { ...data, error }) as never });
 					}
 					if (job === undefined) return { status: "terminal", outcome: { status: "completed", result: "cancelled" } };
 					const now = runtime.now();
@@ -555,7 +560,8 @@ export function createJobs(options: {
 			const parsed = parseSchedule(args, args.gate !== undefined);
 			const gate = args.gate === undefined ? undefined : missingGate(args.gate.name);
 			if (gate !== undefined) throw new Error(gate);
-			const fields = { title: args.title, instruction: args.instruction, schedule: parsed, mode: args.mode ?? "report", ...(args.gate === undefined ? {} : { gate: args.gate }) } as const;
+			const fields: Parameters<typeof addJob>[2] = { title: args.title, instruction: args.instruction, schedule: parsed, mode: args.mode ?? "report" };
+			if (args.gate !== undefined) fields.gate = args.gate;
 			const created = await api.commit((tx) => addJob(tx, api.conversationId, fields), context);
 			return { content: [{ type: "text", text: `Job ${created.taskId} "${created.title}" scheduled ${describeSchedule(created.schedule)}${created.mode === "watch" ? ", as a watch" : ""}. First run ${formatTime(created.nextAt!)}.` }] };
 		},
