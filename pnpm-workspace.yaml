@@ -2,3 +2,5 @@ allowBuilds:
   '@google/genai': false
   esbuild: false
   protobufjs: false
+# Package versions must be 3 days old before pnpm resolves them (pnpm's default is 1 day).
+minimumReleaseAge: 4320
