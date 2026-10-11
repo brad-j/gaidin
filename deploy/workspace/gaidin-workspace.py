@@ -67,6 +67,11 @@ def load_config():
     ROOTS = [p for p in real(config["roots"]) if os.path.isdir(p)]
     if not ROOTS:
         raise ValueError(f"{CONFIG} lists no existing roots")
+    # A root holding any of these would let a command give gaidin a shell or rewrite its own limits.
+    for kept in real(["~/.ssh", os.path.dirname(os.path.abspath(__file__)), os.path.dirname(CONFIG)]):
+        for root in ROOTS:
+            if kept == root or kept.startswith(root + os.sep):
+                raise ValueError(f"the root {root} holds {kept}, which gaidin mustn't be able to change; use a narrower root")
     READ_ONLY = [p for p in real(config.get("readOnly", [])) if os.path.isdir(p)]
     EXTRA_PATH = real(config.get("path", []))
     AUTHOR = config.get("author", AUTHOR)

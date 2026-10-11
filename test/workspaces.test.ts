@@ -152,6 +152,25 @@ test("commands can't change any repository's hooks or config, a submodule's incl
 	assert.equal(readFileSync(join(git, "config"), "utf8"), config);
 });
 
+test("a root holding the user's SSH keys, the helper or its config is refused, by the helper and by the installer", async (t) => {
+	const { home } = machine(t);
+	const desk = { name: "desk", target: "me@desk" };
+	const refusedRoot = async (root: string) => {
+		mkdirSync(root, { recursive: true });
+		writeFileSync(join(home, ".config", "gaidin-workspace", "config.json"), JSON.stringify({ roots: [root] }));
+		const { output } = await localRemote(home)(desk, "read", { path: "." }, {});
+		assert.match(output, /holds .*which gaidin mustn't be able to change/, output);
+	};
+	await refusedRoot(home);
+	await refusedRoot(join(home, ".ssh"));
+
+	const installer = resolve(import.meta.dirname, "../deploy/workspace/install.sh");
+	const installed = spawnSync("sh", [installer, "--key", "ssh-ed25519 AAAAtest gaidin", "--from", "10.0.0.1", home], { env: { HOME: home, PATH: process.env.PATH }, encoding: "utf8" });
+	assert.notEqual(installed.status, 0);
+	assert.match(installed.stderr, /holds .*which gaidin mustn't be able to change/);
+	assert.equal(existsSync(join(home, ".ssh", "authorized_keys")), false);
+});
+
 test("every workspace call asks; an hour's grant covers that conversation only", async (t) => {
 	const { home } = machine(t);
 	const read = call("workspace_read", { workspace: "desk", path: "app/README.md" });

@@ -43,9 +43,14 @@ import json, os, shutil, sys
 target, author, *roots = sys.argv[1:]
 home = os.path.expanduser("~")
 roots = [os.path.realpath(r) for r in roots]
+# A root holding any of these would let gaidin's commands give it a shell or rewrite its own limits.
+kept = [os.path.realpath(os.path.join(home, p)) for p in (".ssh", ".local/libexec", ".config/gaidin-workspace")]
 for root in roots:
     if not os.path.isdir(root):
         sys.exit(f"{root} isn't a directory")
+    for path in kept:
+        if path == root or path.startswith(root + os.sep):
+            sys.exit(f"{root} holds {path}, which gaidin mustn't be able to change; give narrower roots")
 read_only, path = [], []
 for tool in ("node", "pnpm", "npm", "uv", "cargo", "go", "deno", "bun"):
     found = shutil.which(tool)

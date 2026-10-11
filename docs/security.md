@@ -66,7 +66,7 @@ The policy can also see which tools that return outside text (`UNTRUSTED_TOOLS`:
 A workspace runs commands as a real user on another machine, so it's the widest access gaidin has. The layers:
 
 - The machine authorizes gaidin's key with `restrict,from="<gaidin's address>",command="~/.local/libexec/gaidin-workspace"`: only from gaidin, no shell, PTY or forwarding, and only the helper.
-- The helper is installed outside the project roots, so nothing gaidin runs can change it. It accepts four operations and checks every path.
+- The helper is installed outside the project roots, so nothing gaidin runs can change it. It accepts four operations and checks every path. Both the installer and the helper refuse a root that holds `~/.ssh`, the helper's own directory or its config, since a command could then give gaidin a shell or loosen its own limits.
 - Commands run under bubblewrap with the configured roots writable and the network on. Secret files (`.env*`, `.envrc`, `.netrc`, `.npmrc`, `credentials*`, `*.pem`, `*.key`, SSH keys and similar, matched by name) are masked. Every repository's git config and hooks are read-only, its submodules' and worktrees' included, since a change to either runs code the next time the user runs git and a diff wouldn't show it. A repository without a hooks directory gets an empty one, so a command can't add it. A repository a command creates isn't protected; nothing in it runs unless the user runs git there. Tools under the home, like a Node install, are mounted read-only. The rest of the home isn't there, so no SSH keys or tokens.
 - The file operations refuse paths outside the roots, secret files and anything inside `.git`, after resolving symlinks, under the same kind of lock as the sandbox.
 - Every call needs approval.
