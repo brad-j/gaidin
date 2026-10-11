@@ -7,7 +7,7 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { configFor } from "../src/config.ts";
 import { context, openHost } from "../src/host.ts";
-import { describeSchedule, JobReported, Jobs, nextRun, NOTHING, parseSchedule, type Report } from "../src/jobs.ts";
+import { describeSchedule, type Job, JobReported, Jobs, nextRun, NOTHING, parseSchedule, recordReport, type Report } from "../src/jobs.ts";
 import { setTimeZone } from "../src/time.ts";
 
 type Steps = Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0];
@@ -221,4 +221,41 @@ test("a repeating job runs again until it's cancelled", async (t) => {
 	}, context);
 	const { outcome } = (await host.harness.waitForTask(taskId as never, context)).state as { outcome: unknown };
 	assert.deepEqual(outcome, { status: "completed", result: "cancelled" });
+});
+
+test("a job keeps its last 3 reports, each cut short", () => {
+	const job = { quietRuns: 2 } as Job;
+	for (const text of ["one", "two", "three", "x".repeat(1000)]) recordReport(job, 1, text);
+	assert.deepEqual(job.recent!.slice(0, 2).map((r) => r.text), ["two", "three"]);
+	assert.equal(job.recent![2]!.text, `${"x".repeat(800)}…`);
+	assert.equal(job.quietRuns, 0);
+});
+
+test("a watch's runs see its earlier reports and the quiet runs since", async (t) => {
+	const seen: string[] = [];
+	const reply = (text: string): Steps[number] => (ctx) => {
+		seen.push(JSON.stringify(ctx.messages.filter((m) => m.role === "user")));
+		return fauxAssistantMessage(fauxText(text));
+	};
+	const { host, reports } = await start(t, ["Disk at 87%.", NOTHING, "Disk at 96%.", ...Array<string>(10).fill(NOTHING)].map(reply));
+	t.after(() => host.harness.close(context));
+	const step = 0.01; // minutes; the tool's 15-minute floor doesn't apply here
+	const firstAt = Date.now() + 200;
+	const taskId = await host.root.commit(async (tx) => {
+		const id = await tx.createTask(host.jobs.JobTask, { title: "Disks", firstAt }, { ownership: { kind: "conversation" }, background: true });
+		(await tx.doc(Jobs)).items.push({ taskId: id as number, title: "Disks", instruction: "Check the disks.", schedule: { kind: "every", minutes: step, from: firstAt }, mode: "watch", createdAt: Date.now(), nextAt: firstAt, runs: 0 });
+		return id;
+	}, context);
+	await until(() => (reports.length >= 2 ? true : undefined));
+	const job = (await host.harness.snapshot(Jobs, context))!.items.find((j) => j.taskId === (taskId as number))!;
+	await host.root.commit(async (tx) => {
+		const doc = await tx.doc(Jobs);
+		doc.items = doc.items.filter((j) => j.taskId !== (taskId as number));
+	}, context);
+
+	assert.doesNotMatch(seen[0]!, /earlier answers/);
+	assert.match(seen[1]!, /Your last report for this job.*Disk at 87%\..*Don't report again/);
+	assert.doesNotMatch(seen[1]!, /nothing to report\./);
+	assert.match(seen[2]!, /Disk at 87%\..*Since the last one, 1 run had nothing to report\./);
+	assert.deepEqual(job.recent!.map((r) => r.text), ["Disk at 87%.", "Disk at 96%."]);
 });

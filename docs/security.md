@@ -87,6 +87,7 @@ The web view trusts the identity header Tailscale Serve adds, and listens only o
 - A self-written tool's fetch to a host you've always allowed can carry data in its URL without asking, as `fetch_url` can.
 - Alert text comes from monitoring systems, and the run that investigates it has only read-only tools, so it can't write notes, set reminders or jobs, use a workspace or load tools. Its `fetch_url` calls still ask for a new host.
 - An approved job runs its instruction later with the tools of an ordinary run. Its own calls to workspaces or new hosts still ask, but the instruction itself isn't checked again.
+- A job's runs see its last three reports, which can repeat text an earlier run read from outside. They're labelled as gaidin's own earlier answers, not instructions.
 
 ## Rules
 
