@@ -1,12 +1,37 @@
 // Slack surface. One channel is the root conversation, the same one the CLI talks to. A thread on any
 // message in it is a fork of the root at that message's answer; later replies in the thread continue the
 // fork. Socket Mode, so the host needs no inbound port.
-import { type ConversationId, type Conversation, defineDoc, type EntryId, type Harness } from "@earendil-works/pi-durable";
+//
+// Files sent with a message are downloaded when it goes to the model. Images go to the model with the text;
+// other files, such as PDFs, are saved in the sandbox's uploads/ directory and the message says where.
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { ImageContent } from "@earendil-works/pi-ai";
+import { type ConversationId, type Conversation, defineDoc, type EntryId, type Harness, type UserInput } from "@earendil-works/pi-durable";
 import type { ApprovalService } from "./approvals.ts";
 import { assistantText, context } from "./host.ts";
 import { stamp } from "./time.ts";
 
-type Pending = { conversationId: number; content: string; threadTs?: string };
+/** The fields of a file in a Slack message this uses. */
+export type SlackFile = { name?: string; mimetype?: string; size?: number; url_private?: string; thumb_1024?: string };
+
+type Pending = { conversationId: number; content: string; threadTs?: string; files?: SlackFile[] };
+
+/** Downloads a Slack file's private URL with the bot token. */
+export type SlackDownload = (url: string) => Promise<Buffer>;
+
+// The model takes images up to 5 MB; a bigger one goes as Slack's 1024-pixel thumbnail.
+const MAX_IMAGE = 3_750_000;
+const MAX_FILE = 20_000_000;
+
+/** The image type from the bytes themselves, which a thumbnail's URL doesn't say, or nothing for another kind of file. */
+function imageType(data: Buffer): string | undefined {
+	if (data.subarray(0, 4).toString("hex") === "89504e47") return "image/png";
+	if (data.subarray(0, 3).toString("hex") === "ffd8ff") return "image/jpeg";
+	if (data.subarray(0, 4).toString("latin1") === "GIF8") return "image/gif";
+	if (data.subarray(0, 4).toString("latin1") === "RIFF" && data.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
+	return undefined;
+}
 
 /** Slack bookkeeping, keyed by message ts. Durable, so a restart still posts answers it owes. */
 export const SlackState = defineDoc<{
@@ -52,6 +77,7 @@ export type SlackMessage = {
 	thread_ts?: string;
 	subtype?: string;
 	bot_id?: string;
+	files?: SlackFile[];
 };
 
 /** Posts markdown and returns the ts of each message it made. */
@@ -70,6 +96,8 @@ export function createSlackSurface(options: {
 	explain?: (reason: string | undefined) => string | undefined;
 	/** Pending questions and approvals: a message can answer a question, and a new message skips an approval. */
 	approvals?: ApprovalService;
+	/** How files in messages are fetched, and the sandbox directory other files are saved in. Without them, files are left out. */
+	files?: { download: SlackDownload; sandbox: string };
 }) {
 	const { harness, root, post, channel, user, retryDelayMs = 1000 } = options;
 	const delivering = new Set<string>();
@@ -83,16 +111,17 @@ export function createSlackSurface(options: {
 	 * event; the answer is posted in the background.
 	 */
 	function receive(event: SlackMessage): Promise<void> {
-		if (event.type !== "message" || event.subtype !== undefined || event.bot_id !== undefined) return Promise.resolve();
-		if (event.channel !== channel || event.user !== user || !event.text) return Promise.resolve();
-		const result = accepting.then(() => accept(event.ts, event.text!, event.thread_ts === event.ts ? undefined : event.thread_ts));
+		if (event.type !== "message" || (event.subtype !== undefined && event.subtype !== "file_share") || event.bot_id !== undefined) return Promise.resolve();
+		const files = options.files === undefined ? [] : (event.files ?? []).filter((f) => f.url_private !== undefined);
+		if (event.channel !== channel || event.user !== user || (!event.text && files.length === 0)) return Promise.resolve();
+		const result = accepting.then(() => accept(event.ts, event.text ?? "", event.thread_ts === event.ts ? undefined : event.thread_ts, files));
 		accepting = result.catch(() => {});
 		return result.then((ok) => {
 			if (ok) void deliver(event.ts);
 		});
 	}
 
-	async function accept(ts: string, text: string, threadTs: string | undefined): Promise<boolean> {
+	async function accept(ts: string, text: string, threadTs: string | undefined, files: SlackFile[]): Promise<boolean> {
 		const state = await read();
 		// A redelivered event: already answered, or already on its way.
 		if (ts in state.answers || state.consumed?.[ts] !== undefined) return false;
@@ -141,7 +170,7 @@ export function createSlackSurface(options: {
 			return false;
 		}
 		// The time is fixed here, so a resubmission after a restart sends the same text.
-		const pending: Pending = { conversationId, content: stamp(text), ...(threadTs === undefined ? {} : { threadTs }) };
+		const pending: Pending = { conversationId, content: stamp(text), ...(threadTs === undefined ? {} : { threadTs }), ...(files.length === 0 ? {} : { files }) };
 		await root.commit(async (tx) => {
 			(await tx.doc(SlackState)).pending[ts] = pending;
 		}, context);
@@ -159,7 +188,8 @@ export function createSlackSurface(options: {
 				: await harness.conversation(pending.conversationId as ConversationId, context);
 			if (conversation === undefined) throw new Error(`conversation ${pending.conversationId} is gone`);
 			// The request id makes this idempotent: after a restart it finds the run already admitted.
-			const submission = await conversation.submit({ type: "input", content: pending.content, requestId: `slack:${ts}` }, context);
+			const content = pending.files === undefined ? pending.content : await withFiles(pending.content, pending.files, ts);
+			const submission = await conversation.submit({ type: "input", content, requestId: `slack:${ts}` }, context);
 			const settled = await submission.wait(context);
 			let answer: EntryId | undefined;
 			let text: string;
@@ -184,6 +214,36 @@ export function createSlackSurface(options: {
 		} finally {
 			delivering.delete(ts);
 		}
+	}
+
+	/** The message with its images, and a note of where its other files are saved or why one couldn't be fetched. */
+	async function withFiles(text: string, files: SlackFile[], ts: string): Promise<UserInput> {
+		const { download, sandbox } = options.files!;
+		const images: ImageContent[] = [];
+		const notes: string[] = [];
+		for (const file of files) {
+			const name = file.name ?? "file";
+			try {
+				const image = file.mimetype?.startsWith("image/") === true;
+				const url = image && (file.size ?? 0) > MAX_IMAGE ? (file.thumb_1024 ?? file.url_private!) : file.url_private!;
+				if (!image && (file.size ?? 0) > MAX_FILE) throw new Error(`it's over ${MAX_FILE / 1_000_000} MB`);
+				const data = await download(url);
+				const mimeType = imageType(data);
+				if (image && mimeType !== undefined && data.length <= MAX_IMAGE) {
+					images.push({ type: "image", data: data.toString("base64"), mimeType });
+					continue;
+				}
+				// The same name each time, so delivering again after a restart overwrites it.
+				const path = `uploads/${ts}-${name.replace(/[^\w.-]+/g, "_")}`;
+				mkdirSync(join(sandbox, "uploads"), { recursive: true });
+				writeFileSync(join(sandbox, path), data);
+				notes.push(`${name} is saved as ${path} (${file.mimetype ?? "unknown type"}, ${Math.ceil(data.length / 1000)} KB)`);
+			} catch (error) {
+				notes.push(`${name} couldn't be fetched: ${error instanceof Error ? error.message : error}`);
+			}
+		}
+		const note = notes.length === 0 ? "" : `\n\n[Files from Slack: ${notes.join("; ")}. Read them with the file tools; for a PDF, run pdftotext FILE - in bash.]`;
+		return images.length === 0 ? `${text}${note}` : [{ type: "text", text: `${text}${note}` }, ...images];
 	}
 
 	async function postWithRetry(threadTs: string | undefined, text: string): Promise<string[]> {
@@ -223,6 +283,16 @@ export function slackApi(botToken: string): SlackApi {
 }
 
 /** chat.postMessage with Slack rendering the markdown. Longer answers go out in several messages. */
+export function slackDownload(botToken: string): SlackDownload {
+	return async (url) => {
+		const response = await fetch(url, { headers: { Authorization: `Bearer ${botToken}` }, signal: AbortSignal.timeout(30_000) });
+		if (!response.ok) throw new Error(`Slack answered ${response.status}`);
+		// Without the files:read scope, Slack answers with its sign-in page.
+		if (response.headers.get("content-type")?.startsWith("text/html")) throw new Error("Slack sent a web page; the app needs the files:read scope");
+		return Buffer.from(await response.arrayBuffer());
+	};
+}
+
 export function slackPoster(api: SlackApi): SlackPost {
 	return async (channel, markdown, threadTs) => {
 		const posted: string[] = [];

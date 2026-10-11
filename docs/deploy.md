@@ -38,7 +38,7 @@ pnpm serve
 4. Copy `deploy/config.example.json` to `/etc/gaidin/config.json` and fill it in. `setup.sh` makes it readable by the service only (`root:gaidin`, mode 640).
 5. `gaidin doctor`, then run `setup.sh` again to start the service, and check `journalctl -u gaidin`.
 
-`setup.sh` is safe to rerun and is how you update: it pulls, installs dependencies, installs bubblewrap and its AppArmor profile, allows memory overcommit (Oxlint, which checks [self-written tools](tools.md#self-written-tools), reserves 4 GiB of address space per thread), writes the unit and the `gaidin` command, creates the workspace key, restarts the service, and runs `tailscale serve` for the web view when Tailscale is logged in. When a change touches `setup.sh` itself, run it twice: the first run still executes the old copy.
+`setup.sh` is safe to rerun and is how you update: it pulls, installs dependencies, installs bubblewrap and its AppArmor profile and `poppler-utils` (for PDFs sent in Slack), allows memory overcommit (Oxlint, which checks [self-written tools](tools.md#self-written-tools), reserves 4 GiB of address space per thread), writes the unit and the `gaidin` command, creates the workspace key, restarts the service, and runs `tailscale serve` for the web view when Tailscale is logged in. When a change touches `setup.sh` itself, run it twice: the first run still executes the old copy.
 
 On the VM:
 

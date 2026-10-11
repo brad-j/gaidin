@@ -45,6 +45,8 @@ install -d -o gaidin -g gaidin -m 700 "$home/keys"
 
 # The tools' sandbox (src/sandbox.ts). The server won't start without bwrap.
 command -v bwrap >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bubblewrap >/dev/null
+# pdftotext, for PDFs sent in Slack (src/slack.ts).
+command -v pdftotext >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq poppler-utils >/dev/null
 install -m 644 "$app/deploy/vm/bwrap.apparmor" /etc/apparmor.d/bwrap
 apparmor_parser -r /etc/apparmor.d/bwrap
 

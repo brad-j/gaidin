@@ -13,7 +13,7 @@ import { type AgentEvent, type EntryId, watchEvents } from "@earendil-works/pi-d
 import type { Config } from "./config.ts";
 import { assistantText, context, openHost } from "./host.ts";
 import { ReminderFired } from "./reminders.ts";
-import { createSlackSurface, recordPosted, slackApi, slackPoster, socketMode } from "./slack.ts";
+import { createSlackSurface, recordPosted, slackApi, slackDownload, slackPoster, socketMode } from "./slack.ts";
 import { createSlackApprovals } from "./slack-approvals.ts";
 import { stamp } from "./time.ts";
 import { createWebServer } from "./web.ts";
@@ -56,13 +56,14 @@ export async function serve(config: Config) {
 		process.exit(1);
 	}
 
-	const { harness, root, switchable, approvals, setDeliver, setBudgetNotify, budget, explain, timeline } = await openHost({ config });
+	const { harness, root, switchable, approvals, setDeliver, setBudgetNotify, budget, explain, timeline, sandbox } = await openHost({ config });
 
 	let slack: { stop(): void } | undefined;
 	if (config.slack !== undefined) {
 		const { botToken, appToken, channelId: channel, userId: user } = config.slack;
 		const api = slackApi(botToken);
-		const surface = createSlackSurface({ harness, root, post: slackPoster(api), channel, user, explain, approvals });
+		const files = { download: slackDownload(botToken), sandbox };
+		const surface = createSlackSurface({ harness, root, post: slackPoster(api), channel, user, explain, approvals, files });
 		const approvalButtons = createSlackApprovals({ harness, approvals, api, channel, user });
 		void surface.recover();
 		approvalButtons.recover().catch((error) => console.error("[slack] approvals:", error));

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -170,4 +170,50 @@ test("a thread on a job's report forks the run's conversation, not the root", as
 	await slack.receive(message("2.0", "about that", { thread_ts: "job.1" }));
 	await until(() => posts.length === 1);
 	assert.deepEqual([posts[0]!.text, posts[0]!.threadTs], ["job prompt / about that", "job.1"]);
+});
+
+test("images in a message go to the model, other files are saved in the sandbox, and one that can't be fetched is noted", async (t) => {
+	const dir = tempDir(t);
+	let seen: unknown;
+	const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
+	faux.setResponses([
+		(ctx) => {
+			seen = ctx.messages.findLast((m) => m.role === "user")?.content;
+			return fauxAssistantMessage(fauxText("Got them."));
+		},
+	]);
+	const models = createModels();
+	models.setProvider(faux.provider);
+	const host = await openHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" } });
+	t.after(() => host.harness.close(context));
+	const png = Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), Buffer.from("pixels")]);
+	const downloads: string[] = [];
+	const download = async (url: string) => {
+		downloads.push(url);
+		if (url === "u/gone") throw new Error("Slack answered 404");
+		return url === "u/receipt" ? Buffer.from("%PDF-1.4 receipt") : png;
+	};
+	const { posts, post } = recorder();
+	const slack = createSlackSurface({ harness: host.harness, root: host.root, post, channel: CHANNEL, user: BRAD, files: { download, sandbox: host.sandbox } });
+
+	await slack.receive(message("5.0", "what are these?", {
+		subtype: "file_share",
+		files: [
+			{ name: "shot.png", mimetype: "image/png", size: 14, url_private: "u/shot" },
+			{ name: "huge.png", mimetype: "image/png", size: 9_000_000, url_private: "u/huge", thumb_1024: "u/huge-1024" },
+			{ name: "receipt 1.pdf", mimetype: "application/pdf", size: 16, url_private: "u/receipt" },
+			{ name: "gone.txt", mimetype: "text/plain", size: 3, url_private: "u/gone" },
+		],
+	}));
+	await until(() => posts.length === 1);
+
+	assert.deepEqual(downloads, ["u/shot", "u/huge-1024", "u/receipt", "u/gone"]);
+	const [text, ...images] = seen as { type: string; text?: string; data?: string; mimeType?: string }[];
+	assert.match(text!.text!, /what are these\?\n\n\[Files from Slack: receipt 1\.pdf is saved as uploads\/5\.0-receipt_1\.pdf \(application\/pdf, 1 KB\); gone\.txt couldn't be fetched: Slack answered 404\./);
+	assert.deepEqual(images, [png, png].map((data) => ({ type: "image", data: data.toString("base64"), mimeType: "image/png" })));
+	assert.equal(readFileSync(join(host.sandbox, "uploads", "5.0-receipt_1.pdf"), "utf8"), "%PDF-1.4 receipt");
+
+	// A file with no text is a message too.
+	await slack.receive(message("6.0", "", { subtype: "file_share", files: [{ name: "a.png", mimetype: "image/png", size: 14, url_private: "u/a" }] }));
+	await until(() => posts.length === 2);
 });
