@@ -20,6 +20,9 @@ export type HomelabConfig = {
 /** The search backend web_search uses. */
 export type SearchConfig = { provider: "tavily"; apiKey: string };
 
+/** The Slack app's two tokens, the gaidin channel, and the owner's Slack user. */
+export type SlackConfig = { botToken: string; appToken: string; channelId: string; userId: string };
+
 export type Config = {
 	/** The file the settings came from, if any. */
 	file?: string;
@@ -32,7 +35,7 @@ export type Config = {
 	alerts?: { url: string; token?: string };
 	/** `icon` is the URL of a PNG or JPEG the ntfy app shows beside each push. */
 	ntfy?: { url: string; token?: string; icon?: string };
-	slack?: { botToken: string; appToken: string; channelId: string; userId: string };
+	slack?: SlackConfig;
 	/** `url` is where the owner reaches the web view, for links and buttons in pushes. */
 	web?: { user: string; port: number; url?: string };
 	sandbox: "bwrap" | "none";

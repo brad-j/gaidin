@@ -17,7 +17,7 @@
 | `approvals.ts` | the approval hook and `ask_owner`; each tool's rules are its guard (`guards.ts`) |
 | `redact.ts` | the redaction hook, installed last so it sees every result |
 
-The surfaces are separate: `server.ts` wires the socket, Slack (`slack.ts` for the owner's messages and threads, `slack-notifications.ts` for what gaidin posts and its buttons) and the web view (`web.ts`, `web/`), then starts the host. `sandbox.ts` is the tools' execution environment.
+The surfaces are separate: `server.ts` wires the socket, Slack and the web view (`web.ts`, `web/`), then starts the host. Slack is `slack/`, built by one call, `createSlack(settings, host)`, which checks once that a message or button press is the owner's in the gaidin channel before handing it to `conversation.ts` (the owner's messages and threads) or `notifications.ts` (what gaidin posts and its buttons). It reaches Slack through `api.ts` and `socket.ts`; tests replace both (`test/fake-slack.ts`). `sandbox.ts` is the tools' execution environment.
 
 Everything gaidin tells the owner unprompted, a fired reminder, a job's report, a paused job, a budget warning or a request for approval, is a notice handed to `notifications.ts`, which holds the table of which ways each kind goes: Slack, Web Push (`push.ts`) and ntfy (`ntfy.ts`), one adapter each. A new kind of notice is a case there and in each adapter. Tests give `openHost` fake adapters with the `adapters` option, and `startHost` opens and starts a host for callers with no Slack to attach first.
 

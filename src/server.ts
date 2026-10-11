@@ -1,6 +1,6 @@
 // `gaidin serve`: owns the SQLite file and runs the agent. Clients talk to it over a Unix socket in the
-// data directory, one JSON object per line. With Slack in the settings it also runs the Slack surface
-// (src/slack.ts), and with `web` the web view (src/web.ts).
+// data directory, one JSON object per line. With Slack in the settings it also runs Slack (src/slack/),
+// and with `web` the web view (src/web.ts).
 //
 // client → server: {"type":"ask","content":"...","requestId":"..."} or {"type":"watch"}
 // server → client: {"type":"line","text":"..."} and, after an ask settles, {"type":"done","status":"..."}
@@ -12,11 +12,9 @@ import { createInterface } from "node:readline";
 import { type AgentEvent, type EntryId, watchEvents } from "@earendil-works/pi-durable";
 import type { Config } from "./config.ts";
 import { assistantText, context, openHost } from "./host.ts";
-import { resumeJob } from "./jobs.ts";
 import { ReminderFired } from "./reminders.ts";
-import { createSlackSurface, slackApi, slackDownload, slackPoster, socketMode } from "./slack.ts";
 import { followAlerts } from "./alerts.ts";
-import { createSlackNotifications } from "./slack-notifications.ts";
+import { createSlack } from "./slack/index.ts";
 import { literal, object, optional, ParseError, parseJson, string } from "./parse.ts";
 import { stamp } from "./time.ts";
 import { createWebServer } from "./web.ts";
@@ -80,33 +78,15 @@ export async function serve(config: Config) {
 	}
 
 	const host = await openHost({ config });
-	const { harness, root, switchable, approvals, budget, explain, timeline, sandbox, reminders, jobs, push } = host;
+	const { harness, root, switchable, approvals, budget, explain, timeline, reminders, jobs, push } = host;
 	const alerts = config.alerts === undefined ? undefined : followAlerts({ ...config.alerts, root, owner: config.owner, addJob: jobs.addJob });
 
-	let slack: { stop(): void } | undefined;
-	if (config.slack !== undefined) {
-		const { botToken, appToken, channelId: channel, userId: user } = config.slack;
-		const api = slackApi(botToken);
-		const files = { download: slackDownload(botToken), sandbox };
-		const surface = createSlackSurface({ harness, root, post: slackPoster(api), channel, user, explain, approvals, files });
-		const notices = createSlackNotifications({
-			harness,
-			root,
-			approvals,
-			api,
-			channel,
-			user,
-			snooze: (id, minutes) => root.commit((tx) => reminders.snooze(tx, id, minutes), context),
-			resume: (id) => root.commit((tx) => resumeJob(tx, id), context),
-		});
-		void surface.recover();
-		notices.recover().catch((error) => console.error("[slack] approvals:", error));
-		slack = socketMode(appToken, { event: surface.receive, action: notices.action });
-		console.error(`gaidin on Slack in ${channel}`);
-		await host.start(notices.adapter);
-	} else {
-		await host.start();
+	const slack = config.slack === undefined ? undefined : createSlack(config.slack, host);
+	if (slack !== undefined) {
+		slack.start();
+		console.error(`gaidin on Slack in ${config.slack!.channelId}`);
 	}
+	await host.start(slack?.adapter);
 
 	const web = config.web === undefined
 		? undefined

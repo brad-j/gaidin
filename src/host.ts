@@ -231,6 +231,8 @@ export async function openHost(options: HostOptions = {}) {
 	return { harness, root, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, sandbox, push, start };
 }
 
+export type Host = Awaited<ReturnType<typeof openHost>>;
+
 /** openHost, then start, for callers with no Slack to give it. */
 export async function startHost(options: HostOptions = {}) {
 	const host = await openHost(options);

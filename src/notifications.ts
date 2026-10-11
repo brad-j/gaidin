@@ -1,6 +1,6 @@
 // Notifications: everything gaidin tells the owner without being asked, and which way each goes. Reminders,
 // job reports, a paused job, budget warnings and requests for approval are handed here as notices; the
-// adapters for Slack (slack-notifications.ts), Web Push (push.ts) and ntfy (ntfy.ts) each write a notice
+// adapters for Slack (slack/notifications.ts), Web Push (push.ts) and ntfy (ntfy.ts) each write a notice
 // their own way. docs/surfaces.md#notifications describes the routes for the owner.
 //
 //   reminder        Web Push and ntfy, which must reach the owner; Slack too, with snooze buttons

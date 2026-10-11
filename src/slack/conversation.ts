@@ -1,6 +1,6 @@
-// Slack surface. One channel is the root conversation, the same one the CLI talks to. A thread on any
-// message in it is a fork of the root at that message's answer; later replies in the thread continue the
-// fork. Socket Mode, so the host needs no inbound port.
+// The owner's messages in Slack. One channel is the root conversation, the same one the CLI talks to. A
+// thread on any message in it is a fork of the root at that message's answer; later replies in the thread
+// continue the fork. index.ts hands this only the owner's messages in that channel.
 //
 // Files sent with a message are downloaded when it goes to the model. Images go to the model with the text;
 // other files, such as PDFs, are saved in the sandbox's uploads/ directory and the message says where.
@@ -8,20 +8,13 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { type Conversation, defineDoc, type EntryId, type Harness, type UserInput } from "@earendil-works/pi-durable";
-import type { ApprovalService } from "./approvals.ts";
-import { assistantText, context } from "./host.ts";
-import { array, boolean, isObject, json, type Json, number, object, optional, parse, ParseError, parseJson, string } from "./parse.ts";
-import { stamp } from "./time.ts";
-import { conversationId as toConversationId, entryId } from "./ids.ts";
-
-/** The fields of a file in a Slack message this uses. */
-export type SlackFile = { name?: string; mimetype?: string; size?: number; url_private?: string; thumb_1024?: string };
-const slackFile = object({ name: optional(string), mimetype: optional(string), size: optional(number), url_private: optional(string), thumb_1024: optional(string) });
+import type { ApprovalService } from "../approvals.ts";
+import { assistantText, context } from "../host.ts";
+import { stamp } from "../time.ts";
+import { conversationId as toConversationId, entryId } from "../ids.ts";
+import type { SlackDownload, SlackFile, SlackMessage, SlackPost } from "./api.ts";
 
 type Pending = { conversationId: number; content: string; threadTs?: string; files?: SlackFile[] };
-
-/** Downloads a Slack file's private URL with the bot token. */
-export type SlackDownload = (url: string) => Promise<Buffer>;
 
 // The model takes images up to 5 MB; a bigger one goes as Slack's 1024-pixel thumbnail.
 const MAX_IMAGE = 3_750_000;
@@ -70,41 +63,13 @@ export async function recordPosted(root: Conversation, posted: readonly string[]
 	}, context);
 }
 
-/** The fields of a Slack `message` event this uses. */
-export type SlackMessage = {
-	type: string;
-	channel?: string;
-	user?: string;
-	text?: string;
-	ts: string;
-	thread_ts?: string;
-	subtype?: string;
-	bot_id?: string;
-	files?: SlackFile[];
-};
-const slackMessage = object({
-	type: string,
-	channel: optional(string),
-	user: optional(string),
-	text: optional(string),
-	ts: string,
-	thread_ts: optional(string),
-	subtype: optional(string),
-	bot_id: optional(string),
-	files: optional(array(slackFile)),
-});
-
-/** Posts markdown and returns the ts of each message it made. */
-export type SlackPost = (channel: string, markdown: string, threadTs?: string) => Promise<string[]>;
-
 const POST_ATTEMPTS = 5;
 
-export function createSlackSurface(options: {
+export function createSlackConversation(options: {
 	harness: Harness;
 	root: Conversation;
 	post: SlackPost;
 	channel: string;
-	user: string;
 	retryDelayMs?: number;
 	/** Says why a run went unanswered, when there's more to say than its reason, such as the spend limit. */
 	explain?: (reason: string | undefined) => string | undefined;
@@ -113,7 +78,7 @@ export function createSlackSurface(options: {
 	/** How files in messages are fetched, and the sandbox directory other files are saved in. Without them, files are left out. */
 	files?: { download: SlackDownload; sandbox: string };
 }) {
-	const { harness, root, post, channel, user, retryDelayMs = 1000 } = options;
+	const { harness, root, post, channel, retryDelayMs = 1000 } = options;
 	const delivering = new Set<string>();
 	// Accepting is serialized, so two quick replies in a new thread make one fork.
 	let accepting: Promise<unknown> = Promise.resolve();
@@ -127,7 +92,7 @@ export function createSlackSurface(options: {
 	function receive(event: SlackMessage): Promise<void> {
 		if (event.type !== "message" || (event.subtype !== undefined && event.subtype !== "file_share") || event.bot_id !== undefined) return Promise.resolve();
 		const files = options.files === undefined ? [] : (event.files ?? []).filter((f) => f.url_private !== undefined);
-		if (event.channel !== channel || event.user !== user || (!event.text && files.length === 0)) return Promise.resolve();
+		if (!event.text && files.length === 0) return Promise.resolve();
 		const result = accepting.then(() => accept(event.ts, event.text ?? "", event.thread_ts === event.ts ? undefined : event.thread_ts, files));
 		accepting = result.catch(() => {});
 		return result.then((ok) => {
@@ -281,180 +246,3 @@ export function createSlackSurface(options: {
 	return { receive, recover };
 }
 
-/** Calls a Slack Web API method with the bot token; throws unless Slack answers ok. */
-export type SlackApi = (method: string, body: { readonly [field: string]: Json | undefined }) => Promise<{ ts?: string }>;
-
-export function slackApi(botToken: string): SlackApi {
-	return async (method, body) => {
-		const response = await fetch(`https://slack.com/api/${method}`, {
-			method: "POST",
-			headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json; charset=utf-8" },
-			body: JSON.stringify(body),
-			signal: AbortSignal.timeout(15_000),
-		});
-		const answer = parse(await response.json(), object({ ok: boolean, error: optional(string), ts: optional(string) }), `Slack's answer to ${method}`);
-		if (!answer.ok) throw new Error(`${method}: ${answer.error ?? response.status}`);
-		return answer;
-	};
-}
-
-export function slackDownload(botToken: string): SlackDownload {
-	return async (url) => {
-		// The URL comes from the event; the token goes only where Slack keeps files.
-		if (!URL.canParse(url) || new URL(url).origin !== "https://files.slack.com") throw new Error(`Files are downloaded only from https://files.slack.com, not ${url}`);
-		const response = await fetch(url, { headers: { Authorization: `Bearer ${botToken}` }, signal: AbortSignal.timeout(30_000) });
-		if (!response.ok) throw new Error(`Slack answered ${response.status}`);
-		// Without the files:read scope, Slack answers with its sign-in page.
-		if (response.headers.get("content-type")?.startsWith("text/html")) throw new Error("Slack sent a web page; the app needs the files:read scope");
-		return Buffer.from(await response.arrayBuffer());
-	};
-}
-
-/** chat.postMessage with Slack rendering the markdown. Longer answers go out in several messages. */
-export function slackPoster(api: SlackApi): SlackPost {
-	return async (channel, markdown, threadTs) => {
-		const posted: string[] = [];
-		for (const chunk of chunks(markdown, 12_000)) {
-			const { ts } = await api("chat.postMessage", { channel, markdown_text: chunk, thread_ts: threadTs });
-			if (ts === undefined) throw new Error("chat.postMessage: no ts");
-			posted.push(ts);
-		}
-		return posted;
-	};
-}
-
-function chunks(text: string, size: number): string[] {
-	const out: string[] = [];
-	let rest = text;
-	while (rest.length > size) {
-		const cut = rest.lastIndexOf("\n", size);
-		const at = cut > size / 2 ? cut : size;
-		out.push(rest.slice(0, at));
-		rest = rest.slice(at).replace(/^\n/, "");
-	}
-	out.push(rest);
-	return out;
-}
-
-/** The fields of a Slack block_actions payload (a button press) this uses. */
-export type SlackAction = {
-	type: string;
-	user?: { id: string };
-	channel?: { id: string };
-	/** The message the button is on, with its blocks as Slack sent them. */
-	message?: { ts: string; text?: string; blocks?: Json[] };
-	actions?: { action_id: string; value?: string }[];
-};
-const slackAction = object({
-	type: string,
-	user: optional(object({ id: string })),
-	channel: optional(object({ id: string })),
-	message: optional(object({ ts: string, text: optional(string), blocks: optional(array(json)) })),
-	actions: optional(array(object({ action_id: string, value: optional(string) }))),
-});
-/** A Socket Mode frame: hello, disconnect, or an envelope to ack, holding an event or a button press. */
-const frame = object({ type: string, envelope_id: optional(string), payload: optional(json) });
-
-/**
- * Keeps a Socket Mode connection open and hands each message event to `event` and each button press to
- * `action`, acking once they resolve. A new connection opens before the old one closes: on Slack's
- * disconnect notices, and hourly in case a connection dies without either side noticing.
- */
-export function socketMode(appToken: string, handlers: { event: (event: SlackMessage) => Promise<void>; action?: (action: SlackAction) => Promise<void> }) {
-	let stopped = false;
-	let failures = 0;
-	const sockets = new Set<WebSocket>();
-
-	async function open(): Promise<void> {
-		if (stopped) return;
-		let url: string;
-		try {
-			const response = await fetch("https://slack.com/api/apps.connections.open", {
-				method: "POST",
-				headers: { Authorization: `Bearer ${appToken}`, "Content-Type": "application/x-www-form-urlencoded" },
-				signal: AbortSignal.timeout(15_000),
-			});
-			const body = parse(await response.json(), object({ ok: boolean, url: optional(string), error: optional(string) }), "Slack's answer to apps.connections.open");
-			if (!body.ok || body.url === undefined) throw new Error(`apps.connections.open: ${body.error ?? response.status}`);
-			url = body.url;
-		} catch (error) {
-			retry(error);
-			return;
-		}
-		const socket = new WebSocket(url);
-		sockets.add(socket);
-		let replaced = false;
-		// Opens the next connection, then closes this one once Slack has had time to switch over.
-		const replace = () => {
-			if (replaced) return;
-			replaced = true;
-			void open();
-			setTimeout(() => socket.close(), 10_000).unref();
-		};
-		const refresh = setTimeout(replace, 60 * 60_000);
-		refresh.unref();
-		socket.addEventListener("message", (message) => {
-			let data;
-			try {
-				data = parseJson(String(message.data), frame, "a Socket Mode frame");
-			} catch (error) {
-				console.error("[slack]", error instanceof Error ? error.message : error);
-				return;
-			}
-			if (data.type === "hello") {
-				failures = 0;
-				return;
-			}
-			if (data.type === "disconnect") {
-				replace();
-				return;
-			}
-			if (data.envelope_id === undefined) return;
-			const ack = () => {
-				if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ envelope_id: data.envelope_id }));
-			};
-			let event: SlackMessage | undefined;
-			try {
-				if (data.type === "interactive" && handlers.action !== undefined) {
-					const payload = parse(data.payload, slackAction, "a button press");
-					if (payload.type !== "block_actions") return ack();
-					// Slack doesn't resend a button press, and wants its ack within 3 seconds either way.
-					handlers.action(payload).catch((error) => console.error("[slack] action failed:", error)).finally(ack);
-					return;
-				}
-				const raw = data.type === "events_api" && isObject(data.payload) ? data.payload.event : undefined;
-				event = raw === undefined ? undefined : parse(raw, slackMessage, "a Slack event");
-			} catch (error) {
-				// Sent again, it would read no better.
-				if (!(error instanceof ParseError)) throw error;
-				console.error("[slack]", error.message);
-				return ack();
-			}
-			if (event === undefined) return ack();
-			// Not acked on failure, so Slack sends it again.
-			handlers.event(event).then(ack, (error) => console.error("[slack] event failed:", error));
-		});
-		socket.addEventListener("close", () => {
-			clearTimeout(refresh);
-			sockets.delete(socket);
-			if (!replaced) retry(new Error("connection closed"));
-		});
-		socket.addEventListener("error", () => {});
-	}
-
-	function retry(cause: unknown) {
-		if (stopped) return;
-		failures += 1;
-		const delay = Math.min(1000 * 2 ** failures, 60_000);
-		console.error(`[slack] ${cause instanceof Error ? cause.message : cause}; reconnecting in ${delay / 1000}s`);
-		setTimeout(() => void open(), delay).unref();
-	}
-
-	void open();
-	return {
-		stop() {
-			stopped = true;
-			for (const socket of sockets) socket.close();
-		},
-	};
-}

@@ -153,19 +153,12 @@ test("a request open across a restart is the same request, and the call goes on 
 });
 
 test("Slack asks with buttons, in the thread for a forked conversation, and shows the outcome", async (t) => {
-	const { createSlackNotifications } = await import("../src/slack-notifications.ts");
-	const { SlackState } = await import("../src/slack.ts");
+	const { SlackState } = await import("../src/slack/index.ts");
+	const { fakeSlack, press: button } = await import("./fake-slack.ts");
 	const { host } = await start(t, [["a.test"], ["b.test"]], {}, false);
-	const calls: { method: string; body: Record<string, any> }[] = [];
-	let n = 0;
-	const api = async (method: string, body: Record<string, unknown>) => {
-		calls.push({ method, body: body as Record<string, any> });
-		return method === "chat.postMessage" ? { ts: `ask.${++n}` } : {};
-	};
-	const slack = createSlackNotifications({ harness: host.harness, root: host.root, approvals: host.approvals, api, channel: "C1", user: "U1", snooze: async () => undefined, resume: async () => undefined });
+	const { slack, calls, press: pressed } = fakeSlack(host);
 	await host.start(slack.adapter);
-	const press = (id: string, decision: string, user = "U1") =>
-		slack.action({ type: "block_actions", user: { id: user }, channel: { id: "C1" }, actions: [{ action_id: `gaidin-approve-${decision}`, value: JSON.stringify({ id, decision }) }] });
+	const press = (id: string, decision: string, user = "U1") => pressed(button(`gaidin-approve-${decision}`, JSON.stringify({ id, decision }), { user: { id: user } }));
 
 	// The root conversation asks at the top of the channel.
 	const run = await host.root.submit({ type: "input", content: "one" }, context);
@@ -182,7 +175,7 @@ test("Slack asks with buttons, in the thread for a forked conversation, and show
 	await run.wait(context);
 	await until(async () => (calls.some((c) => c.method === "chat.update") ? true : undefined));
 	const update = calls.find((c) => c.method === "chat.update")!;
-	assert.equal(update.body.ts, "ask.1");
+	assert.equal(update.body.ts, "bot.1");
 	assert.match(update.body.text, /Always allowed a\.test in Slack/);
 	assert.equal(update.body.blocks.length, 1);
 

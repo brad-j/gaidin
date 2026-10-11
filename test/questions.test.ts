@@ -11,8 +11,7 @@ import type { ApprovalRequest, ApprovalService } from "../src/approvals.ts";
 import { configFor } from "../src/config.ts";
 import { blockedRanges } from "../src/fetch.ts";
 import { context, openHost } from "../src/host.ts";
-import { createSlackSurface, type SlackPost } from "../src/slack.ts";
-import { createSlackNotifications } from "../src/slack-notifications.ts";
+import { fakeSlack, message } from "./fake-slack.ts";
 
 type Steps = Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0];
 
@@ -123,20 +122,8 @@ test("a question open across a restart is the same question, and the run continu
 test("Slack asks a question with buttons, and a reply in its thread answers it, once", async (t) => {
 	const host = await open(t, [call("ask_owner", { question: "Ship it?", choices: ["Ship", "Wait"] }), echoTool()], undefined, {}, false);
 	t.after(() => host.harness.close(context));
-	const calls: { method: string; body: Record<string, any> }[] = [];
-	let n = 0;
-	const api = async (method: string, body: Record<string, unknown>) => {
-		calls.push({ method, body: body as Record<string, any> });
-		return method === "chat.postMessage" ? { ts: `q.${++n}` } : {};
-	};
-	const slack = createSlackNotifications({ harness: host.harness, root: host.root, approvals: host.approvals, api, channel: "C1", user: "U1", snooze: async () => undefined, resume: async () => undefined });
+	const { slack, calls, posts, receive } = fakeSlack(host);
 	await host.start(slack.adapter);
-	const posted: string[] = [];
-	const post: SlackPost = async (_c, text) => {
-		posted.push(text);
-		return [`p.${posted.length}`];
-	};
-	const surface = createSlackSurface({ harness: host.harness, root: host.root, post, channel: "C1", user: "U1", approvals: host.approvals });
 
 	const run = await host.root.submit({ type: "input", content: "release" }, context);
 	const question = await pendingOne(host.approvals);
@@ -146,13 +133,13 @@ test("Slack asks a question with buttons, and a reply in its thread answers it, 
 	assert.match(JSON.stringify(ask.body.blocks), /Reply in this thread/);
 
 	// A reply in the question's thread is the answer; the same event again isn't taken twice.
-	const reply = { type: "message", channel: "C1", user: "U1", ts: "9.1", text: "Wait for Monday", thread_ts: "q.1" };
-	await surface.receive(reply);
+	const reply = message("9.1", "Wait for Monday", { thread_ts: ask.ts! });
+	await receive(reply);
 	await run.wait(context);
 	assert.match(await lastAnswer(host), /Brad answered: Wait for Monday/);
-	await surface.receive(reply);
+	await receive(reply);
 	await new Promise((r) => setTimeout(r, 200));
-	assert.deepEqual(posted, [], "the reply was also taken as a new message");
+	assert.deepEqual(posts(), [], "the reply was also taken as a new message");
 	const update = await until(async () => calls.find((c) => c.method === "chat.update"));
 	assert.match(update.body.text, /Ship it\?/);
 	assert.match(JSON.stringify(update.body.blocks), /Answered: Wait for Monday/);

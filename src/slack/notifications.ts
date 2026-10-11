@@ -2,17 +2,18 @@
 // Resume button, budget warnings, and requests for approval and questions with their buttons, all in the
 // gaidin channel. A request is asked in the thread when its conversation is a thread's fork, and its message
 // shows the outcome once it's decided anywhere; a reply in a report's thread continues that run's
-// conversation. Presses on these buttons come back through `action`, which takes the owner's alone, in the
-// channel. Messages the owner writes are slack.ts's.
+// conversation. Presses on these buttons come back through `action`; index.ts hands it only the owner's, in
+// the channel. Messages the owner writes are conversation.ts's.
 import type { Conversation, Harness } from "@earendil-works/pi-durable";
-import type { ApprovalRequest, ApprovalService, Decision } from "./approvals.ts";
-import { context } from "./host.ts";
-import type { Job, Report } from "./jobs.ts";
-import type { Adapter } from "./notifications.ts";
-import { integer, isObject, type Json, literal, object, optional, parseJson, string } from "./parse.ts";
-import type { Reminder } from "./reminders.ts";
-import { recordPosted, type SlackAction, type SlackApi, slackPoster, SlackState } from "./slack.ts";
-import { formatTime } from "./time.ts";
+import type { ApprovalRequest, ApprovalService, Decision } from "../approvals.ts";
+import { context } from "../host.ts";
+import type { Job, Report } from "../jobs.ts";
+import type { Adapter } from "../notifications.ts";
+import { integer, isObject, type Json, literal, object, optional, parseJson, string } from "../parse.ts";
+import type { Reminder } from "../reminders.ts";
+import { formatTime } from "../time.ts";
+import { type SlackAction, type SlackApi, slackPoster } from "./api.ts";
+import { recordPosted, SlackState } from "./conversation.ts";
 
 /** What an approval or answer button carries, as blocksFor writes it. */
 const buttonValue = object({ id: string, decision: optional(literal<Decision>("once", "always", "deny")), answer: optional(string) });
@@ -125,13 +126,12 @@ export function createSlackNotifications(options: {
 	approvals: ApprovalService;
 	api: SlackApi;
 	channel: string;
-	user: string;
 	/** Sets a fired reminder again, `minutes` from now. Nothing if it isn't one. */
 	snooze: (id: number, minutes: number) => Promise<Reminder | undefined>;
 	/** Resumes a paused job. Nothing if it isn't one. */
 	resume: (id: number) => Promise<Job | undefined>;
 }) {
-	const { harness, root, approvals, api, channel, user } = options;
+	const { harness, root, approvals, api, channel } = options;
 	const post = slackPoster(api);
 
 	/** The thread a conversation lives in, if it's a thread's fork. */
@@ -216,9 +216,8 @@ export function createSlackNotifications(options: {
 
 	return {
 		adapter,
-		/** A button press. Only the owner's, in the gaidin channel, count. */
+		/** A button press. */
 		async action(payload: SlackAction) {
-			if (payload.user?.id !== user || payload.channel?.id !== channel) return;
 			for (const action of payload.actions ?? []) await press(action, payload.message);
 		},
 		/** Asks for requests that came up while Slack was unreachable. */

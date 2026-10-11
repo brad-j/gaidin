@@ -19,7 +19,7 @@ settings:
     bot_events:
       - message.channels
       - message.groups
-  # Button presses on approval requests (src/slack-approvals.ts), delivered over Socket Mode.
+  # Button presses on approvals, questions, reminders and paused jobs (src/slack/notifications.ts), delivered over Socket Mode.
   interactivity:
     is_enabled: true
   socket_mode_enabled: true
