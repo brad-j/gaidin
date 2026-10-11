@@ -51,6 +51,10 @@ export type Loaded = { config: Config; errors: string[]; warnings: string[] };
 const DEFAULT_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
 const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "alerts", "slack", "web", "sandbox", "budget", "approvals", "search", "keys", "extensions"];
 
+/** An ntfy topic URL: a server, maybe a path, then the topic, which ntfy limits to these characters. */
+const TOPIC_URL = /^https?:\/\/[^/\s]+(\/[^/\s]+)*\/[-\w]{1,64}\/?$/;
+const TOPIC_NAME = "a topic is up to 64 letters, digits, - and _";
+
 /** The settings file to use: `explicit`, GAIDIN_CONFIG, or the first default location that exists. */
 export function findConfigFile(explicit?: string, env: NodeJS.ProcessEnv = process.env, search = true): string | undefined {
 	const named = explicit ?? env.GAIDIN_CONFIG;
@@ -160,7 +164,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	const ntfyUrl = e.ntfyUrl ?? text("ntfy.url", ntfySection.url);
 	const ntfyToken = e.ntfyToken ?? text("ntfy.token", ntfySection.token);
 	const ntfyIcon = text("ntfy.icon", ntfySection.icon);
-	if (ntfyUrl !== undefined && !/^https?:\/\/[^/]+\/[^/]+/.test(ntfyUrl)) errors.push("ntfy.url must be a topic URL, like https://ntfy.sh/<topic>");
+	if (ntfyUrl !== undefined && !TOPIC_URL.test(ntfyUrl)) errors.push(`ntfy.url must be a topic URL, like https://ntfy.sh/<topic>; ${TOPIC_NAME}`);
 	if (ntfyIcon !== undefined && !/^https?:\/\/[^/]+\/./.test(ntfyIcon)) errors.push("ntfy.icon must be the URL of a PNG or JPEG");
 	if (ntfyUrl === undefined) warnings.push("No ntfy.url: reminders print to the server's output instead of pushing");
 
@@ -168,7 +172,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	const alertsSection = section("alerts");
 	const alertsUrl = text("alerts.url", alertsSection.url)?.replace(/\/+$/, "");
 	const alertsToken = text("alerts.token", alertsSection.token);
-	if (alertsUrl !== undefined && !/^https?:\/\/[^/]+\/[^/]+/.test(alertsUrl)) errors.push("alerts.url must be a topic URL, like https://ntfy.sh/<topic>");
+	if (alertsUrl !== undefined && !TOPIC_URL.test(alertsUrl)) errors.push(`alerts.url must be a topic URL, like https://ntfy.sh/<topic>; ${TOPIC_NAME}`);
 	// Following its own topic, gaidin would investigate its own reminders.
 	if (alertsUrl !== undefined && alertsUrl === ntfyUrl?.replace(/\/+$/, "")) errors.push("alerts.url must be another topic than ntfy.url");
 

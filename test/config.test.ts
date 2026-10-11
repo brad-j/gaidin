@@ -167,4 +167,6 @@ test("alerts.url is a topic other than the reminders', and is redacted like it",
 	assert.ok(!redacted.includes("5f3a9c2e7b"), redacted);
 	const same = loadConfig({ file: file(t, { model: { apiKey: KEY }, ntfy: { url: alerts }, alerts: { url: `${alerts}/` } }), env: {} });
 	assert.ok(same.errors.some((error) => /alerts\.url must be another topic than ntfy\.url/.test(error)));
+	const placeholder = loadConfig({ file: file(t, { model: { apiKey: KEY }, alerts: { url: "https://ntfy.sh/<homelab alerts topic>" } }), env: {} });
+	assert.ok(placeholder.errors.some((error) => /alerts\.url must be a topic URL.*a topic is up to 64 letters/.test(error)));
 });
