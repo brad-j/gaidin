@@ -12,7 +12,7 @@
     "watch": "node --no-warnings --env-file-if-exists=.env src/main.ts watch",
     "doctor": "node --no-warnings --env-file-if-exists=.env src/main.ts doctor",
     "check": "tsc && pnpm lint && pnpm test",
-    "lint": "oxlint --quiet src web test e2e playwright.config.ts",
+    "lint": "oxlint --deny-warnings src web test e2e playwright.config.ts",
     "e2e": "playwright test",
     "test": "node --no-warnings --test test/*.test.ts"
   },

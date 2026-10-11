@@ -1,6 +1,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import { type ConversationId, defineDoc, defineEntry, defineExtension, defineTask, defineTool, type TaskId, type Tx } from "@earendil-works/pi-durable";
 import { formatTime } from "./time.ts";
+import { taskId } from "./ids.ts";
 
 export type Reminder = { taskId: number; text: string; at: number };
 export type Notify = (reminder: Reminder) => Promise<void>;
@@ -94,8 +95,9 @@ export function createReminders(notify: Notify, owner = "the user") {
 
 	/** Sets a reminder that has fired again, `minutes` from now, in the same conversation. Nothing if `id` isn't a reminder. */
 	async function snooze(tx: Tx, id: number, minutes: number): Promise<Reminder | undefined> {
-		const task = await tx.task(id as TaskId);
+		const task = await tx.task(taskId(id));
 		if (task === undefined || task.kind !== "gaidin.reminder") return undefined;
+		// SAFETY: a gaidin.reminder task's input is what add() made it with.
 		const { text } = task.input as { text: string };
 		const at = Date.now() + minutes * 60_000;
 		return { taskId: await add(tx, task.conversationId, text, at), text, at };

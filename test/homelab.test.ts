@@ -111,6 +111,19 @@ test("a feed that's down is reported and the others still are", async () => {
 	assert.match(report(feeds, false, NOW), /Kuma: 2 of 2 monitors up\./);
 });
 
+test("a feed that isn't what its collector writes is an error for that feed, saying where, and missing strings read as empty", async () => {
+	const feeds = await fetchFeeds(HOMELAB, fixtures((f) => {
+		f.docker.hosts[0].containers[0].state = 5;
+		f.beszel.schemaVersion = 2;
+		delete f.backups.jobs[0].guests[0].name;
+		f.heartbeat.heartbeatList = "none";
+	}));
+	assert.equal(feeds.docker.error, "docker.json.hosts[0].containers[0].state should be a string");
+	assert.equal(feeds.beszel.error, "beszel.json used an unsupported schema");
+	assert.equal(feeds.backups.data?.jobs[0]?.guests[0]?.name, null);
+	assert.equal(feeds.kuma.error, "Uptime Kuma's heartbeats.heartbeatList should be an object");
+});
+
 test("a stale snapshot is a warning", async () => {
 	const feeds = await fetchFeeds(HOMELAB, fixtures((f, iso) => {
 		f.beszel.generatedAt = iso(10 * 60_000);

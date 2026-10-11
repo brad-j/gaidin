@@ -22,12 +22,15 @@ import {
 	defineTask,
 	defineTool,
 	type EntryId,
+	type EntryRecord,
 	type Extension,
 	type TaskId,
 	type Tx,
 } from "@earendil-works/pi-durable";
 import type { Refusal } from "./approvals.ts";
 import { formatTime, stamp, timeZone } from "./time.ts";
+import { entryId, conversationId as toConversationId } from "./ids.ts";
+import { jsonObject, object, optional, parse, string } from "./parse.ts";
 
 export type Schedule =
 	| { kind: "once"; at: number }
@@ -40,7 +43,9 @@ export type Mode = "report" | "watch";
 /** What a gate's check found. `data` goes into the run's prompt; `topic` (default: `data`) names what it found, to tell the same findings from new ones. */
 export type GateResult = { wake: boolean; data?: string; topic?: string };
 /** A check a job can run before waking the model: the homelab extension's, or a self-written tool (`tool`), which the web view can switch off. */
-export type Gate = { name: string; description: string; tool?: boolean; check: (args: Record<string, unknown>, signal: AbortSignal) => Promise<GateResult> };
+/** What a job gives its gate, as approved with the job. */
+export type GateArgs = { readonly [name: string]: string | number | boolean };
+export type Gate = { name: string; description: string; tool?: boolean; check: (args: GateArgs, signal: AbortSignal) => Promise<GateResult> };
 /** Starts the prompt's part that holds what a gate found; approvals.ts treats it as outside text. */
 export const GATE_FINDINGS = "[gate findings]";
 
@@ -151,7 +156,7 @@ export function nextRun(schedule: Schedule, after: number): number | undefined {
 			return schedule.from + (Math.floor((after - schedule.from) / step) + 1) * step;
 		}
 		case "daily": {
-			const [hour, minute] = schedule.time.split(":").map(Number) as [number, number];
+			const [hour = 0, minute = 0] = schedule.time.split(":").map(Number);
 			const today = zoneParts(after);
 			for (let offset = 0; offset < 9; offset += 1) {
 				const date = new Date(Date.UTC(today.year, today.month - 1, today.day + offset));
@@ -183,6 +188,18 @@ export function describeSchedule(schedule: Schedule): string {
 }
 
 /** The schedule the tool's arguments describe. Throws with what to fix. */
+/** schedule_job's arguments as the approval hook reads them, before the tool runs. */
+export const scheduleArgs = object({
+	title: optional(string),
+	instruction: optional(string),
+	mode: optional(string),
+	at: optional(string),
+	every: optional(string),
+	time: optional(string),
+	days: optional(string),
+	gate: optional(object({ name: string, args: optional(jsonObject) })),
+});
+
 export function parseSchedule(args: { at?: string; every?: string; time?: string; days?: string }, gated: boolean, now = Date.now()): Schedule {
 	const given = [args.at, args.every, args.time].filter((v) => v !== undefined).length;
 	if (given !== 1) throw new Error("Give exactly one of at, every, or time.");
@@ -249,9 +266,9 @@ type Result = "done" | "cancelled";
 
 const MAX_DELIVERY_ATTEMPTS = 5;
 
-function answerText(entry: unknown): string | undefined {
-	if (!AssistantEntry.is(entry as never)) return undefined;
-	const message = (entry as { model?: { role: string; content: { type: string; text?: string }[] }[] }).model?.[0];
+function answerText(entry: EntryRecord | undefined): string | undefined {
+	if (!AssistantEntry.is(entry)) return undefined;
+	const message = entry.model?.[0];
 	if (message?.role !== "assistant") return undefined;
 	return message.content.flatMap((c) => (c.type === "text" && c.text ? [c.text] : [])).join("") || undefined;
 }
@@ -313,9 +330,7 @@ export function createJobs(options: {
 		if (gate.tool && !(await offered()).includes(gate.name)) throw new Error(`The gate ${gate.name} is a tool that's switched off.`);
 		const signal = AbortSignal.timeout(GATE_MS);
 		const late = new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(new Error(`The gate ${gate.name} didn't answer in ${GATE_MS / 1000} seconds.`))));
-		const result = await Promise.race([gate.check(job.gate?.args ?? {}, signal), late]);
-		if (typeof result.wake !== "boolean") throw new Error(`The gate ${gate.name} didn't say whether to wake the run.`);
-		return result;
+		return Promise.race([gate.check(job.gate?.args ?? {}, signal), late]);
 	}
 
 	const missingGate = (name: string) => (gates().some((g) => g.name === name) ? undefined : `There's no gate ${name}. Gates: ${gates().map((g) => g.name).join(", ") || "none"}.`);
@@ -323,13 +338,14 @@ export function createJobs(options: {
 	/** A job that can't be made isn't put to the owner (approvals.ts): a schedule it can't keep, a gate that doesn't exist, or no room. */
 	const refuse: Refusal = async (call, read, context) => {
 		if (call.name !== "schedule_job") return undefined;
-		const args = call.arguments as Parameters<typeof parseSchedule>[0] & { gate?: { name?: unknown } };
+		let args;
 		try {
+			args = parse(call.arguments, scheduleArgs, "schedule_job's arguments");
 			parseSchedule(args, args.gate !== undefined);
 		} catch (error) {
 			return error instanceof Error ? error.message : String(error);
 		}
-		const gate = args.gate === undefined ? undefined : missingGate(String(args.gate.name));
+		const gate = args.gate === undefined ? undefined : missingGate(args.gate.name);
 		if (gate !== undefined) return gate;
 		if (((await read.snapshot(Jobs, context))?.items.length ?? 0) >= MAX_JOBS) return `There are already ${MAX_JOBS} jobs; cancel one first.`;
 		return undefined;
@@ -342,7 +358,7 @@ export function createJobs(options: {
 		const first = nextRun(fields.schedule, Date.now())!;
 		// Background: the conversation goes idle while it waits, and Stop doesn't cancel it.
 		const taskId = await tx.createTask(JobTask, { title: fields.title, firstAt: first }, { ownership: { kind: "conversation" }, conversationId, background: true });
-		const job: Job = { taskId: taskId as number, ...fields, createdAt: Date.now(), nextAt: first, runs: 0 };
+		const job: Job = { taskId: taskId, ...fields, createdAt: Date.now(), nextAt: first, runs: 0 };
 		doc.items.push(job);
 		return { ...job };
 	}
@@ -395,7 +411,7 @@ export function createJobs(options: {
 					if (result === undefined) {
 						// Reported like a run that didn't finish, from the conversation the job was made in.
 						const failed = countFailure(job, `The gate failed: ${problem}`, now);
-						return { status: "running", checkpoint: { phase: "deliver", at, firing, conversationId: task.conversationId as number, ...failed, attempt: 1, retryAt: 0 } };
+						return { status: "running", checkpoint: { phase: "deliver", at, firing, conversationId: task.conversationId, ...failed, attempt: 1, retryAt: 0 } };
 					}
 					const topic = result.topic ?? result.data ?? "";
 					if (result.wake && topic !== job.gateTopic) {
@@ -429,7 +445,7 @@ export function createJobs(options: {
 						const tools = job.tools === undefined ? undefined : runtime.registry.tools().flatMap((t) => (job.tools!.includes(t.tool.name) ? [t.tool] : []));
 						if (tools === undefined) await configure(tx, created.id, { extensions: { remove: [extension] } });
 						else await configure(tx, created.id, { extensions: { remove: [extension] }, tools });
-						return { status: "running", checkpoint: { ...task.state.checkpoint, conversationId: created.id as number } };
+						return { status: "running", checkpoint: { ...task.state.checkpoint, conversationId: created.id } };
 					}, context);
 					return;
 				}
@@ -438,7 +454,7 @@ export function createJobs(options: {
 					await runtime.commit(async () => ({ status: "terminal", outcome: { status: "completed", result: "cancelled" } }), context);
 					return;
 				}
-				const conversation = await runtime.conversation(conversationId as ConversationId, context);
+				const conversation = await runtime.conversation(toConversationId(conversationId), context);
 				if (conversation === undefined) throw new Error(`conversation ${conversationId} is gone`);
 				// The request id makes this idempotent: after a restart it finds the run already admitted.
 				const submission = await conversation.submit({ type: "input", content: prompt(job, found), requestId: `job:${task.id}:${firing}` }, context);
@@ -448,7 +464,7 @@ export function createJobs(options: {
 					let answer: number | undefined;
 					let failure: Failure | undefined;
 					if (settled.status === "done" && settled.type === "input") {
-						answer = settled.answer as number;
+						answer = settled.answer;
 						text = answerText(await tx.entry(settled.answer)) ?? "(the run gave no text)";
 					} else {
 						const why = options.explain?.(settled.reason);
@@ -475,7 +491,7 @@ export function createJobs(options: {
 					text: state.text,
 					conversationId: state.conversationId,
 				};
-				if (state.answer !== undefined) report.answer = state.answer as EntryId;
+				if (state.answer !== undefined) report.answer = entryId(state.answer);
 				if (state.failure === "pause") report.paused = true;
 				// At least once: a crash after delivering and before this commit delivers again.
 				let error: string | undefined;
@@ -493,8 +509,8 @@ export function createJobs(options: {
 					const doc = await tx.doc(Jobs);
 					const job = doc.items.find((j) => j.taskId === task.id);
 					if (!silent) {
-						const data = { ...report, answer: undefined, at: state.at, delivered: error === undefined };
-						await tx.appendEntry(JobReported, task.conversationId, { data: (error === undefined ? data : { ...data, error }) as never });
+						const data = { taskId: report.taskId, title: report.title, text: report.text, conversationId: report.conversationId, at: state.at, delivered: error === undefined };
+						await tx.appendEntry(JobReported, task.conversationId, { data: error === undefined ? data : { ...data, error } });
 					}
 					if (job === undefined) return { status: "terminal", outcome: { status: "completed", result: "cancelled" } };
 					const now = runtime.now();

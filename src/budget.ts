@@ -42,7 +42,7 @@ export type BudgetStatus = {
 /** Total cost so far across every conversation, in dollars. */
 export async function totalSpend(harness: Harness): Promise<number> {
 	const usage = await harness.usage(background);
-	return [...Object.values(usage.models), ...Object.values(usage.tools)].reduce((sum, u) => sum + ((u as { cost?: { total?: number } }).cost?.total ?? 0), 0);
+	return [...Object.values(usage.models), ...Object.values(usage.tools)].reduce((sum, u) => sum + u.cost.total, 0);
 }
 
 /** The local day and month, in the configured time zone. */
@@ -138,7 +138,7 @@ export function createBudget(options: {
 				}
 				// SAFETY: a get trap is only asked for keys of the object it wraps.
 				const value = target[key as keyof Models];
-				return typeof value === "function" ? value.bind(target) : value;
+				return value instanceof Function ? value.bind(target) : value;
 			},
 		});
 	}

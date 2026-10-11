@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { connect } from "node:net";
 import { createInterface } from "node:readline";
 import type { Config } from "./config.ts";
-import { socketPathFor } from "./server.ts";
+import { type ClientMessage, parseServerMessage, socketPathFor } from "./server.ts";
 
 /** Sends a message and prints the run until it settles. Resolves with the exit code. */
 export function ask(config: Config, prompt: string, id?: string): Promise<number> {
@@ -17,7 +17,7 @@ export function watch(config: Config): Promise<number> {
 	return talk(config, { type: "watch" }, false);
 }
 
-function talk(config: Config, request: object, waitForDone: boolean): Promise<number> {
+function talk(config: Config, request: ClientMessage, waitForDone: boolean): Promise<number> {
 	return new Promise((resolvePromise) => {
 		const socket = connect(socketPathFor(config));
 		socket.once("error", (error) => {
@@ -28,7 +28,7 @@ function talk(config: Config, request: object, waitForDone: boolean): Promise<nu
 			socket.write(`${JSON.stringify(request)}\n`);
 			let status: string | undefined;
 			for await (const line of createInterface({ input: socket })) {
-				const message = JSON.parse(line) as { type: "line"; text: string } | { type: "done"; status: string };
+				const message = parseServerMessage(line);
 				if (message.type === "line") console.log(message.text);
 				else status = message.status;
 			}

@@ -6,6 +6,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
 import type { SearchConfig } from "./config.ts";
+import { array, number, object, optional, parse, string } from "./parse.ts";
 
 export type SearchQuery = { query: string; maxResults: number; topic: "general" | "news"; timeRange?: "day" | "week" | "month" | "year" };
 export type SearchResult = { title: string; url: string; snippet: string; published?: string };
@@ -13,6 +14,13 @@ export type SearchResult = { title: string; url: string; snippet: string; publis
 export type SearchBackend = (query: SearchQuery) => Promise<SearchResult[]>;
 
 const TAVILY = "https://api.tavily.com";
+const tavilyResults = object({
+	results: optional(array(object({ title: optional(string), url: optional(string), content: optional(string), published_date: optional(string) }))),
+});
+const tavilyUsageAnswer = object({
+	key: optional(object({ usage: optional(number), limit: optional(number) })),
+	account: optional(object({ plan_usage: optional(number), plan_limit: optional(number) })),
+});
 
 export function tavily(apiKey: string, fetchImpl: typeof fetch = fetch): SearchBackend {
 	return async (q) => {
@@ -34,14 +42,13 @@ export function tavily(apiKey: string, fetchImpl: typeof fetch = fetch): SearchB
 			const why = response.status === 401 ? "the API key was refused" : response.status === 429 || response.status === 432 ? "the plan's search limit is used up" : `HTTP ${response.status}`;
 			throw new Error(`Tavily search failed: ${why}${detail ? ` (${detail.slice(0, 200)})` : ""}`);
 		}
-		const body = (await response.json()) as { results?: { title?: string; url?: string; content?: string; published_date?: string | null }[] };
-		return (body.results ?? [])
-			.filter((r) => typeof r.url === "string")
-			.map((r) => {
-				const result: SearchResult = { title: r.title ?? r.url!, url: r.url!, snippet: (r.content ?? "").replace(/\s+/g, " ").trim() };
-				if (r.published_date) result.published = r.published_date;
-				return result;
-			});
+		const body = parse(await response.json(), tavilyResults, "Tavily's answer");
+		return (body.results ?? []).flatMap(({ title, url, content, published_date }) => {
+			if (url === undefined) return [];
+			const result: SearchResult = { title: title ?? url, url, snippet: (content ?? "").replace(/\s+/g, " ").trim() };
+			if (published_date) result.published = published_date;
+			return [result];
+		});
 	};
 }
 
@@ -49,7 +56,7 @@ export function tavily(apiKey: string, fetchImpl: typeof fetch = fetch): SearchB
 export async function tavilyUsage(apiKey: string, fetchImpl: typeof fetch = fetch): Promise<{ used: number; limit: number | null }> {
 	const response = await fetchImpl(`${TAVILY}/usage`, { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(10_000) });
 	if (!response.ok) throw new Error(response.status === 401 ? "Tavily refused the API key" : `Tavily answered ${response.status}`);
-	const body = (await response.json()) as { key?: { usage?: number; limit?: number | null }; account?: { plan_usage?: number; plan_limit?: number } };
+	const body = parse(await response.json(), tavilyUsageAnswer, "Tavily's answer");
 	return { used: body.account?.plan_usage ?? body.key?.usage ?? 0, limit: body.account?.plan_limit ?? body.key?.limit ?? null };
 }
 

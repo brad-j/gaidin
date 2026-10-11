@@ -9,12 +9,15 @@ export type ToolApi = {
 	fetch: (url: string) => Promise<Fetched>;
 };
 
+/** Part of a JSON Schema. */
+export type Schema = { readonly [keyword: string]: Schema | readonly Schema[] | string | number | boolean | null };
+
 /** `Args` is the type of the arguments `parameters` describes. */
 export type Tool<Args = any> = {
 	name: string;
 	description: string;
 	/** A JSON Schema for the arguments. They're checked against it before `execute` runs. */
-	parameters: { type: "object"; properties: Record<string, object>; required?: string[] };
+	parameters: { type: "object"; properties: { readonly [name: string]: Schema }; required?: string[] };
 	/** Returns the result text; a thrown error becomes an error result. */
 	execute: (args: Args, api: ToolApi) => Promise<string>;
 };

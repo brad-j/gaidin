@@ -1,15 +1,23 @@
 // Client for src/web.ts. Served with its types stripped, so it keeps to erasable TypeScript.
 // It rebuilds the root conversation from the server's event stream: a snapshot, then one batch of
-// events per commit (pi-durable's watchEvents).
+// events per commit (pi-durable's watchEvents). Everything it reads comes from that server, in the
+// shapes below.
+
+type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
+type Fields = { readonly [key: string]: Json };
+const isText = (value: Json | undefined): value is string => typeof value === "string";
+const isNumber = (value: Json | undefined): value is number => typeof value === "number";
+const isFields = (value: Json | undefined): value is Fields => typeof value === "object" && value !== null && !Array.isArray(value);
 
 type Text = { type: "text"; text: string };
-type Block = Text | { type: "thinking"; thinking: string; redacted?: boolean } | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
+type Block = Text | { type: "thinking"; thinking: string; redacted?: boolean } | { type: "toolCall"; id: string; name: string; arguments: Fields };
 type Part = { type: string; text?: string };
 type Message =
 	| { role: "user"; content: string | Part[] }
 	| { role: "assistant"; content: Block[]; stopReason?: string; errorMessage?: string }
-	| { role: "toolResult"; toolCallId: string; toolName: string; content: Part[]; isError?: boolean };
-type Entry = { id: number; kind: string; model?: Message[]; data?: Record<string, unknown> };
+	| { role: "toolResult"; toolCallId: string; toolName: string; content: Part[]; isError?: boolean }
+	| { role: "system"; content: string | Part[] };
+type Entry = { id: number; kind: string; model?: readonly Message[]; data?: Json };
 type Usage = { cost: { total: number } };
 type UsageState = { models: Record<string, Usage>; tools: Record<string, Usage> };
 type Slot = { callId: string; name: string; output: string };
@@ -19,23 +27,37 @@ type Approval = { id: string; summary: string; detail?: string; tool: string; ex
 type Note = { id: number; text: string; by: string; updatedAt: number };
 type Budget = { today: number; month: number; dailyLimit: number; monthlyLimit: number; stopped: boolean; reason?: string };
 type Settings = { model: string; models: string[]; thinkingLevel: string; instructions: string; tools: { name: string; enabled: boolean }[] };
-// The event stream's shapes are pi-durable's AgentEvent; only the fields used here are read.
-type AgentEvent = { type: string; [field: string]: any };
+/** What the server's event stream sends (web.ts): pi-durable's events, and word that the approvals changed. */
+type AgentEvent = import("@earendil-works/pi-durable").AgentEvent | import("@earendil-works/pi-durable").SnapshotEvent | { type: "approvals_changed" };
 
-const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+function $<T extends HTMLElement = HTMLElement>(id: string): T {
+	// SAFETY: every id asked for is an element of that type in index.html.
+	return document.getElementById(id) as T;
+}
 
-const state = {
-	entries: new Map<number, Entry>(),
+type State = {
+	entries: Map<number, Entry>;
 	/** The assistant message being generated. */
-	partial: undefined as { content: Block[] } | undefined,
+	partial: { content: Block[] } | undefined;
 	/** Running tool calls and their output so far, by tool call id. */
-	slots: new Map<string, Slot>(),
+	slots: Map<string, Slot>;
+	running: boolean;
+	connected: boolean;
+	retry: string | undefined;
+	usage: UsageState | undefined;
+	allSpend: number | undefined;
+	budget: Budget | null | undefined;
+};
+const state: State = {
+	entries: new Map(),
+	partial: undefined,
+	slots: new Map(),
 	running: false,
 	connected: false,
-	retry: undefined as string | undefined,
-	usage: undefined as UsageState | undefined,
-	allSpend: undefined as number | undefined,
-	budget: undefined as Budget | null | undefined,
+	retry: undefined,
+	usage: undefined,
+	allSpend: undefined,
+	budget: undefined,
 };
 /** Tool calls and thinking blocks the owner has opened, so a re-render keeps them open. */
 const opened = new Set<string>();
@@ -120,25 +142,30 @@ function add(entry: Entry) {
 	state.entries.set(entry.id, entry);
 }
 
-function applyChange(message: { content: Block[] }, change: any) {
-	const i = change.contentIndex;
+function applyChange(message: { content: Block[] }, change: import("@earendil-works/pi-durable").MessageChange) {
 	switch (change.type) {
 		case "text_start":
 		case "thinking_start":
 		case "toolcall_start":
 		case "block":
-			message.content[i] = structuredClone(change.block);
+			message.content[change.contentIndex] = structuredClone(change.block);
 			break;
-		case "text_delta":
-			(message.content[i] as Text).text += change.delta;
+		case "text_delta": {
+			const block = message.content[change.contentIndex];
+			if (block?.type === "text") block.text += change.delta;
 			break;
-		case "thinking_delta":
-			(message.content[i] as { thinking: string }).thinking += change.delta;
+		}
+		case "thinking_delta": {
+			const block = message.content[change.contentIndex];
+			if (block?.type === "thinking") block.thinking += change.delta;
 			break;
+		}
 		case "toolcall_delta": {
+			const block = message.content[change.contentIndex];
+			if (block?.type !== "toolCall") break;
 			// Appends to the string at `path` inside the call's arguments.
-			let target: any = (message.content[i] as { arguments: unknown }).arguments;
-			const path = change.path as (string | number)[];
+			let target: any = block.arguments;
+			const { path } = change;
 			for (const key of path.slice(0, -1)) target = target[key] ??= {};
 			const last = path.at(-1)!;
 			target[last] = (target[last] ?? "") + change.delta;
@@ -157,6 +184,7 @@ function connect() {
 		schedule();
 	};
 	source.onmessage = (message) => {
+		// SAFETY: the server sends each event as JSON (web.ts events()).
 		apply(JSON.parse(message.data) as AgentEvent);
 		schedule();
 	};
@@ -187,7 +215,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
 }
 
 function textOf(content: string | Part[]): string {
-	return typeof content === "string" ? content : content.map((p) => p.text ?? `[${p.type}]`).join("");
+	return Array.isArray(content) ? content.map((p) => p.text ?? `[${p.type}]`).join("") : content;
 }
 
 /** The owner's messages start with the local time in brackets; show it apart from the text. */
@@ -218,15 +246,21 @@ function fromNow(at: number): string {
 	return `in ${Math.round(minutes / 1440)} days`;
 }
 
-function argsSummary(name: string, args: Record<string, unknown>): string {
-	if (name === "bash" && typeof args.command === "string") return args.command;
-	if (typeof args.path === "string") return args.path;
-	if (typeof args.url === "string") return args.url;
+function argsSummary(name: string, args: Fields): string {
+	if (name === "bash" && isText(args.command)) return args.command;
+	if (isText(args.path)) return args.path;
+	if (isText(args.url)) return args.url;
 	if (name === "remind") return `${args.text ?? ""} ${args.at ?? (args.inMinutes === undefined ? "" : `in ${args.inMinutes} min`)}`;
-	if (typeof args.title === "string") return args.title;
-	if (typeof args.text === "string") return args.text;
+	if (isText(args.title)) return args.title;
+	if (isText(args.text)) return args.text;
 	const json = JSON.stringify(args);
 	return json === "{}" ? "" : json;
+}
+
+/** A timeline item's tool call arguments, which history.ts keeps as JSON. */
+function toolArguments(detail: string): Fields {
+	// SAFETY: history.ts writes a tool call's detail with JSON.stringify of its arguments, an object.
+	return JSON.parse(detail) as Fields;
 }
 
 function money(dollars: number): string {
@@ -380,8 +414,8 @@ function blocks(lines: string[], parent: HTMLElement) {
 function list(lines: string[], i: number, indent: number, parent: HTMLElement): number {
 	const first = ITEM.exec(lines[i])!;
 	const ordered = /\d/.test(first[2]);
-	const node = el(ordered ? "ol" : "ul");
-	if (ordered && parseInt(first[2]) !== 1) (node as HTMLOListElement).start = parseInt(first[2]);
+	const node = ordered ? el("ol") : el("ul");
+	if (node instanceof HTMLOListElement && parseInt(first[2]) !== 1) node.start = parseInt(first[2]);
 	while (i < lines.length) {
 		const item = ITEM.exec(lines[i]);
 		if (!item || item[1].length !== indent || /\d/.test(item[2]) !== ordered) break;
@@ -489,7 +523,7 @@ function renderBlocks(blocks: Block[], key: string, results: Map<string, Extract
 			const status = result ? (result.isError ? "error" : "done") : slot ? "running" : state.running ? "waiting" : "no result";
 			const output = result ? textOf(result.content) : slot?.output ?? "";
 			const args = block.arguments ?? {};
-			const sections: [string | undefined, string][] = [["input", block.name === "bash" && typeof args.command === "string" ? args.command : JSON.stringify(args, null, 2)]];
+			const sections: [string | undefined, string][] = [["input", block.name === "bash" && isText(args.command) ? args.command : JSON.stringify(args, null, 2)]];
 			if (result || slot) sections.push(["output", output || "(no output)"]);
 			const details = fold(block.id, [el("span", "name", block.name), el("span", "args", argsSummary(block.name, args)), el("span", "state", status)], sections);
 			const line = row(`tool s-${status.replace(" ", "-")}`, "tool", details);
@@ -544,15 +578,15 @@ function render() {
 		let starts = false;
 		let time: string | undefined;
 		if (entry.kind === "gaidin.reminder-fired") {
-			const data = entry.data ?? {};
+			const data = isFields(entry.data) ? entry.data : {};
 			starts = true;
 			const line = row("remind", "remind", String(data.text ?? ""));
 			if (!data.delivered) line.lastElementChild!.append(el("span", "why", `push failed: ${data.error}`));
-			if (typeof data.taskId === "number") line.lastElementChild!.append(snoozeButtons(data.taskId));
+			if (isNumber(data.taskId)) line.lastElementChild!.append(snoozeButtons(data.taskId));
 			out.push(line);
 		}
 		if (entry.kind === "gaidin.job-reported") {
-			const data = entry.data ?? {};
+			const data = isFields(entry.data) ? entry.data : {};
 			starts = true;
 			const line = row("job", "job", String(data.title ?? ""));
 			if (!data.delivered) line.lastElementChild!.append(el("span", "why", `not delivered: ${data.error}`));
@@ -578,9 +612,11 @@ function render() {
 			if (starts) {
 				out[0].classList.add("start");
 				if (time) {
-					const stamp = out[0].firstElementChild as HTMLElement;
-					stamp.textContent = shortStamp(time);
-					stamp.title = time;
+					const stamp = out[0].firstElementChild;
+					if (stamp instanceof HTMLElement) {
+						stamp.textContent = shortStamp(time);
+						stamp.title = time;
+					}
 				}
 			}
 			rows.push(...out);
@@ -708,7 +744,7 @@ function renderHorizon() {
 	track.replaceChildren(...nodes);
 
 	const later = items.length - soon.length;
-	const laterButton = $("later") as HTMLButtonElement;
+	const laterButton = $<HTMLButtonElement>("later");
 	laterButton.hidden = later === 0;
 	laterButton.textContent = `+${later} later`;
 
@@ -729,7 +765,8 @@ function notice(text: string) {
 	if (text !== "") say("err", text);
 }
 
-async function post(path: string, body: unknown): Promise<any> {
+/** A POST to the server, which answers each route with its own shape, T. */
+async function post<T = any>(path: string, body: { [key: string]: Json | undefined }): Promise<T> {
 	const response = await fetch(path, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -742,6 +779,7 @@ async function post(path: string, body: unknown): Promise<any> {
 async function load<T>(path: string): Promise<T> {
 	const response = await fetch(path);
 	if (!response.ok) throw new Error(`${path}: ${await response.text()}`);
+	// SAFETY: each route answers with the shape its caller names as T (web.ts).
 	return response.json() as Promise<T>;
 }
 
@@ -764,7 +802,7 @@ function snoozeButtons(id: number): HTMLElement {
 		button.type = "button";
 		button.addEventListener("click", async () => {
 			try {
-				const { at } = (await post("/api/reminders/snooze", { id, minutes })) as { at: number };
+				const { at } = await post<{ at: number }>("/api/reminders/snooze", { id, minutes });
 				say("sys", `Snoozed until ${when.format(at)}.`);
 				void loadReminders();
 			} catch (error) {
@@ -916,7 +954,7 @@ async function decide(decision: Decision, request = firstApproval()) {
 // --- commands ---------------------------------------------------------------------------------
 
 type Choice = { value: string; hint?: string };
-type Command = { name: string; args?: string; help: string; run: (arg: string) => unknown; complete?: () => Choice[] };
+type Command = { name: string; args?: string; help: string; run: (arg: string) => void | Promise<void>; complete?: () => Choice[] };
 
 const LEVELS = ["off", "low", "medium", "high"];
 
@@ -1071,7 +1109,7 @@ async function showTimeline(cursor?: Cursor) {
 	const out = el("div", "out timeline");
 	for (const item of page.items) {
 		const label = item.kind === "tool" ? item.name : item.kind === "approval" ? `allow ${item.name}?` : item.kind === "job" ? "job" : "reminder";
-		const what = item.kind === "tool" ? argsSummary(item.name, JSON.parse(item.detail) as Record<string, unknown>) : item.kind === "job" ? item.name : item.detail;
+		const what = item.kind === "tool" ? argsSummary(item.name, toolArguments(item.detail)) : item.kind === "job" ? item.name : item.detail;
 		const detail = el("span", undefined, what);
 		if (item.place !== "main") detail.append(el("span", "dim", ` · ${item.place === "thread" ? "thread" : "job run"}`));
 		const outcome = item.outcome || "running";
@@ -1318,7 +1356,7 @@ function accept(item: Suggestion, submitIfReady: boolean) {
 
 // --- controls ---------------------------------------------------------------------------------
 
-const input = $("message") as HTMLTextAreaElement;
+const input = $<HTMLTextAreaElement>("message");
 
 /** The prompt grows with its text, up to the CSS max-height, keeping the log pinned if it was. */
 function fit() {
@@ -1348,7 +1386,7 @@ function history(): string[] {
 	const prompts = [...state.entries.values()]
 		.sort((a, b) => a.id - b.id)
 		.filter((e) => e.kind === "pi.user")
-		.flatMap((e) => (e.model ?? []).filter((m) => m.role === "user").map((m) => splitStamp(textOf(m.content as string | Part[])).text));
+		.flatMap((e) => (e.model ?? []).flatMap((m) => (m.role === "user" ? [splitStamp(textOf(m.content)).text] : [])));
 	return [...prompts, ...typed].filter((text, i, all) => text !== all[i - 1]);
 }
 
@@ -1370,7 +1408,7 @@ function recall(step: number) {
 
 /** randomUUID exists only on secure pages (HTTPS or localhost); getRandomValues works on plain http too. */
 function requestId(): string {
-	if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+	if (crypto.randomUUID instanceof Function) return crypto.randomUUID();
 	return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
@@ -1484,8 +1522,8 @@ document.addEventListener("keydown", (press) => {
 		return;
 	}
 	// Typing anywhere goes to the prompt.
-	const target = press.target as HTMLElement;
-	const typing = target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+	const target = press.target;
+	const typing = target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 	if (!typing && !ctrlKey && !metaKey && !altKey && key.length === 1) input.focus();
 });
 

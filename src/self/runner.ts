@@ -4,17 +4,28 @@
 import { Socket } from "node:net";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
+import type { Json } from "../parse.ts";
 import type { Fetched, Tool } from "./api.ts";
 
+/** What the server sends: a call, or the page or error for one of a call's fetches. */
+export type ToRunner = { id: number; call: string; args: Json } | { fetchId: number; page?: Fetched; error?: string };
+/** What the runner sends: the tools first, then each call's fetches and its result or error. */
+export type FromRunner =
+	| { tools: { name: string; description: string; parameters: Tool["parameters"] }[] }
+	| { id: number; fetchId: number; fetch: string }
+	| { id: number; result: string }
+	| { id: number; error: string };
+
 const channel = new Socket({ fd: 3 });
-const send = (message: object) => channel.write(`${JSON.stringify(message)}\n`);
+const send = (message: FromRunner) => channel.write(`${JSON.stringify(message)}\n`);
 const fetches = new Map<number, { resolve: (page: Fetched) => void; reject: (error: Error) => void }>();
 let nextFetch = 0;
 
+// SAFETY: index.ts passed a strict type check that its tools are Tools before it was approved (self/index.ts).
 const { tools } = (await import(pathToFileURL(`${process.argv[2]}/index.ts`).href)) as { tools: Tool[] };
 send({ tools: tools.map(({ name, description, parameters }) => ({ name, description, parameters })) });
 
-async function call(id: number, name: string, args: never) {
+async function call(id: number, name: string, args: Json) {
 	const fetch = (url: string) =>
 		new Promise<Fetched>((resolve, reject) => {
 			const fetchId = nextFetch++;
@@ -31,7 +42,8 @@ async function call(id: number, name: string, args: never) {
 }
 
 for await (const line of createInterface({ input: channel })) {
-	const message = JSON.parse(line) as { id: number; call: string; args: never } | { fetchId: number; page?: Fetched; error?: string };
+	// SAFETY: only the server writes to this side of the channel (self/index.ts).
+	const message = JSON.parse(line) as ToRunner;
 	if ("call" in message) {
 		void call(message.id, message.call, message.args);
 		continue;

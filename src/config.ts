@@ -4,6 +4,7 @@
 // docs/deploy.md lists every setting.
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { array, dictionary, isObject, type Json, optional, ParseError, type Parser, string } from "./parse.ts";
 
 export type HomelabConfig = {
 	/** Base URL of the beszel.json, docker.json and backups.json snapshots. */
@@ -94,8 +95,9 @@ function fromEnv(env: NodeJS.ProcessEnv) {
 	};
 }
 
-type Json = Record<string, unknown>;
-const isObject = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
+/** A section of the settings file. */
+type Section = { readonly [key: string]: Json };
+const EMPTY: Section = {};
 
 /** Reads and checks the settings. `errors` stop the server; `warnings` don't. */
 export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; search?: boolean } = {}): Loaded {
@@ -104,10 +106,11 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	const warnings: string[] = [];
 	const file = findConfigFile(options.file, env, options.search ?? true);
 
-	let raw: Json = {};
+	let raw = EMPTY;
 	if (file !== undefined) {
 		try {
-			const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+			// JSON.parse gives only JSON values.
+			const parsed: Json = JSON.parse(readFileSync(file, "utf8"));
 			if (isObject(parsed)) raw = parsed;
 			else errors.push(`${file} must hold a JSON object`);
 		} catch (error) {
@@ -120,19 +123,24 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	for (const key of Object.keys(raw)) {
 		if (!TOP_LEVEL.includes(key)) errors.push(`Unknown setting "${key}" in ${file}`);
 	}
-	const section = (name: string): Json => {
+	const section = (name: string) => {
 		const value = raw[name];
-		if (value === undefined) return {};
+		if (value === undefined) return EMPTY;
 		if (isObject(value)) return value;
 		errors.push(`"${name}" must be an object`);
-		return {};
+		return EMPTY;
 	};
-	const text = (where: string, value: unknown): string | undefined => {
-		if (value === undefined || value === null || value === "") return undefined;
-		if (typeof value === "string") return value;
-		errors.push(`${where} must be a string`);
-		return undefined;
+	/** `value` as `parser` has it, or undefined, with what's wrong among the errors. */
+	const read = <T>(where: string, value: Json | undefined, parser: Parser<T>): T | undefined => {
+		try {
+			return parser(value, where);
+		} catch (error) {
+			if (!(error instanceof ParseError)) throw error;
+			errors.push(error.message);
+			return undefined;
+		}
 	};
+	const text = (where: string, value: Json | undefined) => (value === "" ? undefined : read(where, value, optional(string)));
 	const e = fromEnv(env);
 
 	// Owner and time
@@ -146,17 +154,14 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 
 	// Model
 	const model = section("model");
-	const provider = e.provider ?? text("model.provider", model.provider) ?? "anthropic";
-	if (provider !== "anthropic" && provider !== "faux") errors.push(`model.provider must be "anthropic" or "faux", not "${provider}"`);
+	const providerName = e.provider ?? text("model.provider", model.provider) ?? "anthropic";
+	const provider = providerName === "faux" ? "faux" : "anthropic";
+	if (providerName !== provider) errors.push(`model.provider must be "anthropic" or "faux", not "${providerName}"`);
 	const apiKey = e.apiKey ?? text("model.apiKey", model.apiKey);
 	if (provider === "anthropic" && apiKey === undefined) errors.push("model.apiKey is missing (or set ANTHROPIC_API_KEY)");
 	else if (apiKey !== undefined && !apiKey.startsWith("sk-ant-")) warnings.push("model.apiKey doesn't start with sk-ant-");
 	const id = e.modelId ?? text("model.id", model.id) ?? "claude-haiku-5-5";
-	let choices = DEFAULT_MODELS;
-	if (model.choices !== undefined) {
-		if (Array.isArray(model.choices) && model.choices.every((c) => typeof c === "string")) choices = model.choices as string[];
-		else errors.push("model.choices must be a list of model ids");
-	}
+	let choices = read("model.choices", model.choices, optional(array(string))) ?? DEFAULT_MODELS;
 	if (provider === "faux") choices = ["faux-1"];
 
 	// ntfy
@@ -205,13 +210,14 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	}
 
 	// Sandbox
-	const sandbox = e.sandbox ?? text("sandbox", raw.sandbox) ?? "bwrap";
-	if (sandbox !== "bwrap" && sandbox !== "none") errors.push(`sandbox must be "bwrap" or "none", not "${sandbox}"`);
+	const sandboxName = e.sandbox ?? text("sandbox", raw.sandbox) ?? "bwrap";
+	const sandbox = sandboxName === "none" ? "none" : "bwrap";
+	if (sandboxName !== sandbox) errors.push(`sandbox must be "bwrap" or "none", not "${sandboxName}"`);
 	if (sandbox === "none") warnings.push('sandbox is "none": tools run unconfined, with everything the server can reach');
 
 	// Budget
 	const budgetSection = section("budget");
-	const limit = (name: string, value: unknown, fallback: number) => {
+	const limit = (name: string, value: Json | undefined, fallback: number) => {
 		const number = value === undefined ? fallback : Number(value);
 		if (!Number.isFinite(number) || number < 0) {
 			errors.push(`budget.${name} must be a dollar amount, 0 for no limit, not ${JSON.stringify(value)}`);
@@ -248,24 +254,22 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	}
 	let homelab: HomelabConfig | undefined;
 	if (extensions.homelab !== undefined) {
-		const h = isObject(extensions.homelab) ? extensions.homelab : (errors.push('extensions.homelab must be an object'), {} as Json);
-		const kuma = isObject(h.kuma) ? h.kuma : {};
+		const h = isObject(extensions.homelab) ? extensions.homelab : (errors.push("extensions.homelab must be an object"), EMPTY);
+		const kuma = isObject(h.kuma) ? h.kuma : EMPTY;
 		const feeds = e.homelabFeeds ?? text("extensions.homelab.feeds", h.feeds);
 		const kumaUrl = e.kumaUrl ?? text("extensions.homelab.kuma.url", kuma.url);
-		const logHosts: Record<string, string> = {};
-		if (h.logHosts !== undefined) {
-			if (isObject(h.logHosts) && Object.values(h.logHosts).every((v) => typeof v === "string")) Object.assign(logHosts, h.logHosts);
-			else errors.push("extensions.homelab.logHosts must map host names to addresses");
-		}
+		const page = text("extensions.homelab.kuma.page", kuma.page);
+		const logHosts = Object.fromEntries(read("extensions.homelab.logHosts", h.logHosts, optional(dictionary(string))) ?? []);
 		if (feeds === undefined) errors.push("extensions.homelab.feeds is missing");
 		if (kumaUrl === undefined) errors.push("extensions.homelab.kuma.url is missing");
-		if (typeof kuma.page !== "string" || kuma.page === "") errors.push("extensions.homelab.kuma.page is missing: the slug of Kuma's public status page");
+		if (page === undefined) errors.push("extensions.homelab.kuma.page is missing: the slug of Kuma's public status page");
 		homelab = {
 			feeds: (feeds ?? "").replace(/\/+$/, ""),
-			kuma: { url: (kumaUrl ?? "").replace(/\/+$/, ""), page: text("extensions.homelab.kuma.page", kuma.page) ?? "" },
+			kuma: { url: (kumaUrl ?? "").replace(/\/+$/, ""), page: page ?? "" },
 			logHosts,
 		};
-		if (typeof h.dashboard === "string") homelab.dashboard = h.dashboard;
+		const dashboard = text("extensions.homelab.dashboard", h.dashboard);
+		if (dashboard !== undefined) homelab.dashboard = dashboard;
 	}
 
 	// A file holding secrets should be readable by its owner and the service only.
@@ -278,8 +282,8 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 		owner,
 		timeZone,
 		dataDir: path(e.data ?? text("data", raw.data) ?? "data"),
-		model: { provider: provider as Config["model"]["provider"], id: provider === "faux" ? "faux-1" : id, choices },
-		sandbox: sandbox as Config["sandbox"],
+		model: { provider, id: provider === "faux" ? "faux-1" : id, choices },
+		sandbox,
 		budget,
 		approvals: { waitHours: Number.isFinite(waitHours) && waitHours > 0 && waitHours <= 576 ? waitHours : 168 },
 		keysDir: path(e.keys ?? text("keys", raw.keys) ?? "/var/lib/gaidin/keys"),
@@ -295,7 +299,8 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 		config.alerts = { url: alertsUrl };
 		if (alertsToken !== undefined) config.alerts.token = alertsToken;
 	}
-	if (slackGiven.length === 4) config.slack = slack as NonNullable<Config["slack"]>;
+	const { botToken, appToken, channelId, userId } = slack;
+	if (botToken !== undefined && appToken !== undefined && channelId !== undefined && userId !== undefined) config.slack = { botToken, appToken, channelId, userId };
 	if (webUser !== undefined) {
 		config.web = { user: webUser, port };
 		if (webUrl !== undefined) config.web.url = webUrl;

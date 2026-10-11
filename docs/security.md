@@ -96,5 +96,6 @@ The web view trusts the identity header Tailscale Serve adds, and listens only o
 
 - Mark a tool `replay: "safe"` only when running it again after a crash is harmless.
 - Keep a new secret in the settings and add it to `secretsOf`, so it's redacted.
+- Parse input from outside the process with `parse.ts` where it comes in. A line from a self-written tool's box is outside input: the tool's own code can write to that channel.
 - A tool that reads text from outside labels it as such in its result.
 - A tool that changes things outside the sandbox asks first.

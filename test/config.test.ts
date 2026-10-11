@@ -62,11 +62,12 @@ test("mistakes are reported, each with what to fix", (t) => {
 	const path = file(t, {
 		ownr: "typo",
 		timeZone: "Mars/Olympus",
-		model: { apiKey: KEY },
+		model: { apiKey: KEY, choices: ["claude-haiku-5-5", 4] },
+		ntfy: { token: 12345678 },
 		slack: { botToken: "xapp-wrong", channelId: "warder" },
 		web: { user: "me", port: 70000 },
 		sandbox: "maybe",
-		extensions: { homelab: { feeds: "http://x" }, weather: {} },
+		extensions: { homelab: { feeds: "http://x", logHosts: { nas: 7 } }, weather: {} },
 	});
 	const { errors } = loadConfig({ file: path, env: {} });
 	const expect = [
@@ -79,6 +80,9 @@ test("mistakes are reported, each with what to fix", (t) => {
 		/sandbox must be "bwrap" or "none"/,
 		/Unknown extension "weather"/,
 		/extensions\.homelab\.kuma\.url is missing/,
+		/^model\.choices\[1\] should be a string$/,
+		/^ntfy\.token should be a string$/,
+		/^extensions\.homelab\.logHosts\.nas should be a string$/,
 	];
 	for (const pattern of expect) assert.ok(errors.some((e) => pattern.test(e)), `no error matching ${pattern}: ${errors.join(" | ")}`);
 	assert.match(loadConfig({ file: file(t, "{ not json"), env: {} }).errors[0]!, /Can't read/);

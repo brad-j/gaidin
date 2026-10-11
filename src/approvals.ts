@@ -15,9 +15,11 @@ import { randomUUID } from "node:crypto";
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
 import { type Message, type ToolCall, Type } from "@earendil-works/pi-ai";
-import { type ConversationId, defineDoc, defineEntry, defineExtension, defineTool, type DocumentReader, type Harness, hook, type TaskId, ToolTask, type Tx } from "@earendil-works/pi-durable";
-import { describeSchedule, GATE_FINDINGS, parseSchedule } from "./jobs.ts";
+import { type ConversationId, defineDoc, defineEntry, defineExtension, defineTool, type DocumentReader, type Harness, type HookApi, hook, type ToolExecutionApi, ToolTask, type Tx } from "@earendil-works/pi-durable";
+import { describeSchedule, GATE_FINDINGS, parseSchedule, scheduleArgs } from "./jobs.ts";
+import { array, number, object, optional, parse, ParseError, string } from "./parse.ts";
 import { tidy } from "./memory.ts";
+import { conversationId, taskId } from "./ids.ts";
 
 export type Decision = "once" | "always" | "deny";
 /** "superseded": the owner sent a new message in the conversation instead of answering. */
@@ -90,62 +92,86 @@ const clip = (text: string, max = 1500) => (text.length > max ? `${text.slice(0,
 const whole = (summary: string, shown: string, full: string): NonNullable<Ask> => (shown === full ? { summary } : { summary, detail: full });
 
 /** A workspace_edit's changes, each old text and its replacement, as the owner is asked about them. */
-function editsDetail(edits: unknown): string {
-	const lines = (text: unknown, mark: string) => String(text).split("\n").map((line) => `${mark} ${line}`);
-	return (Array.isArray(edits) ? edits : []).map((e: { oldText?: unknown; newText?: unknown }, i) => [`Change ${i + 1}:`, ...lines(e.oldText, "-"), ...lines(e.newText, "+")].join("\n")).join("\n\n");
+function editsDetail(edits: readonly { oldText: string; newText: string }[]): string {
+	const lines = (text: string, mark: string) => text.split("\n").map((line) => `${mark} ${line}`);
+	return edits.map((e, i) => [`Change ${i + 1}:`, ...lines(e.oldText, "-"), ...lines(e.newText, "+")].join("\n")).join("\n\n");
 }
 
+// The calls' arguments as the policy reads them; one it can't read still asks (defaultPolicy).
+const noteArgs = object({ text: optional(string), id: optional(number) });
+const workspaceArgs = object({
+	workspace: string,
+	command: optional(string),
+	cwd: optional(string),
+	path: optional(string),
+	content: optional(string),
+	edits: optional(array(object({ oldText: string, newText: string }))),
+});
+
 export const defaultPolicy: Policy = async (call, state, conversationId, untrusted) => {
+	try {
+		return await askFor(call, state, conversationId, untrusted);
+	} catch (error) {
+		if (!(error instanceof ParseError)) throw error;
+		// Better asked about than let through: the tool reports what's wrong with them.
+		return { summary: `${call.name} with arguments that don't read right (${error.message})`, detail: JSON.stringify(call.arguments, null, 2) };
+	}
+};
+
+async function askFor(call: ToolCall, state: ApprovalState, conversationId: number, untrusted: () => Promise<string[]>): Promise<Ask> {
 	// Notes reach every future run, so writing one right after reading outside text asks first.
 	if (call.name === "remember" || call.name === "update_memory") {
 		const read = await untrusted();
 		if (read.length === 0) return undefined;
+		const a = parse(call.arguments, noteArgs, `${call.name}'s arguments`);
 		// As it will be stored: a note that won't fit is refused before this (memory.ts), so it isn't cut.
-		const text = tidy(String(call.arguments.text ?? ""));
-		return { summary: `${call.name === "remember" ? "remember" : `change note ${String(call.arguments.id)} to`} "${text}", after reading outside text (${read.join(", ")})` };
+		const text = tidy(a.text ?? "");
+		return { summary: `${call.name === "remember" ? "remember" : `change note ${a.id} to`} "${text}", after reading outside text (${read.join(", ")})` };
 	}
 	// Every workspace tool asks, unless the owner allowed that workspace for an hour in this conversation.
 	if (call.name.startsWith("workspace_")) {
-		const workspace = String(call.arguments.workspace);
+		const a = parse(call.arguments, workspaceArgs, `${call.name}'s arguments`);
+		const { workspace } = a;
 		const now = Date.now();
 		if ((state.grants ?? []).some((g) => g.workspace === workspace && g.conversationId === conversationId && g.until > now)) return undefined;
-		const a = call.arguments;
-		const command = String(a.command);
-		const ask = call.name === "workspace_run" ? whole(`run on ${workspace}${a.cwd ? ` in ${String(a.cwd)}` : ""}: ${clip(command)}`, clip(command), command)
-			: call.name === "workspace_write" ? { summary: `write ${String(a.path)} on ${workspace} (${String(a.content ?? "").length} characters)`, detail: String(a.content ?? "") }
-			: call.name === "workspace_edit" ? { summary: `edit ${String(a.path)} on ${workspace} (${Array.isArray(a.edits) ? a.edits.length : 0} changes)`, detail: editsDetail(a.edits) }
-			: { summary: `read ${String(a.path)} on ${workspace}` };
+		const command = a.command ?? "";
+		const ask = call.name === "workspace_run" ? whole(`run on ${workspace}${a.cwd ? ` in ${a.cwd}` : ""}: ${clip(command)}`, clip(command), command)
+			: call.name === "workspace_write" ? { summary: `write ${a.path} on ${workspace} (${(a.content ?? "").length} characters)`, detail: a.content ?? "" }
+			: call.name === "workspace_edit" ? { summary: `edit ${a.path} on ${workspace} (${a.edits?.length ?? 0} changes)`, detail: editsDetail(a.edits ?? []) }
+			: { summary: `read ${a.path} on ${workspace}` };
 		return { ...ask, always: { kind: "workspace-hour", value: workspace, label: `Allow ${workspace} for an hour here`, done: `Allowed ${workspace} for an hour` } };
 	}
-	// A job acts later, without the owner there, so every new one asks. A bad schedule is reported by the tool.
+	// A job acts later, without the owner there, so every new one asks. A bad schedule is refused before this (jobs.ts).
 	if (call.name === "schedule_job") {
-		const a = call.arguments;
-		const gate = a.gate as { name?: unknown; args?: unknown } | undefined;
+		const a = parse(call.arguments, scheduleArgs, "schedule_job's arguments");
+		const { gate } = a;
 		let when: string;
 		try {
-			when = describeSchedule(parseSchedule(a as Parameters<typeof parseSchedule>[0], gate !== undefined));
+			when = describeSchedule(parseSchedule(a, gate !== undefined));
 		} catch {
-			return undefined;
+			return undefined; // the tool reports the bad schedule itself
 		}
-		const gated = gate === undefined ? "" : `, gated by ${String(gate.name)}${gate.args === undefined ? "" : ` ${JSON.stringify(gate.args)}`}`;
-		const instruction = String(a.instruction);
-		return whole(`schedule "${String(a.title)}", ${when}${a.mode === "watch" ? " (a watch)" : ""}${gated}: ${clip(instruction)}`, clip(instruction), instruction);
+		const gated = gate === undefined ? "" : `, gated by ${gate.name}${gate.args === undefined ? "" : ` ${JSON.stringify(gate.args)}`}`;
+		const instruction = a.instruction ?? "";
+		return whole(`schedule "${a.title}", ${when}${a.mode === "watch" ? " (a watch)" : ""}${gated}: ${clip(instruction)}`, clip(instruction), instruction);
 	}
 	if (call.name === "fetch_url") {
+		const { url } = parse(call.arguments, object({ url: string }), "fetch_url's arguments");
 		let host: string;
 		try {
-			host = new URL(String(call.arguments.url)).hostname;
+			host = new URL(url).hostname;
 		} catch {
 			return undefined; // the tool reports the bad URL itself
 		}
 		if (state.fetchHosts.includes(host)) return undefined;
-		return { summary: `fetch ${String(call.arguments.url)}`, always: { kind: "fetch-host", value: host, label: `Always allow ${host}`, done: `Always allowed ${host}` } };
+		return { summary: `fetch ${url}`, always: { kind: "fetch-host", value: host, label: `Always allow ${host}`, done: `Always allowed ${host}` } };
 	}
 	return undefined;
-};
+}
 
 /** A copy that outlives the commit: a draft's nested objects stop working once it's committed. */
 function plain(request: ApprovalRequest): ApprovalRequest {
+	// SAFETY: a request is plain JSON data, so a JSON round trip gives back the same request.
 	return JSON.parse(JSON.stringify(request)) as ApprovalRequest;
 }
 
@@ -184,7 +210,7 @@ export class ApprovalService {
 			await this.close(request.id, "expired");
 			return true;
 		}
-		const task = await this.#harness.getTask(request.taskId as TaskId<unknown>, background);
+		const task = await this.#harness.getTask(taskId(request.taskId), background);
 		if (task === undefined || task.state.status === "completing" || task.state.status === "terminal") {
 			await this.close(request.id, "cancelled");
 			return true;
@@ -208,7 +234,7 @@ export class ApprovalService {
 		const done = plain(request);
 		const { id, tool, summary, status, kind, decision, by, answer, decidedAt } = done;
 		const data = JSON.parse(JSON.stringify({ id, tool, summary, status, kind, decision, by, answer, decidedAt }));
-		await tx.appendEntry(ApprovalSettled, request.conversationId as ConversationId, { data });
+		await tx.appendEntry(ApprovalSettled, conversationId(request.conversationId), { data });
 		return done;
 	}
 
@@ -363,19 +389,25 @@ export class ApprovalService {
 	}
 }
 
-/** Fires when the call is stopped and when the Harness closes; the tool runtime carries the second signal. */
-export function signalOf(api: object, context: Context): AbortSignal {
-	return AbortSignal.any([context.abortSignal, (api as { signal?: AbortSignal }).signal].filter((s) => s !== undefined));
+/**
+ * Fires when the call is stopped and when the Harness closes. Pi Durable 1.1.0's tool runtime carries the second as
+ * `signal`, which its types don't declare; without it, only the first is used.
+ */
+export function signalOf(api: ToolExecutionApi | HookApi, context: Context): AbortSignal {
+	const closed = "signal" in api && api.signal instanceof AbortSignal ? api.signal : undefined;
+	return AbortSignal.any([context.abortSignal, closed].filter((s) => s !== undefined));
 }
 
 /**
  * The untrusted tools whose results are in the conversation since its last user message, and the job's gate when that
  * message holds what a gate found. The hook's api is the tool task's runtime, which can read the conversation's context.
  */
-export async function untrustedSince(api: unknown, context: Context): Promise<string[]> {
-	const runtime = api as { conversationId: ConversationId; context?: (id: ConversationId, context: Context) => Promise<{ messages: readonly Message[] }> };
-	if (runtime.context === undefined) return [];
-	const { messages } = await runtime.context(runtime.conversationId, context);
+export async function untrustedSince(api: HookApi, context: Context): Promise<string[]> {
+	if (!("context" in api) || !(api.context instanceof Function)) return [];
+	// SAFETY: in Pi Durable 1.1.0 the hook's api is the tool task's runtime, whose context(id) gives the conversation's
+	// model context; HookApi's type doesn't declare it, so it's checked for above.
+	const read = api.context as (id: ConversationId, context: Context) => Promise<{ messages: readonly Message[] }>;
+	const { messages } = await read.call(api, api.conversationId, context);
 	const found = new Set<string>();
 	for (let i = messages.length - 1; i >= 0; i -= 1) {
 		const message = messages[i]!;
@@ -416,7 +448,7 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 			const choices = (args.choices ?? []).map((c) => c.trim()).filter((c) => c !== "").map((c) => c.slice(0, 75));
 			const ask: Parameters<ApprovalService["open"]>[3] = { summary: args.question.trim(), kind: "question" };
 			if (choices.length > 0) ask.choices = choices;
-			const request = await approvals.open(`question:${api.taskId}`, { conversationId: api.conversationId as number, taskId: api.taskId as number }, "ask_owner", ask);
+			const request = await approvals.open(`question:${api.taskId}`, { conversationId: api.conversationId, taskId: api.taskId }, "ask_owner", ask);
 			const done = await approvals.wait(request, signalOf(api, context));
 			const text = done.status === "answered" ? `${owner} answered: ${done.answer}`
 				: done.status === "expired" ? `${owner} didn't answer in time.`
@@ -433,11 +465,11 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 					const approvals = service();
 					const impossible = await refused(call, api, context);
 					if (impossible !== undefined) return { block: impossible };
-					const ask = await policy(call, await approvals.state(), api.conversationId as number, () => untrustedSince(api, context));
+					const ask = await policy(call, await approvals.state(), api.conversationId, () => untrustedSince(api, context));
 					if (ask === undefined) return undefined;
 					// The same id for every run of this call's phase, so a restart doesn't ask twice.
 					const id = await api.memo<string>("gaidin.approval", randomUUID(), context);
-					const request = await approvals.open(id, { conversationId: api.conversationId as number, taskId: api.taskId as number }, call.name, ask);
+					const request = await approvals.open(id, { conversationId: api.conversationId, taskId: api.taskId }, call.name, ask);
 					const done = await approvals.wait(request, signalOf(api, context));
 					if (done.status === "approved") {
 						const since = await refused(call, api, context);

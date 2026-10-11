@@ -10,11 +10,11 @@ import { sshRunner } from "./extensions/homelab/logs.ts";
 import { bwrapArgs, findBwrap } from "./sandbox.ts";
 import { tavilyUsage } from "./search.ts";
 import { isListening, socketPathFor } from "./server.ts";
-import { readWorkspaces, sshRemote } from "./workspaces.ts";
+import { answer, readAnswer, readWorkspaces, sshRemote } from "./workspaces.ts";
 
 export type Check = { status: "ok" | "warn" | "fail" | "skip"; area: string; detail: string };
 
-const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+const message = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 
 async function json(url: string, init: RequestInit = {}): Promise<{ status: number; body: any }> {
 	const response = await fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
@@ -44,7 +44,7 @@ export async function runChecks(loaded: Loaded, options: { push?: boolean } = {}
 		workspaces(config),
 		homelab(config),
 	];
-	return (await Promise.all(groups.map((group) => group.catch((error) => [{ status: "fail", area: "doctor", detail: message(error) } as Check])))).flat();
+	return (await Promise.all(groups.map((group) => group.catch((error): Check[] => [{ status: "fail", area: "doctor", detail: message(error) }])))).flat();
 }
 
 async function settings({ config, errors, warnings }: Loaded): Promise<Check[]> {
@@ -57,7 +57,7 @@ async function settings({ config, errors, warnings }: Loaded): Promise<Check[]> 
 }
 
 async function node(): Promise<Check[]> {
-	const [major, minor] = process.versions.node.split(".").map(Number) as [number, number];
+	const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
 	const ok = major > 22 || (major === 22 && minor >= 18);
 	return [{ status: ok ? "ok" : "fail", area: "node", detail: ok ? `Node ${process.versions.node}` : `Node ${process.versions.node}; gaidin needs 22.18 or later` }];
 }
@@ -188,10 +188,7 @@ async function workspaces(config: Config): Promise<Check[]> {
 	return Promise.all(list.map(async (workspace): Promise<Check> => {
 		try {
 			const { output } = await remote(workspace, "read", { path: "." }, { signal: AbortSignal.timeout(15_000) });
-			const answer = JSON.parse(output) as { ok: boolean; path?: string; error?: string };
-			return answer.ok
-				? { status: "ok", area: "workspaces", detail: `${workspace.name}: ${answer.path}` }
-				: { status: "fail", area: "workspaces", detail: `${workspace.name}: ${answer.error}` };
+			return { status: "ok", area: "workspaces", detail: `${workspace.name}: ${answer(output, readAnswer).path}` };
 		} catch (error) {
 			return { status: "fail", area: "workspaces", detail: `${workspace.name}: ${message(error)}` };
 		}

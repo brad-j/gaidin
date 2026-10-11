@@ -7,13 +7,16 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import { type ConversationId, type Conversation, defineDoc, type EntryId, type Harness, type UserInput } from "@earendil-works/pi-durable";
+import { type Conversation, defineDoc, type EntryId, type Harness, type UserInput } from "@earendil-works/pi-durable";
 import type { ApprovalService } from "./approvals.ts";
 import { assistantText, context } from "./host.ts";
+import { array, boolean, isObject, json, type Json, number, object, optional, parse, ParseError, parseJson, string } from "./parse.ts";
 import { stamp } from "./time.ts";
+import { conversationId as toConversationId, entryId } from "./ids.ts";
 
 /** The fields of a file in a Slack message this uses. */
 export type SlackFile = { name?: string; mimetype?: string; size?: number; url_private?: string; thumb_1024?: string };
+const slackFile = object({ name: optional(string), mimetype: optional(string), size: optional(number), url_private: optional(string), thumb_1024: optional(string) });
 
 type Pending = { conversationId: number; content: string; threadTs?: string; files?: SlackFile[] };
 
@@ -79,6 +82,17 @@ export type SlackMessage = {
 	bot_id?: string;
 	files?: SlackFile[];
 };
+const slackMessage = object({
+	type: string,
+	channel: optional(string),
+	user: optional(string),
+	text: optional(string),
+	ts: string,
+	thread_ts: optional(string),
+	subtype: optional(string),
+	bot_id: optional(string),
+	files: optional(array(slackFile)),
+});
 
 /** Posts markdown and returns the ts of each message it made. */
 export type SlackPost = (channel: string, markdown: string, threadTs?: string) => Promise<string[]>;
@@ -153,9 +167,9 @@ export function createSlackSurface(options: {
 				return false;
 			} else {
 				const from = state.answerConversations?.[threadTs];
-				const parent = from === undefined ? root : await harness.conversation(from as ConversationId, context);
+				const parent = from === undefined ? root : await harness.conversation(toConversationId(from), context);
 				if (parent === undefined) throw new Error(`conversation ${from} is gone`);
-				const fork = await parent.fork(at as EntryId, {
+				const fork = await parent.fork(entryId(at), {
 					ownership: { kind: "ownerless" },
 					init: async (tx, id) => {
 						(await tx.doc(SlackState)).threads[threadTs] = id;
@@ -187,7 +201,7 @@ export function createSlackSurface(options: {
 			if (pending === undefined) return;
 			const conversation = pending.conversationId === root.id
 				? root
-				: await harness.conversation(pending.conversationId as ConversationId, context);
+				: await harness.conversation(toConversationId(pending.conversationId), context);
 			if (conversation === undefined) throw new Error(`conversation ${pending.conversationId} is gone`);
 			// The request id makes this idempotent: after a restart it finds the run already admitted.
 			const content = pending.files === undefined ? pending.content : await withFiles(pending.content, pending.files, ts);
@@ -268,7 +282,7 @@ export function createSlackSurface(options: {
 }
 
 /** Calls a Slack Web API method with the bot token; throws unless Slack answers ok. */
-export type SlackApi = (method: string, body: Record<string, unknown>) => Promise<{ ts?: string; [field: string]: unknown }>;
+export type SlackApi = (method: string, body: { readonly [field: string]: Json | undefined }) => Promise<{ ts?: string }>;
 
 export function slackApi(botToken: string): SlackApi {
 	return async (method, body) => {
@@ -278,7 +292,7 @@ export function slackApi(botToken: string): SlackApi {
 			body: JSON.stringify(body),
 			signal: AbortSignal.timeout(15_000),
 		});
-		const answer = (await response.json()) as { ok: boolean; error?: string; ts?: string };
+		const answer = parse(await response.json(), object({ ok: boolean, error: optional(string), ts: optional(string) }), `Slack's answer to ${method}`);
 		if (!answer.ok) throw new Error(`${method}: ${answer.error ?? response.status}`);
 		return answer;
 	};
@@ -325,10 +339,19 @@ export type SlackAction = {
 	type: string;
 	user?: { id: string };
 	channel?: { id: string };
-	/** The message the button is on. */
-	message?: { ts: string; text?: string; blocks?: { type: string }[] };
+	/** The message the button is on, with its blocks as Slack sent them. */
+	message?: { ts: string; text?: string; blocks?: Json[] };
 	actions?: { action_id: string; value?: string }[];
 };
+const slackAction = object({
+	type: string,
+	user: optional(object({ id: string })),
+	channel: optional(object({ id: string })),
+	message: optional(object({ ts: string, text: optional(string), blocks: optional(array(json)) })),
+	actions: optional(array(object({ action_id: string, value: optional(string) }))),
+});
+/** A Socket Mode frame: hello, disconnect, or an envelope to ack, holding an event or a button press. */
+const frame = object({ type: string, envelope_id: optional(string), payload: optional(json) });
 
 /**
  * Keeps a Socket Mode connection open and hands each message event to `event` and each button press to
@@ -349,7 +372,7 @@ export function socketMode(appToken: string, handlers: { event: (event: SlackMes
 				headers: { Authorization: `Bearer ${appToken}`, "Content-Type": "application/x-www-form-urlencoded" },
 				signal: AbortSignal.timeout(15_000),
 			});
-			const body = (await response.json()) as { ok: boolean; url?: string; error?: string };
+			const body = parse(await response.json(), object({ ok: boolean, url: optional(string), error: optional(string) }), "Slack's answer to apps.connections.open");
 			if (!body.ok || body.url === undefined) throw new Error(`apps.connections.open: ${body.error ?? response.status}`);
 			url = body.url;
 		} catch (error) {
@@ -369,12 +392,13 @@ export function socketMode(appToken: string, handlers: { event: (event: SlackMes
 		const refresh = setTimeout(replace, 60 * 60_000);
 		refresh.unref();
 		socket.addEventListener("message", (message) => {
-			const data = JSON.parse(String(message.data)) as {
-				type: string;
-				envelope_id?: string;
-				reason?: string;
-				payload?: { event?: SlackMessage } & SlackAction;
-			};
+			let data;
+			try {
+				data = parseJson(String(message.data), frame, "a Socket Mode frame");
+			} catch (error) {
+				console.error("[slack]", error instanceof Error ? error.message : error);
+				return;
+			}
 			if (data.type === "hello") {
 				failures = 0;
 				return;
@@ -387,12 +411,23 @@ export function socketMode(appToken: string, handlers: { event: (event: SlackMes
 			const ack = () => {
 				if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ envelope_id: data.envelope_id }));
 			};
-			if (data.type === "interactive" && data.payload?.type === "block_actions" && handlers.action !== undefined) {
-				// Slack doesn't resend a button press, and wants its ack within 3 seconds either way.
-				handlers.action(data.payload).catch((error) => console.error("[slack] action failed:", error)).finally(ack);
-				return;
+			let event: SlackMessage | undefined;
+			try {
+				if (data.type === "interactive" && handlers.action !== undefined) {
+					const payload = parse(data.payload, slackAction, "a button press");
+					if (payload.type !== "block_actions") return ack();
+					// Slack doesn't resend a button press, and wants its ack within 3 seconds either way.
+					handlers.action(payload).catch((error) => console.error("[slack] action failed:", error)).finally(ack);
+					return;
+				}
+				const raw = data.type === "events_api" && isObject(data.payload) ? data.payload.event : undefined;
+				event = raw === undefined ? undefined : parse(raw, slackMessage, "a Slack event");
+			} catch (error) {
+				// Sent again, it would read no better.
+				if (!(error instanceof ParseError)) throw error;
+				console.error("[slack]", error.message);
+				return ack();
 			}
-			const event = data.type === "events_api" ? data.payload?.event : undefined;
 			if (event === undefined) return ack();
 			// Not acked on failure, so Slack sends it again.
 			handlers.event(event).then(ack, (error) => console.error("[slack] event failed:", error));
@@ -405,11 +440,11 @@ export function socketMode(appToken: string, handlers: { event: (event: SlackMes
 		socket.addEventListener("error", () => {});
 	}
 
-	function retry(error: unknown) {
+	function retry(cause: unknown) {
 		if (stopped) return;
 		failures += 1;
 		const delay = Math.min(1000 * 2 ** failures, 60_000);
-		console.error(`[slack] ${error instanceof Error ? error.message : error}; reconnecting in ${delay / 1000}s`);
+		console.error(`[slack] ${cause instanceof Error ? cause.message : cause}; reconnecting in ${delay / 1000}s`);
 		setTimeout(() => void open(), delay).unref();
 	}
 

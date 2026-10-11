@@ -168,7 +168,7 @@ export class SandboxEnv extends RedactingEnv {
 			const cwd = await this.#confine(options?.cwd ?? this.cwd, context);
 			if (!cwd.ok) return err(new ExecutionError("spawn_error", cwd.error.message));
 			if (this.#bwrap === undefined) return super.exec(command, { ...options, cwd: cwd.value }, context);
-			const inner = typeof command === "string" ? ["bash", "-c", command] : [...command];
+			const inner = Array.isArray(command) ? [...command] : ["bash", "-c", command];
 			const argv = [this.#bwrap, ...(await bwrapArgs(this.root, cwd.value, this.#hide)), "--", ...inner];
 			return super.exec(argv, { ...options, cwd: cwd.value }, context);
 		});

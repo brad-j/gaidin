@@ -6,6 +6,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
 import type { HomelabConfig } from "../../config.ts";
 import type { Gate } from "../../jobs.ts";
+import { array, boolean, dictionary, integer, type Json, nullable, number, object, optional, parse, type Parser, string } from "../../parse.ts";
 
 export const DISK_WARNING = 85;
 export const DISK_CRITICAL = 95;
@@ -40,7 +41,44 @@ export type Feeds = {
 type Settled<T> = { data?: T; error?: string };
 export type FetchedFeeds = { [K in keyof Feeds]: Settled<Feeds[K]> };
 
-export type FetchJson = (url: string) => Promise<unknown>;
+export type FetchJson = (url: string) => Promise<Json>;
+
+// The feeds as the homelab's collectors write them. Their Python leaves some strings out or null, read here as "".
+const text: Parser<string> = (value, at) => (value === undefined || value === null ? "" : string(value, at));
+const snapshotOf = <T>(fields: Parser<T>) => (value: Json, name: string) => {
+	if (parse(value, object({ schemaVersion: integer }), `${name}.json`).schemaVersion !== 1) throw new Error(`${name}.json used an unsupported schema`);
+	return parse(value, fields, `${name}.json`);
+};
+const beszelFeed = snapshotOf(object({
+	generatedAt: string,
+	systems: array(object({ name: text, status: text, updatedAt: text, cpu: nullable(number), memory: nullable(number), disk: nullable(number), temperature: nullable(number) })),
+}));
+const dockerFeed = snapshotOf(object({
+	generatedAt: string,
+	hosts: array(object({
+		name: text,
+		status: text,
+		error: nullable(string),
+		containers: array(object({ name: text, state: text, health: text, status: text, image: text })),
+	})),
+}));
+const backupsFeed = snapshotOf(object({
+	generatedAt: string,
+	node: text,
+	jobs: array(object({
+		id: text,
+		enabled: boolean,
+		storage: nullable(string),
+		guests: array(object({ vmid: integer, name: nullable(string), latestAt: nullable(string) })),
+		storageStatus: object({ active: boolean, totalBytes: nullable(number), usedBytes: nullable(number) }),
+	})),
+	runs: array(object({ endedAt: nullable(string), status: nullable(string) })),
+}));
+const kumaPage = object({ publicGroupList: array(object({ monitorList: array(object({ id: integer, name: text })) })) });
+const kumaHeartbeats = object({
+	heartbeatList: dictionary(array(object({ status: integer, msg: optional(string) }))),
+	uptimeList: optional(dictionary(number)),
+});
 
 export const fetchJson: FetchJson = async (url) => {
 	const response = await fetch(url, { signal: AbortSignal.timeout(8_000) });
@@ -59,34 +97,27 @@ export async function fetchFeeds(sources: Pick<HomelabConfig, "feeds" | "kuma">,
 			return { error: error instanceof Error ? error.message : String(error) };
 		}
 	};
-	const snapshot = async <T>(name: string, check: (value: any) => boolean): Promise<T> => {
-		const value = (await get(`${sources.feeds}/${name}.json`)) as any;
-		if (value?.schemaVersion !== 1 || typeof value.generatedAt !== "string" || !check(value)) {
-			throw new Error(`${name}.json used an unsupported schema`);
-		}
-		return value as T;
-	};
+	const feed = async <T>(name: string, read: (value: Json, name: string) => T) => read(await get(`${sources.feeds}/${name}.json`), name);
 	const [kuma, beszel, docker, backups] = await Promise.all([
 		settle(async () => {
-			const [page, heartbeat] = (await Promise.all([
-				get(`${sources.kuma.url}/api/status-page/${encodeURIComponent(sources.kuma.page)}`),
-				get(`${sources.kuma.url}/api/status-page/heartbeat/${encodeURIComponent(sources.kuma.page)}`),
-			])) as [any, any];
-			if (!Array.isArray(page?.publicGroupList) || !heartbeat?.heartbeatList) throw new Error("Uptime Kuma answered in an unexpected shape");
-			return page.publicGroupList.flatMap((group: any) => group.monitorList).map((monitor: any): KumaMonitor => {
-				const latest = (heartbeat.heartbeatList[String(monitor.id)] ?? []).at(-1);
-				const uptime = heartbeat.uptimeList?.[`${monitor.id}_24`];
+			const slug = encodeURIComponent(sources.kuma.page);
+			const [page, heartbeat] = await Promise.all([
+				get(`${sources.kuma.url}/api/status-page/${slug}`).then((value) => parse(value, kumaPage, "Uptime Kuma's status page")),
+				get(`${sources.kuma.url}/api/status-page/heartbeat/${slug}`).then((value) => parse(value, kumaHeartbeats, "Uptime Kuma's heartbeats")),
+			]);
+			return page.publicGroupList.flatMap((group) => group.monitorList).map((monitor): KumaMonitor => {
+				const latest = (heartbeat.heartbeatList.get(String(monitor.id)) ?? []).at(-1);
 				return {
 					name: monitor.name,
 					status: latest === undefined ? "unknown" : (MONITOR_STATES.get(latest.status) ?? "unknown"),
 					message: latest?.msg ?? "",
-					uptime24: typeof uptime === "number" ? uptime : null,
+					uptime24: heartbeat.uptimeList?.get(`${monitor.id}_24`) ?? null,
 				};
 			});
 		}),
-		settle(() => snapshot<Feeds["beszel"]>("beszel", (v) => Array.isArray(v.systems))),
-		settle(() => snapshot<Feeds["docker"]>("docker", (v) => Array.isArray(v.hosts))),
-		settle(() => snapshot<Feeds["backups"]>("backups", (v) => Array.isArray(v.jobs) && Array.isArray(v.runs))),
+		settle(() => feed("beszel", beszelFeed)),
+		settle(() => feed("docker", dockerFeed)),
+		settle(() => feed("backups", backupsFeed)),
 	]);
 	return { kuma, beszel, docker, backups };
 }

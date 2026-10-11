@@ -26,9 +26,11 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { type ApprovalService, signalOf, UNTRUSTED_TOOLS } from "../approvals.ts";
 import { type FetchOptions, fetchPublic } from "../fetch.ts";
 import { assistantText } from "../host.ts";
-import type { Gate, GateResult } from "../jobs.ts";
+import type { Gate, GateArgs, GateResult } from "../jobs.ts";
 import { boxArgs } from "../sandbox.ts";
+import { array, boolean, integer, json, type Json, jsonObject, object, optional, parse, parseJson, ParseError, string, text } from "../parse.ts";
 import type { Fetched } from "./api.ts";
+import type { ToRunner } from "./runner.ts";
 
 const run = promisify(execFile);
 const APP = resolve(import.meta.dirname, "../..");
@@ -76,7 +78,10 @@ const REVIEW =
 	`Check the diff against this guide:\n${GUIDE}\n` +
 	'Answer just "OK" if it follows the guide. Otherwise list each problem as "- file: what to cut or change", at most eight, and nothing else.';
 
-type Described = { name: string; description: string; parameters: Record<string, unknown> };
+type Described = { name: string; description: string; parameters: { readonly [keyword: string]: Json } };
+const described = object({ name: string, description: string, parameters: jsonObject });
+/** A line from the box. The extension's own code can write to the channel too, so every line is parsed. */
+const fromRunner = object({ tools: optional(json), id: optional(integer), fetchId: optional(integer), fetch: optional(string), result: optional(string), error: optional(string) });
 type Reply = { result: string } | { error: string };
 type Call = { process: ChildProcess; settle: (reply: Reply) => void; fetch: (url: string) => Promise<Fetched> };
 const GATE_CALL_MS = 30_000;
@@ -84,17 +89,10 @@ const GATE_CALL_MS = 30_000;
 /** A tool's answer as a gate: JSON {"wake": boolean, "data"?: anything, "topic"?: string}. */
 function gateResult(reply: Reply, tool: string): GateResult {
 	if ("error" in reply) throw new Error(reply.error);
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(reply.result);
-	} catch {
-		throw new Error(`${tool} didn't answer with JSON`);
-	}
-	const { wake, data, topic } = (typeof parsed === "object" && parsed !== null ? parsed : {}) as Record<string, unknown>;
-	if (typeof wake !== "boolean") throw new Error(`${tool}'s answer has no "wake": true or false`);
+	const { wake, data, topic } = parseJson(reply.result, object({ wake: boolean, data: optional(text), topic: optional(string) }), `${tool}'s answer`);
 	const result: GateResult = { wake };
-	if (data !== undefined) result.data = typeof data === "string" ? data : JSON.stringify(data);
-	if (typeof topic === "string") result.topic = topic;
+	if (data !== undefined) result.data = data;
+	if (topic !== undefined) result.topic = topic;
 	return result;
 }
 
@@ -104,7 +102,8 @@ async function failure([command = "", ...rest]: string[], timeout: number): Prom
 		await run(command, rest, { env: {}, timeout, killSignal: "SIGKILL", maxBuffer: 10_000_000 });
 		return undefined;
 	} catch (error) {
-		const { stdout = "", stderr = "", message } = error as { stdout?: string; stderr?: string; message: string };
+		// SAFETY: execFile rejects with an Error that carries what the command printed.
+		const { stdout = "", stderr = "", message } = error as Error & { stdout?: string; stderr?: string };
 		const printed = `${stdout}${stderr}`.trim() || message;
 		return printed.length > 4000 ? `…${printed.slice(-4000)}` : printed;
 	}
@@ -171,13 +170,19 @@ function toolProblems(tools: Described[], taken: ReadonlySet<string>): string[] 
 		if (!TOOL_NAME.test(name)) problems.push(`"${name}" isn't a tool name: lowercase letters, digits and _`);
 		else if (taken.has(name) || seen.has(name)) problems.push(`${name} is already a tool's name`);
 		seen.add(name);
-		if (typeof tool.description !== "string" || tool.description.trim() === "") problems.push(`${name} has no description`);
-		if (tool.parameters?.type !== "object") problems.push(`${name}'s parameters must be an object schema`);
+		if (tool.description.trim() === "") problems.push(`${name} has no description`);
+		if (tool.parameters.type !== "object") problems.push(`${name}'s parameters must be an object schema`);
 	}
 	return problems;
 }
 
-const write = (process: ChildProcess, message: object) => (process.stdio[3] as Duplex).write(`${JSON.stringify(message)}\n`);
+/** The box's channel, which the runner is spawned with as fd 3. */
+function channelOf(process: ChildProcess): Duplex {
+	// SAFETY: runnerFor spawns every box with a pipe as fd 3.
+	return process.stdio[3] as Duplex;
+}
+
+const write = (process: ChildProcess, message: ToRunner) => channelOf(process).write(`${JSON.stringify(message)}\n`);
 
 /** One extension's process, started on first use and again after it stops. */
 class Runner {
@@ -195,7 +200,7 @@ class Runner {
 		return Promise.race([(await this.#start()).tools, late]);
 	}
 
-	async call(name: string, args: unknown, fetch: Call["fetch"], signal: AbortSignal, timeoutMs: number): Promise<Reply> {
+	async call(name: string, args: Json, fetch: Call["fetch"], signal: AbortSignal, timeoutMs: number): Promise<Reply> {
 		await this.tools();
 		const child = await this.#start();
 		const id = this.#next++;
@@ -237,14 +242,16 @@ class Runner {
 
 	#attach(process: ChildProcess, forget: () => void) {
 		// The box dies with the server (--die-with-parent), and mustn't keep it running.
-		for (const handle of [process, process.stderr, process.stdio[3]] as { unref?: () => void }[]) handle.unref?.();
+		process.unref();
+		// SAFETY: a child's pipes are sockets, which can be unref'd; Node's types only say so for the child itself.
+		for (const pipe of [process.stderr, channelOf(process)] as ({ unref?: () => void } | null)[]) pipe?.unref?.();
 		let stderr = "";
 		process.stderr!.on("data", (chunk: Buffer) => {
 			stderr = `${stderr}${chunk}`.slice(-2000);
 		});
 		const { promise: tools, resolve: listed, reject: failed } = Promise.withResolvers<Described[]>();
 		tools.catch(() => {});
-		createInterface({ input: process.stdio[3] as Duplex }).on("line", (line) => this.#receive(line, process, listed));
+		createInterface({ input: channelOf(process) }).on("line", (line) => this.#receive(line, process, listed, failed));
 		const ended = (why: string) => {
 			forget();
 			const error = `The extension stopped (${why})${stderr === "" ? "" : `:\n${stderr.trim()}`}`;
@@ -257,25 +264,31 @@ class Runner {
 		return { process, tools };
 	}
 
-	#receive(line: string, process: ChildProcess, listed: (tools: Described[]) => void) {
-		let message: { tools?: Described[]; id?: number; fetchId?: number; fetch?: unknown; result?: unknown; error?: unknown };
+	#receive(line: string, process: ChildProcess, listed: (tools: Described[]) => void, failed: (error: Error) => void) {
+		let message;
 		try {
-			message = JSON.parse(line);
-		} catch {
+			message = parseJson(line, fromRunner, "the extension's message");
+			if (message.tools !== undefined) return listed(parse(message.tools, array(described), "the extension's tools"));
+		} catch (error) {
+			if (!(error instanceof ParseError)) throw error;
+			// What a call sends is the call's to fail; anything else, the load's.
+			const call = message?.id === undefined ? undefined : this.#calls.get(message.id);
+			if (call === undefined) failed(error);
+			else call.settle({ error: error.message });
 			return;
 		}
-		if (message.tools !== undefined) return listed(message.tools);
-		const call = this.#calls.get(message.id ?? -1);
+		const { id, fetchId, fetch, result, error } = message;
+		const call = id === undefined ? undefined : this.#calls.get(id);
 		if (call === undefined) return;
-		if (typeof message.fetch === "string") {
-			call.fetch(message.fetch).then(
-				(page) => write(process, { fetchId: message.fetchId, page }),
-				(error: Error) => write(process, { fetchId: message.fetchId, error: error.message }),
+		if (fetch !== undefined && fetchId !== undefined) {
+			call.fetch(fetch).then(
+				(page) => write(process, { fetchId, page }),
+				(problem: Error) => write(process, { fetchId, error: problem.message }),
 			);
-		} else if (typeof message.result === "string") {
-			call.settle({ result: message.result });
+		} else if (result !== undefined) {
+			call.settle({ result });
 		} else {
-			call.settle({ error: String(message.error) });
+			call.settle({ error: error ?? "The extension answered without a result" });
 		}
 	}
 }
@@ -349,7 +362,7 @@ export function createSelf(options: {
 		return fetchPage(url, async (host, next) => {
 			const approvals = options.approvals();
 			if ((await approvals.state()).fetchHosts.includes(host)) return;
-			const at = { conversationId: api.conversationId as number, taskId: api.taskId as number };
+			const at = { conversationId: api.conversationId, taskId: api.taskId };
 			const request = await approvals.open(`self-fetch:${api.taskId}:${host}`, at, tool, {
 				summary: `fetch ${next}`,
 				always: { kind: "fetch-host", value: host, label: `Always allow ${host}`, done: `Always allowed ${host}` },
@@ -382,7 +395,7 @@ export function createSelf(options: {
 		return defineTool({
 			name: described.name,
 			description: described.description,
-			parameters: Type.Unsafe<Record<string, unknown>>(described.parameters),
+			parameters: Type.Unsafe<{ readonly [name: string]: Json }>(described.parameters),
 			execute: async (args, api, context) => {
 				const signal = signalOf(api, context);
 				const reply = await runner.call(described.name, args, (url) => fetchFor(url, described.name, api, signal), signal, options.callTimeoutMs ?? 60_000);
@@ -462,7 +475,7 @@ export function createSelf(options: {
 				const removed = lines.filter((l) => l.startsWith("-") && !l.startsWith("---")).length;
 				const names = tools.map((t) => t.name).join(", ");
 				const approvals = options.approvals();
-				const request = await approvals.open(`self:${api.taskId}`, { conversationId: api.conversationId as number, taskId: api.taskId as number }, "load_extension", {
+				const request = await approvals.open(`self:${api.taskId}`, { conversationId: api.conversationId, taskId: api.taskId }, "load_extension", {
 					summary: `${update ? "update" : "add"} extension ${args.name} with ${names} (+${added} −${removed} lines)`,
 					detail: objections === undefined ? change : `${change}\nThe reviewer objected:\n${objections}\n\ngaidin kept it because: ${args.keep}`,
 				});
@@ -490,7 +503,7 @@ export function createSelf(options: {
 			if (extension === undefined) return fail(`There's no extension ${args.name}. Loaded: ${[...runners.keys()].join(", ") || "none"}.`);
 			const names = (extension.tools ?? []).map((t) => t.name);
 			const approvals = options.approvals();
-			const request = await approvals.open(`self:${api.taskId}`, { conversationId: api.conversationId as number, taskId: api.taskId as number }, "remove_extension", {
+			const request = await approvals.open(`self:${api.taskId}`, { conversationId: api.conversationId, taskId: api.taskId }, "remove_extension", {
 				summary: `remove extension ${args.name} and its tools ${names.join(", ")}`,
 			});
 			const done = await approvals.wait(request, signalOf(api, context));
@@ -535,7 +548,7 @@ export function createSelf(options: {
 					name: tool.name,
 					description: tool.description,
 					tool: true,
-					check: async (args: Record<string, unknown>, signal: AbortSignal) => gateResult(await runner.call(tool.name, args, fetchAllowed, signal, GATE_CALL_MS), tool.name),
+					check: async (args: GateArgs, signal: AbortSignal) => gateResult(await runner.call(tool.name, args, fetchAllowed, signal, GATE_CALL_MS), tool.name),
 				})),
 			),
 	};

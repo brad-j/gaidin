@@ -1,5 +1,6 @@
 // Reminders in Slack: each one that fires is posted to the gaidin channel with buttons that snooze it, like
 // the buttons on its push. Once pressed, the message shows when it'll come back.
+import { integer, object, parseJson } from "./parse.ts";
 import type { Reminder } from "./reminders.ts";
 import type { SlackAction, SlackApi } from "./slack.ts";
 import { formatTime } from "./time.ts";
@@ -41,8 +42,7 @@ export function createSlackReminders(options: {
 			if (payload.user?.id !== user || payload.channel?.id !== channel) return;
 			for (const action of payload.actions ?? []) {
 				if (!action.action_id.startsWith("gaidin-snooze-")) continue;
-				const { id, minutes } = JSON.parse(action.value ?? "{}") as { id?: number; minutes?: number };
-				if (typeof id !== "number" || typeof minutes !== "number") continue;
+				const { id, minutes } = parseJson(action.value ?? "", object({ id: integer, minutes: integer }), "the snooze button's value");
 				const snoozed = await options.snooze(id, minutes);
 				if (snoozed !== undefined && payload.message?.ts !== undefined) {
 					await api("chat.update", { channel, ts: payload.message.ts, text: snoozed.text, blocks: blocks(snoozed.text, { until: snoozed.at }) });

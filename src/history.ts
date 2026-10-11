@@ -13,11 +13,12 @@
 import { DatabaseSync } from "node:sqlite";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
-import { AssistantEntry, type ConversationId, defineExtension, defineTool, type EntryId, type EntryRecord, type Harness, ToolResultEntry, type Tx, UserEntry } from "@earendil-works/pi-durable";
+import { AssistantEntry, type ConversationId, defineExtension, defineTool, type EntryRecord, type Harness, ToolResultEntry, type Tx, UserEntry } from "@earendil-works/pi-durable";
 import { ApprovalSettled } from "./approvals.ts";
 import { JobReported } from "./jobs.ts";
 import { ReminderFired } from "./reminders.ts";
 import { formatTime } from "./time.ts";
+import { entryId } from "./ids.ts";
 
 type Place = "main" | "thread" | "job";
 type Row = { id: number; conversation: number; place: Place; role: string; at: number; text: string };
@@ -47,7 +48,7 @@ const WHERE = new Map([["slack", " in Slack"], ["web", " in the web view"]]);
 type Contribution = { rows: (Omit<Activity, "place"> & { ref: string })[]; update?: [string, string] };
 
 function activityOf(entry: EntryRecord): Contribution {
-	const id = entry.id as number;
+	const id = entry.id;
 	if (AssistantEntry.is(entry)) {
 		const message = entry.model?.[0];
 		if (message?.role !== "assistant") return { rows: [] };
@@ -87,9 +88,9 @@ function messageOf(entry: EntryRecord): Omit<Row, "conversation" | "place"> | un
 	if (!UserEntry.is(entry) && !AssistantEntry.is(entry)) return undefined;
 	const message = entry.model?.[0];
 	if (message?.role !== "user" && message?.role !== "assistant") return undefined;
-	const parts = typeof message.content === "string" ? [message.content] : message.content.flatMap((c) => (c.type === "text" ? [c.text] : []));
+	const parts = Array.isArray(message.content) ? message.content.flatMap((c) => (c.type === "text" ? [c.text] : [])) : [message.content];
 	const text = parts.join("").replace(/^\[[^\]]*\] /, "").trim();
-	return text === "" ? undefined : { id: entry.id as number, role: message.role, at: message.timestamp, text };
+	return text === "" ? undefined : { id: entry.id, role: message.role, at: message.timestamp, text };
 }
 
 /** Where a conversation is, or nothing for one that isn't indexed. */
@@ -127,16 +128,16 @@ export function createHistory(file: string, owner: string) {
 	};
 
 	async function add(harness: Harness, entries: readonly EntryRecord[]) {
-		const unknown = [...new Set(entries.map((e) => e.conversationId))].filter((id) => !places.has(id as number));
+		const unknown = [...new Set(entries.map((e) => e.conversationId))].filter((id) => !places.has(id));
 		if (unknown.length > 0) {
 			await harness.commit(async (tx) => {
-				for (const id of unknown) places.set(id as number, await placeOf(tx, id));
+				for (const id of unknown) places.set(id, await placeOf(tx, id));
 			}, background);
 		}
 		for (const entry of entries) {
-			const place = places.get(entry.conversationId as number);
+			const place = places.get(entry.conversationId);
 			if (place === undefined) continue;
-			const conversation = entry.conversationId as number;
+			const conversation = entry.conversationId;
 			const message = messageOf(entry);
 			if (message !== undefined) insert.run(message.id, conversation, place, message.role, message.at, message.text);
 			const { rows, update } = activityOf(entry);
@@ -147,6 +148,7 @@ export function createHistory(file: string, owner: string) {
 
 	/** Indexes what was committed after the newest indexed message. A fork's scan includes its parent's entries, which are skipped. */
 	async function catchUp(harness: Harness) {
+		// SAFETY: rows of the tables createHistory makes, with the columns it gives them.
 		const after = fresh ? 0 : Number((db.prepare("SELECT max(id) AS id FROM messages").get() as { id: number | null }).id ?? 0);
 		let conversations: Parameters<Tx["scanConversations"]>[2];
 		do {
@@ -154,7 +156,7 @@ export function createHistory(file: string, owner: string) {
 			for (const conversation of page.items) {
 				let entries: Parameters<Tx["scanEntries"]>[2];
 				do {
-					const query = { conversationId: conversation.id, minEntryId: (after + 1) as EntryId, order: "ascending" as const };
+					const query = { conversationId: conversation.id, minEntryId: entryId(after + 1), order: "ascending" as const };
 					const found = await harness.commit((tx) => tx.scanEntries(query, 200, entries), background);
 					await add(harness, found.items.filter((e) => e.conversationId === conversation.id));
 					entries = found.next;
@@ -177,6 +179,7 @@ export function createHistory(file: string, owner: string) {
 			await work;
 			const words = args.query.match(/[\p{L}\p{N}]+/gu) ?? [];
 			if (words.length === 0) return { content: [{ type: "text", text: "Give some words to search for." }], isError: true };
+			// SAFETY: rows of the tables createHistory makes, with the columns it gives them.
 			const rows = db
 				.prepare("SELECT m.*, snippet(search, 0, '«', '»', '…', 24) AS snippet FROM search JOIN messages m ON m.id = search.rowid WHERE search MATCH ? ORDER BY m.id DESC LIMIT 10")
 				.all(words.map((w) => `"${w}"`).join(" ")) as (Row & { snippet: string })[];
@@ -192,8 +195,10 @@ export function createHistory(file: string, owner: string) {
 		replay: "safe",
 		execute: async (args) => {
 			await work;
+			// SAFETY: rows of the tables createHistory makes, with the columns it gives them.
 			const before = db.prepare("SELECT * FROM messages WHERE conversation = (SELECT conversation FROM messages WHERE id = ?1) AND id <= ?1 ORDER BY id DESC LIMIT 5").all(args.id) as Row[];
 			if (before.length === 0) return { content: [{ type: "text", text: `There's no message #${args.id}.` }], isError: true };
+			// SAFETY: rows of the tables createHistory makes, with the columns it gives them.
 			const after = db.prepare("SELECT * FROM messages WHERE conversation = ? AND id > ? ORDER BY id LIMIT 4").all(before[0]!.conversation, args.id) as Row[];
 			const clip = (text: string) => (text.length > 2000 ? `${text.slice(0, 2000)}…` : text);
 			return { content: [{ type: "text", text: [...before.reverse(), ...after].map((row) => line(row, clip(row.text))).join("\n\n") }] };
@@ -206,6 +211,7 @@ export function createHistory(file: string, owner: string) {
 		/** Up to 50 things gaidin did, newest first, from after `cursor` on, and the cursor for the next 50. */
 		async timeline(cursor?: { entry: number; ref: string }): Promise<{ items: Activity[]; next?: { entry: number; ref: string } }> {
 			await work;
+			// SAFETY: rows of the tables createHistory makes, with the columns it gives them.
 			const rows = (cursor === undefined
 				? db.prepare("SELECT * FROM activity ORDER BY entry DESC, ref DESC LIMIT 50").all()
 				: db.prepare("SELECT * FROM activity WHERE entry < ?1 OR (entry = ?1 AND ref < ?2) ORDER BY entry DESC, ref DESC LIMIT 50").all(cursor.entry, cursor.ref)) as (Activity & { ref: string })[];

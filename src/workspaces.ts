@@ -14,16 +14,23 @@ import { join } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { Refusal } from "./approvals.ts";
+import { array, boolean, integer, object, optional, ParseError, type Parser, parseJson, string } from "./parse.ts";
 import { type Redactor, redactingStream } from "./redact.ts";
 
 export type Workspace = { name: string; target: string };
 export type Operation = "run" | "read" | "write" | "edit";
+/** What an operation sends the helper, as deploy/workspace/gaidin-workspace.py reads it. */
+export type HelperRequest =
+	| { command: string; cwd?: string; timeout?: number }
+	| { path: string; offset?: number; limit?: number }
+	| { path: string; content: string }
+	| { path: string; edits: { oldText: string; newText: string }[] };
 
 /** Sends one request to a workspace's helper. `run` streams through onOutput and resolves with the exit code. */
 export type Remote = (
 	workspace: Workspace,
 	operation: Operation,
-	request: object,
+	request: HelperRequest,
 	options: { signal?: AbortSignal; onOutput?: (text: string) => void },
 ) => Promise<{ code: number; output: string }>;
 
@@ -86,16 +93,19 @@ export function sshRemote(dir: string): Remote | undefined {
 		});
 }
 
-/** A file operation's JSON answer, or its error as a thrown Error. */
-function answer(output: string): Record<string, any> {
-	let parsed: Record<string, any>;
+/** What the helper answers a read with: a directory's entries, or some of a file's lines. */
+export const readAnswer = object({ path: string, directory: optional(array(string)), offset: optional(integer), totalLines: optional(integer), text: optional(string) });
+
+/** A file operation's JSON answer as `parser` has it, or the helper's refusal as a thrown Error. */
+export function answer<T>(output: string, parser: Parser<T>): T {
 	try {
-		parsed = JSON.parse(output);
-	} catch {
-		throw new Error(`Unexpected answer from the workspace: ${output.slice(0, 500)}`);
+		const { ok, error } = parseJson(output, object({ ok: boolean, error: optional(string) }), "the workspace's answer");
+		if (!ok) throw new Error(error ?? "the workspace refused");
+		return parseJson(output, parser, "the workspace's answer");
+	} catch (error) {
+		if (error instanceof ParseError) throw new Error(`Unexpected answer from the workspace (${error.message}): ${output.slice(0, 500)}`);
+		throw error;
 	}
-	if (parsed.ok !== true) throw new Error(String(parsed.error));
-	return parsed;
 }
 
 export function createWorkspaces(options: { workspaces: Workspace[]; remote: Remote | undefined; redactor: Redactor; owner: string }) {
@@ -148,10 +158,11 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 		}),
 		replay: "safe",
 		execute: async (args) => {
-			const result = answer((await remote!(find(args.workspace), "read", { path: args.path, offset: args.offset, limit: args.limit }, {})).output);
-			if (result.directory !== undefined) return { content: [{ type: "text", text: `${result.path}/\n${(result.directory as string[]).join("\n")}` }] };
-			const last = Math.min(result.offset + (result.text === "" ? 0 : result.text.split("\n").length) - 1, result.totalLines);
-			const text = `${result.path} (lines ${result.offset}-${last} of ${result.totalLines})\n${result.text}`;
+			const result = answer((await remote!(find(args.workspace), "read", { path: args.path, offset: args.offset, limit: args.limit }, {})).output, readAnswer);
+			if (result.directory !== undefined) return { content: [{ type: "text", text: `${result.path}/\n${result.directory.join("\n")}` }] };
+			const { offset = 1, totalLines = 0, text: lines = "" } = result;
+			const last = Math.min(offset + (lines === "" ? 0 : lines.split("\n").length) - 1, totalLines);
+			const text = `${result.path} (lines ${offset}-${last} of ${totalLines})\n${lines}`;
 			return { content: [{ type: "text", text }] };
 		},
 	});
@@ -161,7 +172,7 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 		description: `Create or replace a file in a workspace's projects. ${asks}`,
 		parameters: Type.Object({ workspace: workspaceParam, path: pathParam, content: Type.String() }),
 		execute: async (args) => {
-			const result = answer((await remote!(find(args.workspace), "write", { path: args.path, content: args.content }, {})).output);
+			const result = answer((await remote!(find(args.workspace), "write", { path: args.path, content: args.content }, {})).output, object({ path: string, created: boolean, bytes: integer }));
 			return { content: [{ type: "text", text: `${result.created ? "Created" : "Replaced"} ${result.path} (${result.bytes} bytes)` }] };
 		},
 	});
@@ -175,7 +186,7 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 			edits: Type.Array(Type.Object({ oldText: Type.String(), newText: Type.String() }), { minItems: 1 }),
 		}),
 		execute: async (args) => {
-			const result = answer((await remote!(find(args.workspace), "edit", { path: args.path, edits: args.edits }, {})).output);
+			const result = answer((await remote!(find(args.workspace), "edit", { path: args.path, edits: args.edits }, {})).output, object({ path: string, edits: integer }));
 			return { content: [{ type: "text", text: `Edited ${result.path} (${result.edits} changes)` }] };
 		},
 	});

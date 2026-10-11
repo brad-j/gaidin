@@ -4,11 +4,14 @@
 import type { Harness } from "@earendil-works/pi-durable";
 import type { ApprovalRequest, ApprovalService, Decision } from "./approvals.ts";
 import { context } from "./host.ts";
+import { type Json, literal, object, optional, parseJson, string } from "./parse.ts";
 import type { SlackAction, SlackApi } from "./slack.ts";
 import { SlackState } from "./slack.ts";
 import { formatTime } from "./time.ts";
 
-const DECISIONS: readonly Decision[] = ["once", "always", "deny"];
+/** What an approval or answer button carries, as blocksFor writes it. */
+const buttonValue = object({ id: string, decision: optional(literal<Decision>("once", "always", "deny")), answer: optional(string) });
+const APPROVAL_ACTIONS = /^gaidin-(approve-|deny$|answer-)/;
 
 /** Slack's mrkdwn treats these three as markup. */
 function escape(text: string): string {
@@ -25,7 +28,7 @@ const OUTCOME = {
 } satisfies Record<Exclude<ApprovalRequest["status"], "pending">, string>;
 
 /** A Slack message's fallback text and its blocks. */
-type Message = { text: string; blocks: unknown[] };
+type Message = { text: string; blocks: Json[] };
 
 function questionBlocks(request: ApprovalRequest): Message {
 	const question = escape(request.summary);
@@ -33,7 +36,7 @@ function questionBlocks(request: ApprovalRequest): Message {
 		const outcome = request.status === "answered" ? `Answered: ${escape(request.answer ?? "")}` : OUTCOME[request.status];
 		return { text: `gaidin asked: ${request.summary}`, blocks: [{ type: "section", text: { type: "mrkdwn", text: `gaidin asked: ${question}\n*${outcome}*` } }] };
 	}
-	const blocks: unknown[] = [
+	const blocks: Json[] = [
 		{ type: "section", text: { type: "mrkdwn", text: `*gaidin asks:* ${question}` } },
 	];
 	if (request.choices !== undefined && request.choices.length > 0) {
@@ -62,7 +65,7 @@ export function blocksFor(request: ApprovalRequest): Message {
 		return { text, blocks: [{ type: "section", text: { type: "mrkdwn", text: `gaidin asked to ${what}\n*${outcome}.*` } }] };
 	}
 	const value = (decision: Decision) => JSON.stringify({ id: request.id, decision });
-	const buttons: unknown[] = [
+	const buttons: Json[] = [
 		{ type: "button", action_id: "gaidin-approve-once", style: "primary", text: { type: "plain_text", text: "Allow once" }, value: value("once") },
 	];
 	if (request.always !== undefined) {
@@ -113,19 +116,13 @@ export function createSlackApprovals(options: { harness: Harness; approvals: App
 		async action(payload: SlackAction) {
 			if (payload.user?.id !== user || payload.channel?.id !== channel) return;
 			for (const action of payload.actions ?? []) {
-				if (!action.action_id.startsWith("gaidin-")) continue;
-				let parsed: { id?: unknown; decision?: unknown; answer?: unknown };
-				try {
-					parsed = JSON.parse(action.value ?? "");
-				} catch {
-					continue;
-				}
-				if (typeof parsed.id !== "string") continue;
+				if (!APPROVAL_ACTIONS.test(action.action_id)) continue;
+				const parsed = parseJson(action.value ?? "", buttonValue, "the button's value");
 				let decided;
-				if (action.action_id.startsWith("gaidin-answer-") && typeof parsed.answer === "string") {
+				if (action.action_id.startsWith("gaidin-answer-") && parsed.answer !== undefined) {
 					decided = await approvals.answer(parsed.id, parsed.answer, "slack");
-				} else if (DECISIONS.includes(parsed.decision as Decision)) {
-					decided = await approvals.decide(parsed.id, parsed.decision as Decision, "slack");
+				} else if (parsed.decision !== undefined) {
+					decided = await approvals.decide(parsed.id, parsed.decision, "slack");
 				} else continue;
 				// Already decided elsewhere: refresh the message so its buttons go away.
 				if (decided === undefined) {

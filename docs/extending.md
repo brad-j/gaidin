@@ -19,6 +19,8 @@
 
 The surfaces are separate: `server.ts` wires the socket, Slack (`slack.ts`, `slack-approvals.ts`) and the web view (`web.ts`, `web/`). `sandbox.ts` is the tools' execution environment.
 
+Input from outside the process, such as a request body, a button's value, a service's JSON answer, a line from a self-written tool's box or the settings file, goes through `parse.ts` where it comes in: small parsers like `object({ id: integer, text: optional(string) })` that throw a `ParseError` saying what's wrong and where. It's the one module the lint rules let look at values of unknown shape; elsewhere a type assertion needs a `SAFETY:` comment saying why it holds. `ids.ts` turns the numbers gaidin stores back into Pi Durable's ids.
+
 ## Adding a tool
 
 Define it with `defineTool` and install it in an extension in `host.ts`:

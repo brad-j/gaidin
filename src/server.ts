@@ -19,10 +19,31 @@ import { followAlerts } from "./alerts.ts";
 import { createSlackApprovals } from "./slack-approvals.ts";
 import { createSlackJobs } from "./slack-jobs.ts";
 import { createSlackReminders } from "./slack-reminders.ts";
+import { literal, object, optional, ParseError, parseJson, string } from "./parse.ts";
 import { stamp } from "./time.ts";
 import { createWebServer } from "./web.ts";
 
 export const socketPathFor = (config: Config) => resolve(config.dataDir, "gaidin.sock");
+
+/** What a client sends: one request per connection. */
+export type ClientMessage = { type: "ask"; content: string; requestId?: string } | { type: "watch" };
+/** What the server sends back. */
+export type ServerMessage = { type: "line"; text: string } | { type: "done"; status: string };
+
+const clientMessage = object({ type: literal("ask", "watch"), content: optional(string), requestId: optional(string) });
+const serverMessage = object({ type: literal("line", "done"), text: optional(string), status: optional(string) });
+
+export function parseClientMessage(line: string): ClientMessage {
+	const message = parseJson(line, clientMessage, "the request");
+	if (message.type === "watch") return { type: "watch" };
+	if (message.content === undefined) throw new ParseError("an ask needs content");
+	return message.requestId === undefined ? { type: "ask", content: message.content } : { type: "ask", content: message.content, requestId: message.requestId };
+}
+
+export function parseServerMessage(line: string): ServerMessage {
+	const message = parseJson(line, serverMessage, "the server's message");
+	return message.type === "line" ? { type: "line", text: message.text ?? "" } : { type: "done", status: message.status ?? "" };
+}
 
 /** Whether a server answers on the socket. */
 export function isListening(path: string): Promise<boolean> {
@@ -103,7 +124,7 @@ export async function serve(config: Config) {
 		web.listen(port, "127.0.0.1", () => console.error(`gaidin web view on 127.0.0.1:${port}`));
 	}
 
-	const send = (socket: Socket, message: object) => {
+	const send = (socket: Socket, message: ServerMessage) => {
 		if (!socket.destroyed) socket.write(`${JSON.stringify(message)}\n`);
 	};
 
@@ -123,7 +144,7 @@ export async function serve(config: Config) {
 	}
 
 	async function handle(socket: Socket, line: string) {
-		const request = JSON.parse(line) as { type: "ask"; content: string; requestId?: string } | { type: "watch" };
+		const request = parseClientMessage(line);
 		const { events, shown } = await follow(socket);
 		if (request.type === "watch") return;
 		if ((await approvals.intercept(root.id, request.content, "cli")) === "answered") {

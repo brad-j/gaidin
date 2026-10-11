@@ -1,6 +1,7 @@
 // Paused jobs in Slack: the report that a job paused after failing is posted to the gaidin channel with a
 // button that resumes it. Once pressed, the button gives way to whether it did.
 import type { Job, Report } from "./jobs.ts";
+import { isObject } from "./parse.ts";
 import type { SlackAction, SlackApi } from "./slack.ts";
 
 /** Slack's mrkdwn treats these three as markup. */
@@ -31,7 +32,7 @@ export function createSlackJobs(options: {
 				const message = payload.message;
 				if (message === undefined) continue;
 				const outcome = { type: "context", elements: [{ type: "mrkdwn", text: resumed === undefined ? "Not paused any more" : "Resumed" }] };
-				const blocks = [...(message.blocks ?? []).filter((b) => b.type !== "actions"), outcome];
+				const blocks = [...(message.blocks ?? []).filter((b) => !isObject(b) || b.type !== "actions"), outcome];
 				await api("chat.update", { channel, ts: message.ts, text: message.text ?? "", blocks });
 			}
 		},

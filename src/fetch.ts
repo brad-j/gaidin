@@ -76,12 +76,15 @@ export async function fetchPublic(url: string, options: FetchOptions = {}): Prom
 					if (bad !== undefined) throw new Error(`${hostname} resolves to ${bad.address}, a private or reserved address`);
 					if (addresses.length === 0) throw new Error(`${hostname} has no addresses`);
 				} catch (error) {
+					// SAFETY: net only reads an error's message and code, which an Error has or leaves out.
 					callback(error as NodeJS.ErrnoException, "", 0);
 					return;
 				}
 				// Called once, outside the try, so a throw from the socket's side isn't reported as a failed lookup.
-				if (lookupOptions.all) (callback as (e: null, a: typeof addresses) => void)(null, addresses);
-				else callback(null, addresses[0]!.address, addresses[0]!.family);
+				if (lookupOptions.all) {
+					// SAFETY: with `all`, net's lookup callback takes the list of addresses; its type only has the one-address form.
+					(callback as (e: null, a: typeof addresses) => void)(null, addresses);
+				} else callback(null, addresses[0]!.address, addresses[0]!.family);
 			})();
 		};
 
@@ -118,6 +121,7 @@ export async function fetchPublic(url: string, options: FetchOptions = {}): Prom
 		const chunks: Buffer[] = [];
 		let size = 0;
 		let truncated = false;
+		// SAFETY: the response and the zlib streams give Buffers, since no encoding is set on them.
 		for await (const chunk of stream as AsyncIterable<Buffer>) {
 			chunks.push(chunk);
 			size += chunk.length;

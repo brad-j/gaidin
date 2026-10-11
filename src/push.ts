@@ -11,6 +11,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { defineDoc, type Harness } from "@earendil-works/pi-durable";
+import { type Json, object, parseJson, string } from "./parse.ts";
 
 export type PushMessage = {
 	title: string;
@@ -38,7 +39,7 @@ export type PushKeys = { publicKey: string; privateKey: string };
 /** The VAPID key pair in `dir`, made the first time. */
 export function loadPushKeys(dir: string): PushKeys {
 	const file = join(dir, "push-keys.json");
-	if (existsSync(file)) return JSON.parse(readFileSync(file, "utf8")) as PushKeys;
+	if (existsSync(file)) return parseJson(readFileSync(file, "utf8"), object({ publicKey: string, privateKey: string }), file);
 	const ecdh = createECDH("prime256v1");
 	ecdh.generateKeys();
 	const keys = { publicKey: ecdh.getPublicKey("base64url"), privateKey: ecdh.getPrivateKey("base64url") };
@@ -81,7 +82,7 @@ export function encrypt(plaintext: Buffer, p256dh: string, auth: string, fixed?:
 
 /** The Authorization header for a push to `endpoint`: a JWT for its origin, good for 12 hours, signed with gaidin's key. */
 export function vapid(endpoint: string, keys: PushKeys, subject: string, now = Date.now()): string {
-	const part = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
+	const part = (value: Json) => Buffer.from(JSON.stringify(value)).toString("base64url");
 	const unsigned = `${part({ typ: "JWT", alg: "ES256" })}.${part({ aud: new URL(endpoint).origin, exp: Math.floor(now / 1000) + 12 * 3600, sub: subject })}`;
 	const signature = sign("sha256", Buffer.from(unsigned), { key: signingKey(keys), dsaEncoding: "ieee-p1363" }).toString("base64url");
 	return `vapid t=${unsigned}.${signature}, k=${keys.publicKey}`;
