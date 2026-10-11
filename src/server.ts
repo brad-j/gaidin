@@ -15,6 +15,7 @@ import { assistantText, context, openHost } from "./host.ts";
 import { ReminderFired } from "./reminders.ts";
 import { createSlackSurface, recordPosted, slackApi, slackDownload, slackPoster, socketMode } from "./slack.ts";
 import { createSlackApprovals } from "./slack-approvals.ts";
+import { createSlackReminders } from "./slack-reminders.ts";
 import { stamp } from "./time.ts";
 import { createWebServer } from "./web.ts";
 
@@ -56,7 +57,7 @@ export async function serve(config: Config) {
 		process.exit(1);
 	}
 
-	const { harness, root, switchable, approvals, setDeliver, setBudgetNotify, budget, explain, timeline, sandbox, reminders } = await openHost({ config });
+	const { harness, root, switchable, approvals, setDeliver, setAlsoNotify, setBudgetNotify, budget, explain, timeline, sandbox, reminders } = await openHost({ config });
 
 	let slack: { stop(): void } | undefined;
 	if (config.slack !== undefined) {
@@ -67,7 +68,15 @@ export async function serve(config: Config) {
 		const approvalButtons = createSlackApprovals({ harness, approvals, api, channel, user });
 		void surface.recover();
 		approvalButtons.recover().catch((error) => console.error("[slack] approvals:", error));
-		slack = socketMode(appToken, { event: surface.receive, action: approvalButtons.action });
+		const reminderButtons = createSlackReminders({ api, channel, user, snooze: (id, minutes) => root.commit((tx) => reminders.snooze(tx, id, minutes), context) });
+		setAlsoNotify(reminderButtons.post);
+		slack = socketMode(appToken, {
+			event: surface.receive,
+			action: async (payload) => {
+				await approvalButtons.action(payload);
+				await reminderButtons.action(payload);
+			},
+		});
 		// Job reports go to the channel; a thread on one continues that run's conversation.
 		const post = slackPoster(api);
 		setBudgetNotify(async (text) => void (await post(channel, text)));

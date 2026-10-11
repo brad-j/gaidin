@@ -129,7 +129,13 @@ export async function openHost(options: HostOptions = {}) {
 	// A run the guard refused says so, wherever it's reported.
 	const explain = (reason: string | undefined) => (reason === "no_model" ? budget.blocked() : undefined);
 	const owner = config.owner;
-	const reminders = createReminders(options.notify ?? ntfyNotifier(config.ntfy, config.web?.url), owner);
+	const push = options.notify ?? ntfyNotifier(config.ntfy, config.web?.url);
+	// The server also posts reminders to Slack, with snooze buttons. That's extra: a failure there is logged, not retried.
+	let alsoNotify: Notify | undefined;
+	const reminders = createReminders(async (reminder) => {
+		await push(reminder);
+		await alsoNotify?.(reminder).catch((error) => console.error("[reminder] Slack:", error));
+	}, owner);
 	const redactor = options.redactor ?? redactorFor(secretsOf(config));
 	const mode = options.sandbox ?? config.sandbox;
 	const bwrap = mode === "bwrap" ? findBwrap() : undefined;
@@ -192,11 +198,14 @@ export async function openHost(options: HostOptions = {}) {
 	// and the self-written ones.
 	const builtIn = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...history.tools, ...workspaces.tools];
 	const switchable = () => [...builtIn, ...(self?.tools() ?? [])];
+	const setAlsoNotify = (next: Notify) => {
+		alsoNotify = next;
+	};
 	const setDeliver = (next: Deliver) => {
 		deliver = next;
 	};
 	const setBudgetNotify = (next: (text: string) => Promise<void>) => {
 		budgetNotify = next;
 	};
-	return { harness, root, reminders, jobs, setDeliver, budget, setBudgetNotify, explain, switchable, approvals, config, timeline: history.timeline, sandbox };
+	return { harness, root, reminders, jobs, setDeliver, setAlsoNotify, budget, setBudgetNotify, explain, switchable, approvals, config, timeline: history.timeline, sandbox };
 }

@@ -6,6 +6,7 @@ import test, { type TestContext } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai/providers/faux";
 import { context, openHost } from "../src/host.ts";
+import { createSlackReminders } from "../src/slack-reminders.ts";
 import { createSlackSurface, type SlackMessage, type SlackPost } from "../src/slack.ts";
 
 const CHANNEL = "C1";
@@ -216,4 +217,37 @@ test("images in a message go to the model, other files are saved in the sandbox,
 	// A file with no text is a message too.
 	await slack.receive(message("6.0", "", { subtype: "file_share", files: [{ name: "a.png", mimetype: "image/png", size: 14, url_private: "u/a" }] }));
 	await until(() => posts.length === 2);
+});
+
+test("a fired reminder is posted with snooze buttons, and Brad's press snoozes it and says until when", async (t) => {
+	const calls: { method: string; body: Record<string, unknown> }[] = [];
+	const api = async (method: string, body: Record<string, unknown>) => {
+		calls.push({ method, body });
+		return { ts: "rem.1" };
+	};
+	const snoozed: [number, number][] = [];
+	const snooze = async (id: number, minutes: number) => {
+		snoozed.push([id, minutes]);
+		return { taskId: 99, text: "take the bread out", at: Date.UTC(2026, 9, 11, 12, 10) };
+	};
+	const reminders = createSlackReminders({ api, channel: CHANNEL, user: BRAD, snooze });
+
+	await reminders.post({ taskId: 7, text: "take the bread out", at: Date.now() });
+	const posted = calls[0]!.body as { channel: string; blocks: { type: string; elements?: { action_id: string; value: string }[] }[] };
+	assert.equal(posted.channel, CHANNEL);
+	assert.deepEqual(posted.blocks[1]!.elements!.map((b) => [b.action_id, JSON.parse(b.value)]), [
+		["gaidin-snooze-10", { id: 7, minutes: 10 }],
+		["gaidin-snooze-60", { id: 7, minutes: 60 }],
+	]);
+
+	const press = (user: string) => ({ type: "block_actions", user: { id: user }, channel: { id: CHANNEL }, message: { ts: "rem.1" }, actions: [{ action_id: "gaidin-snooze-60", value: JSON.stringify({ id: 7, minutes: 60 }) }] });
+	await reminders.action(press("U2"));
+	assert.deepEqual(snoozed, []);
+	await reminders.action(press(BRAD));
+	assert.deepEqual(snoozed, [[7, 60]]);
+	const update = calls[1]!;
+	assert.equal(update.method, "chat.update");
+	assert.equal(update.body.ts, "rem.1");
+	assert.match(JSON.stringify(update.body.blocks), /Snoozed until /);
+	assert.doesNotMatch(JSON.stringify(update.body.blocks), /gaidin-snooze/);
 });

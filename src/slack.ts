@@ -323,6 +323,8 @@ export type SlackAction = {
 	type: string;
 	user?: { id: string };
 	channel?: { id: string };
+	/** The message the button is on. */
+	message?: { ts: string };
 	actions?: { action_id: string; value?: string }[];
 };
 

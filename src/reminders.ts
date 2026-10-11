@@ -14,7 +14,7 @@ export const Reminders = defineDoc<{ items: Reminder[] }>({
 });
 
 /** Transcript record of a fired reminder. It carries no model messages, so the model doesn't see it. */
-export const ReminderFired = defineEntry<{ text: string; at: number; delivered: boolean; error?: string }>("gaidin.reminder-fired");
+export const ReminderFired = defineEntry<{ text: string; at: number; delivered: boolean; error?: string; taskId?: number }>("gaidin.reminder-fired");
 
 /**
  * Takes a reminder off the open list. Its task finds itself gone when it wakes, and finishes without
@@ -66,7 +66,7 @@ export function createReminders(notify: Notify, owner = "the user") {
 					}
 					doc.items = doc.items.filter((r) => r.taskId !== task.id);
 					await tx.appendEntry(ReminderFired, task.conversationId, {
-						data: { ...task.input, delivered: error === undefined, ...(error === undefined ? {} : { error }) },
+						data: { ...task.input, taskId: task.id, delivered: error === undefined, ...(error === undefined ? {} : { error }) },
 					});
 					return {
 						status: "terminal",

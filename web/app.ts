@@ -548,6 +548,7 @@ function render() {
 			starts = true;
 			const line = row("remind", "remind", String(data.text ?? ""));
 			if (!data.delivered) line.lastElementChild!.append(el("span", "why", `push failed: ${data.error}`));
+			if (typeof data.taskId === "number") line.lastElementChild!.append(snoozeButtons(data.taskId));
 			out.push(line);
 		}
 		if (entry.kind === "gaidin.job-reported") {
@@ -745,6 +746,26 @@ async function loadSpend() {
 	} catch (error) {
 		notice(String(error));
 	}
+}
+
+/** Buttons that set a fired reminder again, as its push and its Slack message do. */
+function snoozeButtons(id: number): HTMLElement {
+	const buttons = el("span", "snooze");
+	for (const [label, minutes] of [["snooze 10 min", 10], ["1 h", 60]] as const) {
+		const button = el("button", "plain", label);
+		button.type = "button";
+		button.addEventListener("click", async () => {
+			try {
+				const { at } = (await post("/api/reminders/snooze", { id, minutes })) as { at: number };
+				say("sys", `Snoozed until ${when.format(at)}.`);
+				void loadReminders();
+			} catch (error) {
+				notice(String(error));
+			}
+		});
+		buttons.append(button);
+	}
+	return buttons;
 }
 
 async function loadReminders() {

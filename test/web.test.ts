@@ -144,8 +144,15 @@ test("reminders are listed and can be cancelled", async (t) => {
 
 test("a fired reminder is snoozed from its push's button", async (t) => {
 	const { host, call, post } = await start(t);
-	const fired = await host.root.commit((tx) => tx.createTask(host.reminders.ReminderTask, { text: "take the bread out", at: Date.now() }, { ownership: { kind: "conversation" }, background: true }), context);
+	const fired = await host.root.commit(async (tx) => {
+		const id = await tx.createTask(host.reminders.ReminderTask, { text: "take the bread out", at: Date.now() }, { ownership: { kind: "conversation" }, background: true });
+		(await tx.doc(Reminders)).items.push({ taskId: id, text: "take the bread out", at: Date.now() });
+		return id;
+	}, context);
 	await host.harness.waitForTask(fired, context);
+	// The transcript's record of it carries its id, for the web view's snooze buttons.
+	const record = (await host.root.entries({}, 5, undefined, context)).items.find((e) => e.kind === "gaidin.reminder-fired");
+	assert.equal((record?.data as { taskId?: number }).taskId, fired);
 
 	const before = Date.now();
 	const response = await post("/api/reminders/snooze", { id: fired, minutes: 10 });

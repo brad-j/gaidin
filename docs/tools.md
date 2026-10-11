@@ -28,7 +28,7 @@ Pi Durable's `read`, `write`, `edit` and `bash`, confined to the sandbox directo
 
 A reminder is a durable background task ([Concepts](concepts.md#durability)). When it fires, it posts to `NTFY_URL` with the title "gaidin" and records a "Reminder" entry in the conversation, which the web view shows and the model doesn't see. A failed push is retried up to five times with backoff, and the entry records whether it was delivered. Without `NTFY_URL`, reminders print to the server's output.
 
-With `web.url` in the settings, tapping the push opens the web view, and two buttons, Snooze 10 min and Snooze 1 h, set the reminder again from now, in the conversation it came from. The phone's ntfy app makes that request itself, so the buttons work while the phone is on the tailnet; a snooze that fails leaves no new reminder, so check `/next` if you're not sure.
+A reminder can be snoozed for 10 minutes or an hour from wherever it shows up: its push, its message in Slack (with Slack set up, each one is posted to the channel too), and its row in the web view. A snooze sets the reminder again from now, in the conversation it came from. The push's buttons need `web.url` in the settings, and the phone's ntfy app calls the web view itself, so they work while the phone is on the tailnet; on iOS they show when you long-press the notification. With `web.url`, tapping the push opens the web view.
 
 ntfy.sh topics have no password, so use a long random topic name and treat it as a secret. Subscribe to it in the ntfy app on your phone; the topic field takes the name alone, not the URL.
 
