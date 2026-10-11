@@ -19,7 +19,7 @@ import { ntfyNotifier, ntfyReporter } from "./ntfy.ts";
 import { createPush, loadPushKeys, type Push, type PushMessage } from "./push.ts";
 import { type Redactor, redactionExtension, redactorFor } from "./redact.ts";
 import { createReminders, type Notify } from "./reminders.ts";
-import { findBwrap, SandboxEnv } from "./sandbox.ts";
+import { findBwrap, prepareServerDirs, SandboxEnv } from "./sandbox.ts";
 import { backendFor, type SearchBackend, webSearchTool } from "./search.ts";
 import { createSelf } from "./self/index.ts";
 import { setTimeZone, timeZone } from "./time.ts";
@@ -124,6 +124,8 @@ export async function openHost(options: HostOptions = {}) {
 	// Transcripts and tool output live here.
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	mkdirSync(sandbox, { recursive: true });
+	// A symlink a command left in place of these before they were read-only to commands is replaced.
+	await prepareServerDirs(sandbox);
 	const chosen = options.models && options.model ? { models: options.models, model: options.model } : modelFor(config);
 	const model = chosen.model;
 	// Notifications for the owner go through ntfy and by Web Push to the installed web view, whichever are set up.

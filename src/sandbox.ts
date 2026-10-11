@@ -11,14 +11,30 @@
 //
 // A shell command could swap a directory for a symlink between a file tool's check and its use. Shell
 // commands share one lock and file operations take it alone, and nothing in the sandbox outlives its
-// command, so nothing can change the sandbox in that gap. Redaction (redact.ts) still applies on top.
+// command, so nothing can change the sandbox in that gap. The server also writes into two directories
+// while commands run, a long command's full output and files sent in Slack; commands see those read-only,
+// so none can swap one for a symlink that carries the server's writes outside. Redaction (redact.ts)
+// still applies on top.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { realpathSync, statSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, readlink, realpath } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readlink, realpath, rm } from "node:fs/promises";
 import { basename, delimiter, dirname, join, sep } from "node:path";
 import type { Context } from "@earendil-works/chord";
 import { err, ExecutionError, FileError, ok, type Result, type ShellExecOptions, type WatchChange, type WatchTarget } from "@earendil-works/pi-durable/env";
 import { RedactingEnv, type Redactor } from "./redact.ts";
+
+/** Directories in the sandbox the server writes into while commands run. Commands see them read-only. */
+export const SERVER_DIRS = [".tmp", "uploads"];
+
+/** Makes each of SERVER_DIRS a real directory, replacing a symlink or file left in its place. */
+export async function prepareServerDirs(root: string): Promise<void> {
+	for (const name of SERVER_DIRS) {
+		const path = join(root, name);
+		const info = await lstat(path).catch(() => undefined);
+		if (info !== undefined && !info.isDirectory()) await rm(path, { force: true });
+		await mkdir(path, { recursive: true });
+	}
+}
 
 /** bubblewrap on PATH, or undefined. */
 export function findBwrap(path = process.env.PATH ?? ""): string | undefined {
@@ -56,11 +72,13 @@ async function hideArgs(hide: readonly string[], mounted: readonly string[]): Pr
 }
 
 /**
- * bwrap's arguments for a command run in `cwd`, with `root` the only writable place. Files in `hide`, such
- * as a settings file holding secrets under /etc, are covered with /dev/null, which reads as permission denied.
+ * bwrap's arguments for a command run in `cwd`, with `root` the only writable place but for SERVER_DIRS, which
+ * prepareServerDirs has made. Files in `hide`, such as a settings file holding secrets under /etc, are covered with
+ * /dev/null, which reads as permission denied.
  */
 export async function bwrapArgs(root: string, cwd: string, hide: readonly string[] = []): Promise<string[]> {
-	return [...(await systemArgs()), "--bind", root, root, "--chdir", cwd, "--setenv", "HOME", root, ...(await hideArgs(hide, [root]))];
+	const serverDirs = SERVER_DIRS.flatMap((name) => ["--ro-bind", join(root, name), join(root, name)]);
+	return [...(await systemArgs()), "--bind", root, root, ...serverDirs, "--chdir", cwd, "--setenv", "HOME", root, ...(await hideArgs(hide, [root]))];
 }
 
 /** bwrap's arguments for a box where only its own /tmp is writable and `readOnly` is visible at the same paths. */
@@ -168,6 +186,7 @@ export class SandboxEnv extends RedactingEnv {
 			const cwd = await this.#confine(options?.cwd ?? this.cwd, context);
 			if (!cwd.ok) return err(new ExecutionError("spawn_error", cwd.error.message));
 			if (this.#bwrap === undefined) return super.exec(command, { ...options, cwd: cwd.value }, context);
+			await prepareServerDirs(this.root);
 			const inner = Array.isArray(command) ? [...command] : ["bash", "-c", command];
 			const argv = [this.#bwrap, ...(await bwrapArgs(this.root, cwd.value, this.#hide)), "--", ...inner];
 			return super.exec(argv, { ...options, cwd: cwd.value }, context);

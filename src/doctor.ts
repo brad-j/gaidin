@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { Config, Loaded } from "./config.ts";
 import { fetchFeeds } from "./extensions/homelab/status.ts";
 import { sshRunner } from "./extensions/homelab/logs.ts";
-import { bwrapArgs, findBwrap } from "./sandbox.ts";
+import { bwrapArgs, findBwrap, prepareServerDirs } from "./sandbox.ts";
 import { tavilyUsage } from "./search.ts";
 import { isListening, socketPathFor } from "./server.ts";
 import { answer, readAnswer, readWorkspaces, sshRemote } from "./workspaces.ts";
@@ -83,6 +83,7 @@ async function sandbox(config: Config): Promise<Check[]> {
 	// A real sandboxed command, which also proves user namespaces work here (AppArmor on Ubuntu).
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-doctor-"));
 	try {
+		await prepareServerDirs(dir);
 		const result = spawnSync(bwrap, [...(await bwrapArgs(dir, dir)), "--", "true"], { encoding: "utf8", timeout: 10_000 });
 		if (result.status === 0) return [{ status: "ok", area: "sandbox", detail: `bubblewrap works (${bwrap})` }];
 		const why = (result.stderr || result.error?.message || `exit ${result.status}`).trim();

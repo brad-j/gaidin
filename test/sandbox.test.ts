@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -111,6 +111,30 @@ test("shell commands see only the sandbox, their own processes and no network", 
 	await run(env, "(sleep 2; echo late > late.txt) &");
 	await new Promise((r) => setTimeout(r, 2500));
 	assert.equal(existsSync(join(root, "late.txt")), false);
+});
+
+test("commands can read but not replace the directories the server writes into, and a symlink left there before is replaced", { skip: bwrap === undefined && "bwrap isn't installed" }, async (t) => {
+	const { dir, root } = layout(t);
+	symlinkSync(join(dir, "outside"), join(root, "uploads"));
+	const env = new SandboxEnv({ root, redactor: noRedaction, bwrap });
+	assert.equal((await run(env, "true")).exitCode, 0);
+	const real = (name: string) => lstatSync(join(root, name)).isDirectory();
+	assert.ok(real("uploads") && real(".tmp"), "the planted symlink is still there");
+
+	writeFileSync(join(root, "uploads", "doc.txt"), "from Slack");
+	assert.equal((await run(env, "cat uploads/doc.txt")).output, "from Slack");
+	const swap = await run(env, "rm -rf uploads .tmp; ln -sfn ../outside uploads; touch uploads/x .tmp/x");
+	assert.notEqual(swap.exitCode, 0);
+	assert.ok(real("uploads") && real(".tmp"));
+	assert.deepEqual(readdirSync(join(dir, "outside")), []);
+	assert.deepEqual(readdirSync(join(root, "uploads")), ["doc.txt"]);
+
+	// A long command's full output still goes to .tmp, which the server writes from outside the box.
+	const long = await env.exec("head -c 100000 /dev/zero | tr '\\0' a", { onOutput: () => {}, spill: { afterBytes: 1000, afterLines: 1000 } }, context);
+	assert.ok(long.ok && long.value.exitCode === 0);
+	const spilled = long.value.spillPath ?? "";
+	assert.ok(spilled.startsWith(join(realpathSync(root), ".tmp", "")), spilled);
+	assert.equal(readFileSync(spilled).length, 100_000);
 });
 
 test("the agent's bash runs in the sandbox", { skip: bwrap === undefined && "bwrap isn't installed" }, async (t) => {

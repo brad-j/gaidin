@@ -258,7 +258,7 @@ export function createSlackSurface(options: {
 				notes.push(`${name} couldn't be fetched: ${error instanceof Error ? error.message : error}`);
 			}
 		}
-		const note = notes.length === 0 ? "" : `\n\n[Files from Slack: ${notes.join("; ")}. Read them with the file tools; for a PDF, run pdftotext FILE - in bash.]`;
+		const note = notes.length === 0 ? "" : `\n\n[Files from Slack: ${notes.join("; ")}. Read them with the file tools; for a PDF, run pdftotext FILE - in bash. uploads/ is read-only to commands, so write what you make from them elsewhere.]`;
 		return images.length === 0 ? `${text}${note}` : [{ type: "text", text: `${text}${note}` }, ...images];
 	}
 
