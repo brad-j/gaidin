@@ -66,6 +66,7 @@ export function createBudget(options: {
 	let status: BudgetStatus = { today: 0, month: 0, dailyLimit: limits.daily, monthlyLimit: limits.monthly, stopped: false };
 	let statusDay = "";
 	let refreshing: Promise<BudgetStatus> | undefined;
+	let closed = false;
 
 	async function compute(): Promise<BudgetStatus> {
 		const h = harness!;
@@ -111,9 +112,13 @@ export function createBudget(options: {
 	}
 
 	function refresh(): Promise<BudgetStatus> {
-		if (harness === undefined) return Promise.resolve(status);
-		// One at a time; a refresh asked for during one waits for it, then runs again.
-		const next = (refreshing ?? Promise.resolve()).catch(() => {}).then(compute);
+		if (harness === undefined || closed) return Promise.resolve(status);
+		// One at a time; a refresh asked for during one waits for it, then runs again. One the shutdown cut off ends with
+		// the last status, since nothing is left to use it.
+		const next = (refreshing ?? Promise.resolve()).catch(() => {}).then(compute).catch((error) => {
+			if (closed) return status;
+			throw error;
+		});
 		refreshing = next;
 		return next;
 	}
@@ -159,6 +164,7 @@ export function createBudget(options: {
 	return {
 		attach(h: Harness) {
 			harness = h;
+			h.subscribeClose(() => void (closed = true));
 			return refresh();
 		},
 		refresh,

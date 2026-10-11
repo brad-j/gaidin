@@ -123,3 +123,15 @@ test("budget settings are checked", () => {
 	assert.ok(loadConfig({ env: { GAIDIN_BUDGET_DAILY: "-1" }, search: false }).errors.some((e) => /budget\.daily must be a dollar amount/.test(e)));
 	assert.ok(loadConfig({ env: { GAIDIN_BUDGET_DAILY: "0" }, search: false }).warnings.some((w) => /No budget/.test(w)));
 });
+
+test("a refresh still running when gaidin shuts down ends with the last status instead of an error", async (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	// Slow enough that the Harness closes while the refresh waits for the total.
+	const spend = async () => new Promise<number>((resolve) => setTimeout(() => resolve(1), 100));
+	const host = await startHost({ config: configFor({ budget: { daily: 5, monthly: 0 } }), dataDir: dir, models: createModels(), model: { provider: "faux", modelId: "x" }, spend });
+	const before = host.budget.status();
+	const pending = host.budget.refresh();
+	await host.harness.close(context);
+	assert.deepEqual(await pending, before);
+});
