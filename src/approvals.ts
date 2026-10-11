@@ -15,10 +15,11 @@ import { randomUUID } from "node:crypto";
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
 import { type Message, type ToolCall, Type } from "@earendil-works/pi-ai";
-import { type ConversationId, defineDoc, defineEntry, defineExtension, defineTool, type DocumentReader, type Harness, type HookApi, hook, type ToolExecutionApi, ToolTask, type Tx } from "@earendil-works/pi-durable";
-import { describeSchedule, GATE_FINDINGS, parseSchedule, scheduleArgs } from "./jobs.ts";
+import { type ConversationId, defineDoc, defineEntry, defineExtension, defineTool, type DocumentReader, type Harness, type HookApi, hook, type JsonObject, type SessionDocToken, type ToolExecutionApi, ToolTask, type Tx } from "@earendil-works/pi-durable";
+import { describeSchedule, GATE_FINDINGS, Jobs, parseSchedule, scheduleArgs } from "./jobs.ts";
 import { array, number, object, optional, parse, ParseError, string } from "./parse.ts";
-import { tidy } from "./memory.ts";
+import { Memory, tidy } from "./memory.ts";
+import { Reminders } from "./reminders.ts";
 import { conversationId, taskId } from "./ids.ts";
 
 export type Decision = "once" | "always" | "deny";
@@ -74,11 +75,13 @@ type ApprovalState = { requests: Record<string, ApprovalRequest>; fetchHosts: st
 
 /** What a call needs approval for, or nothing. `detail` holds what the summary can't, so the owner sees all of what they allow. */
 type Ask = Pick<ApprovalRequest, "summary" | "always" | "detail"> | undefined;
+/** One of gaidin's session documents as it stands, for what a request says. */
+export type Snapshot = <T extends JsonObject>(doc: SessionDocToken<T>) => Promise<Readonly<T> | undefined>;
 /**
  * What a call needs approval for, or nothing. `untrusted` lists the tools whose outside text is in the conversation's
  * context; it reads the context, so call it only when it matters.
  */
-export type Policy = (call: ToolCall, state: ApprovalState, conversationId: number, untrusted: () => Promise<string[]>) => Ask | Promise<Ask>;
+export type Policy = (call: ToolCall, state: ApprovalState, conversationId: number, untrusted: () => Promise<string[]>, snapshot: Snapshot) => Ask | Promise<Ask>;
 
 /** Why a call can't succeed, read from the current state, or nothing. Checked before asking and again after an approval. */
 export type Refusal = (call: ToolCall, read: DocumentReader, context: Context) => string | undefined | Promise<string | undefined>;
@@ -111,9 +114,9 @@ const workspaceArgs = object({
 	edits: optional(array(object({ oldText: string, newText: string }))),
 });
 
-export const defaultPolicy: Policy = async (call, state, conversationId, untrusted) => {
+export const defaultPolicy: Policy = async (call, state, conversationId, untrusted, snapshot) => {
 	try {
-		return await askFor(call, state, conversationId, untrusted);
+		return await askFor(call, state, conversationId, untrusted, snapshot);
 	} catch (error) {
 		if (!(error instanceof ParseError)) throw error;
 		// Better asked about than let through: the tool reports what's wrong with them.
@@ -121,7 +124,9 @@ export const defaultPolicy: Policy = async (call, state, conversationId, untrust
 	}
 };
 
-async function askFor(call: ToolCall, state: ApprovalState, conversationId: number, untrusted: () => Promise<string[]>): Promise<Ask> {
+const quoted = (text: string | undefined) => (text === undefined ? "" : ` "${clip(text, 200)}"`);
+
+async function askFor(call: ToolCall, state: ApprovalState, conversationId: number, untrusted: () => Promise<string[]>, snapshot: Snapshot): Promise<Ask> {
 	// Notes reach every future run, so writing one right after reading outside text asks first.
 	if (call.name === "remember" || call.name === "update_memory") {
 		const read = await untrusted();
@@ -130,6 +135,16 @@ async function askFor(call: ToolCall, state: ApprovalState, conversationId: numb
 		// As it will be stored: a note that won't fit is refused before this (memory.ts), so it isn't cut.
 		const text = tidy(a.text ?? "");
 		return { summary: `${call.name === "remember" ? "remember" : `change note ${a.id} to`} "${text}", after reading outside text (${read.join(", ")})` };
+	}
+	// Undoing what the owner set up asks too, so a page can't quietly cancel the watch that would notice it.
+	if (call.name === "forget" || call.name === "cancel_job" || call.name === "cancel_reminder") {
+		const read = await untrusted();
+		if (read.length === 0) return undefined;
+		const { id } = parse(call.arguments, object({ id: number }), `${call.name}'s arguments`);
+		const what = call.name === "forget" ? `forget note ${id}${quoted((await snapshot(Memory))?.notes.find((n) => n.id === id)?.text)}`
+			: call.name === "cancel_job" ? `cancel job ${id}${quoted((await snapshot(Jobs))?.items.find((j) => j.taskId === id)?.title)}`
+			: `cancel reminder ${id}${quoted((await snapshot(Reminders))?.items.find((r) => r.taskId === id)?.text)}`;
+		return { summary: `${what}, after reading outside text (${read.join(", ")})` };
 	}
 	// Every workspace tool asks, unless the owner allowed that workspace for an hour in this conversation.
 	if (call.name.startsWith("workspace_")) {
@@ -466,7 +481,7 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 					const approvals = service();
 					const impossible = await refused(call, api, context);
 					if (impossible !== undefined) return { block: impossible };
-					const ask = await policy(call, await approvals.state(), api.conversationId, () => untrustedIn(api, context));
+					const ask = await policy(call, await approvals.state(), api.conversationId, () => untrustedIn(api, context), (doc) => api.snapshot(doc, context));
 					if (ask === undefined) return undefined;
 					// The same id for every run of this call's phase, so a restart doesn't ask twice.
 					const id = await api.memo<string>("gaidin.approval", randomUUID(), context);

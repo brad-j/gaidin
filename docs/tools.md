@@ -3,11 +3,11 @@
 | Tool | Runs | Reaches | Asks first |
 |---|---|---|---|
 | `read`, `write`, `edit`, `bash` | in the sandbox | the sandbox directory only, no network | no |
-| `remind`, `list_reminders`, `cancel_reminder` | in the server | the owner's [notifications](surfaces.md#notifications) | no |
+| `remind`, `list_reminders`, `cancel_reminder` | in the server | the owner's [notifications](surfaces.md#notifications) | cancelling, while outside text is in the conversation |
 | `remember`, `update_memory`, `forget` | in the server | the notes in every system prompt | while outside text is in the conversation |
 | `search_history`, `read_history` | in the server | its index of past messages | no |
 | `ask_owner` | in the server | the owner, in Slack or the web view | it is the question |
-| `schedule_job`, `list_jobs`, `cancel_job` | in the server; each run is a new conversation | what the run's tools reach | every new job |
+| `schedule_job`, `list_jobs`, `cancel_job` | in the server; each run is a new conversation | what the run's tools reach | every new job; cancelling, while outside text is in the conversation |
 | alert investigations | in the server; each is a job run | read-only tools only | for a host not allowed for good |
 | `fetch_url` | in the server | the public internet only | for a host not allowed for good |
 | `web_search` | in the server | the configured search backend | no |
