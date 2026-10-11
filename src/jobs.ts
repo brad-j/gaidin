@@ -10,7 +10,7 @@
 // A run that fails delays the next one, and after MAX_FAILURES in a row the job pauses until the owner
 // resumes it; the owner hears about the first failure and the pause, not the ones between.
 // gaidin also uses jobs for its own follow-ups ("I'll check on that Friday"). Creating one always
-// asks the owner first (approvals.ts), because a job acts later without them.
+// asks the owner first (`guards`), because a job acts later without them.
 import { Type } from "@earendil-works/pi-ai";
 import {
 	AssistantEntry,
@@ -27,10 +27,10 @@ import {
 	type TaskId,
 	type Tx,
 } from "@earendil-works/pi-durable";
-import type { Refusal } from "./approvals.ts";
+import { clip, guard, ifOutsideText, quoted, whole } from "./guards.ts";
 import { formatTime, stamp, timeZone } from "./time.ts";
 import { entryId, conversationId as toConversationId } from "./ids.ts";
-import { jsonObject, object, optional, parse, string } from "./parse.ts";
+import { jsonObject, number, object, optional, string } from "./parse.ts";
 
 export type Schedule =
 	| { kind: "once"; at: number }
@@ -187,8 +187,7 @@ export function describeSchedule(schedule: Schedule): string {
 	}
 }
 
-/** The schedule the tool's arguments describe. Throws with what to fix. */
-/** schedule_job's arguments as the approval hook reads them, before the tool runs. */
+/** schedule_job's arguments as its guard reads them, before the tool runs. */
 export const scheduleArgs = object({
 	title: optional(string),
 	instruction: optional(string),
@@ -200,6 +199,7 @@ export const scheduleArgs = object({
 	gate: optional(object({ name: string, args: optional(jsonObject) })),
 });
 
+/** The schedule the tool's arguments describe. Throws with what to fix. */
 export function parseSchedule(args: { at?: string; every?: string; time?: string; days?: string }, gated: boolean, now = Date.now()): Schedule {
 	const given = [args.at, args.every, args.time].filter((v) => v !== undefined).length;
 	if (given !== 1) throw new Error("Give exactly one of at, every, or time.");
@@ -335,21 +335,39 @@ export function createJobs(options: {
 
 	const missingGate = (name: string) => (gates().some((g) => g.name === name) ? undefined : `There's no gate ${name}. Gates: ${gates().map((g) => g.name).join(", ") || "none"}.`);
 
-	/** A job that can't be made isn't put to the owner (approvals.ts): a schedule it can't keep, a gate that doesn't exist, or no room. */
-	const refuse: Refusal = async (call, read, context) => {
-		if (call.name !== "schedule_job") return undefined;
-		let args;
-		try {
-			args = parse(call.arguments, scheduleArgs, "schedule_job's arguments");
-			parseSchedule(args, args.gate !== undefined);
-		} catch (error) {
-			return error instanceof Error ? error.message : String(error);
-		}
-		const gate = args.gate === undefined ? undefined : missingGate(args.gate.name);
-		if (gate !== undefined) return gate;
-		if (((await read.snapshot(Jobs, context))?.items.length ?? 0) >= MAX_JOBS) return `There are already ${MAX_JOBS} jobs; cancel one first.`;
-		return undefined;
-	};
+	const guards = [
+		// A job acts later, without the owner there, so every new one asks. One that can't be made isn't put to the owner:
+		// a schedule it can't keep, a gate that doesn't exist, or no room.
+		guard("schedule_job", scheduleArgs, {
+			refuse: async (a, read, context) => {
+				try {
+					parseSchedule(a, a.gate !== undefined);
+				} catch (error) {
+					return error instanceof Error ? error.message : String(error);
+				}
+				const gate = a.gate === undefined ? undefined : missingGate(a.gate.name);
+				if (gate !== undefined) return gate;
+				if (((await read.snapshot(Jobs, context))?.items.length ?? 0) >= MAX_JOBS) return `There are already ${MAX_JOBS} jobs; cancel one first.`;
+				return undefined;
+			},
+			ask: (a) => {
+				const { gate } = a;
+				let when: string;
+				try {
+					when = describeSchedule(parseSchedule(a, gate !== undefined));
+				} catch {
+					return undefined; // the tool reports the bad schedule itself
+				}
+				const gated = gate === undefined ? "" : `, gated by ${gate.name}${gate.args === undefined ? "" : ` ${JSON.stringify(gate.args)}`}`;
+				const instruction = a.instruction ?? "";
+				return whole(`schedule "${a.title}", ${when}${a.mode === "watch" ? " (a watch)" : ""}${gated}: ${clip(instruction)}`, clip(instruction), instruction);
+			},
+		}),
+		// Undoing what the owner set up asks after outside text, so a page can't quietly cancel the watch that would notice it.
+		guard("cancel_job", object({ id: number }), {
+			ask: (a, situation) => ifOutsideText(situation, async () => `cancel job ${a.id}${quoted((await situation.snapshot(Jobs))?.items.find((j) => j.taskId === a.id)?.title)}`),
+		}),
+	];
 
 	/** Adds a job whose reports go to `conversationId`'s surface. Throws when there are already MAX_JOBS. */
 	async function addJob(tx: Tx, conversationId: ConversationId, fields: Pick<Job, "title" | "instruction" | "schedule" | "mode" | "tools" | "gate">): Promise<Job> {
@@ -607,7 +625,7 @@ export function createJobs(options: {
 	});
 
 	extension = defineExtension({ name: "jobs", tools: [schedule, list, cancel], tasks: [JobTask] });
-	return { extension, JobTask, addJob, refuse };
+	return { extension, JobTask, addJob, guards };
 }
 
 export function describeJob(job: Job): string {

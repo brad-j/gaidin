@@ -4,6 +4,7 @@
 // check the same feeds without waking the model.
 import { defineExtension, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { HomelabConfig } from "../../config.ts";
+import { outsideText } from "../../guards.ts";
 import { containerLogsTool, type RunRemote, sshRunner } from "./logs.ts";
 import { type FetchJson, fetchJson, homelabGate, homelabStatusTool } from "./status.ts";
 
@@ -13,6 +14,9 @@ export type HomelabOptions = {
 	/** How container_logs reaches the hosts; tests replace it. Defaults to ssh with the keys directory's docker-logs key. */
 	logs?: RunRemote;
 };
+
+/** Other programs' logs are text from outside; declared whether or not the extension is on, since past logs can still be in a conversation. */
+export const homelabGuards = [outsideText("container_logs")];
 
 export function createHomelab(config: HomelabConfig, owner: string, keysDir: string, options: HomelabOptions = {}) {
 	const tools: ToolRegistration[] = [homelabStatusTool(config, owner, options.fetch ?? fetchJson)];

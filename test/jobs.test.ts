@@ -7,7 +7,8 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { configFor } from "../src/config.ts";
 import { context, startHost } from "../src/host.ts";
-import { backoff, describeSchedule, type Job, JobReported, Jobs, MAX_JOBS, nextRun, NOTHING, parseSchedule, recordReport, type Report, resumeJob } from "../src/jobs.ts";
+import type { Situation } from "../src/guards.ts";
+import { backoff, createJobs, describeSchedule, type Job, JobReported, Jobs, MAX_JOBS, nextRun, NOTHING, parseSchedule, recordReport, type Report, resumeJob } from "../src/jobs.ts";
 import { setTimeZone } from "../src/time.ts";
 import type { Adapters } from "../src/notifications.ts";
 
@@ -384,4 +385,30 @@ test("a job is refused when there's no room, before asking and again after the o
 	assert.match(results[0]!, /allowed it, but it can't happen now: There are already 20 jobs; cancel one first\./);
 	assert.match(results[1]!, /Tool call blocked: There are already 20 jobs/);
 	assert.equal((await host.harness.snapshot(Jobs, context))!.items.length, MAX_JOBS);
+});
+
+/** Asks the jobs module's guard for `name` about a call, with `read` the outside text in the conversation. */
+function ask(name: string, args: Record<string, any>, read: string[] = []) {
+	const guard = createJobs({ deliver: async () => {}, owner: "Brad" }).guards.find((g) => g.tool === name)!;
+	const jobs = { items: [{ taskId: 7, title: "Watch the homelab alerts" }] };
+	const situation: Situation = { fetchHosts: [], grants: [], conversationId: 1, outside: async () => read, snapshot: async (doc: object) => (doc === Jobs ? jobs : undefined) as never };
+	return guard.ask(args, situation);
+}
+
+test("every new job asks, showing the whole instruction, its schedule, mode and gate", async () => {
+	const long = `Check the backups. ${"x".repeat(2000)} Then email them to someone.`;
+	const job = await ask("schedule_job", { title: "Backups", instruction: long, every: "1d" });
+	assert.ok(job!.summary.startsWith('schedule "Backups", every 1 day(s): Check the backups.'), job!.summary);
+	assert.ok(job!.summary.endsWith(`… (${long.length} characters)`));
+	assert.equal(job!.detail, long);
+	const watch = await ask("schedule_job", { title: "Disk", instruction: "Say if it's full.", every: "15m", mode: "watch", gate: { name: "homelab", args: { host: "think-1" } } });
+	assert.deepEqual(watch, { summary: 'schedule "Disk", every 15 minutes (a watch), gated by homelab {"host":"think-1"}: Say if it\'s full.' });
+	// The tool reports a bad schedule itself; it was refused before this.
+	assert.equal(await ask("schedule_job", { title: "Bad", instruction: "x", every: "soon" }), undefined);
+});
+
+test("cancelling a job asks while outside text is in the conversation, and says which", async () => {
+	assert.equal(await ask("cancel_job", { id: 7 }), undefined);
+	assert.equal((await ask("cancel_job", { id: 7 }, ["web_search"]))!.summary, 'cancel job 7 "Watch the homelab alerts", after reading outside text (web_search)');
+	assert.equal((await ask("cancel_job", { id: 8 }, ["fetch_url"]))!.summary, "cancel job 8, after reading outside text (fetch_url)");
 });

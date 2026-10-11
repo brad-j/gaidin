@@ -6,14 +6,14 @@
 // The server connects with the `workspace` key, checking host keys against `workspaces_known_hosts`
 // (deploy/vm/add-workspace.sh writes both). On the machine, the key only runs
 // deploy/workspace/gaidin-workspace.py, which confines everything to the roots it's configured with.
-// Every call waits for the owner's approval (approvals.ts) unless they allowed that workspace for an hour in
-// the conversation. With no workspaces listed there are no workspace tools.
+// Every call waits for the owner's approval (`workspaceGuards`) unless they allowed that workspace for an
+// hour in the conversation. With no workspaces listed there are no workspace tools.
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
-import type { Refusal } from "./approvals.ts";
+import { type Ask, clip, guard, type Guard, type Situation, whole } from "./guards.ts";
 import { array, boolean, integer, object, optional, ParseError, type Parser, parseJson, string } from "./parse.ts";
 import { type Redactor, redactingStream } from "./redact.ts";
 
@@ -108,6 +108,45 @@ export function answer<T>(output: string, parser: Parser<T>): T {
 	}
 }
 
+/** A workspace_edit's changes, each old text and its replacement, as the owner is asked about them. */
+function editsDetail(edits: readonly { oldText: string; newText: string }[]): string {
+	const lines = (text: string, mark: string) => text.split("\n").map((line) => `${mark} ${line}`);
+	return edits.map((e, i) => [`Change ${i + 1}:`, ...lines(e.oldText, "-"), ...lines(e.newText, "+")].join("\n")).join("\n\n");
+}
+
+/**
+ * Every workspace call asks, showing all of what it allows, unless the owner allowed that workspace for an hour in this
+ * conversation. A workspace taken out of the settings isn't put to the owner. Reads and runs return text from outside.
+ */
+function workspaceGuards(names: readonly string[]): Guard[] {
+	const refuse = (a: { workspace: string }) => (names.includes(a.workspace) ? undefined : `No workspace ${a.workspace}; one of ${names.join(", ")}`);
+	const unlessAllowed = (a: { workspace: string }, situation: Situation, ask: Ask): Ask | undefined => {
+		const now = Date.now();
+		if (situation.grants.some((g) => g.workspace === a.workspace && g.conversationId === situation.conversationId && g.until > now)) return undefined;
+		return { ...ask, always: { kind: "workspace-hour", value: a.workspace, label: `Allow ${a.workspace} for an hour here`, done: `Allowed ${a.workspace} for an hour` } };
+	};
+	return [
+		guard("workspace_run", object({ workspace: string, command: string, cwd: optional(string) }), {
+			refuse,
+			ask: (a, situation) => unlessAllowed(a, situation, whole(`run on ${a.workspace}${a.cwd ? ` in ${a.cwd}` : ""}: ${clip(a.command)}`, clip(a.command), a.command)),
+			outside: true,
+		}),
+		guard("workspace_read", object({ workspace: string, path: string }), {
+			refuse,
+			ask: (a, situation) => unlessAllowed(a, situation, { summary: `read ${a.path} on ${a.workspace}` }),
+			outside: true,
+		}),
+		guard("workspace_write", object({ workspace: string, path: string, content: string }), {
+			refuse,
+			ask: (a, situation) => unlessAllowed(a, situation, { summary: `write ${a.path} on ${a.workspace} (${a.content.length} characters)`, detail: a.content }),
+		}),
+		guard("workspace_edit", object({ workspace: string, path: string, edits: array(object({ oldText: string, newText: string })) }), {
+			refuse,
+			ask: (a, situation) => unlessAllowed(a, situation, { summary: `edit ${a.path} on ${a.workspace} (${a.edits.length} changes)`, detail: editsDetail(a.edits) }),
+		}),
+	];
+}
+
 export function createWorkspaces(options: { workspaces: Workspace[]; remote: Remote | undefined; redactor: Redactor; owner: string }) {
 	const { workspaces, remote, redactor, owner } = options;
 	const asks = `Each call waits for ${owner}'s approval.`;
@@ -192,11 +231,10 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 	});
 
 	const tools: ToolRegistration[] = workspaces.length === 0 || remote === undefined ? [] : [run, read, write, edit];
-	// A workspace taken out of the settings isn't put to the owner.
-	const refuse: Refusal = (call) => (call.name.startsWith("workspace_") && !names.includes(String(call.arguments.workspace)) ? `No workspace ${String(call.arguments.workspace)}; one of ${names.join(", ")}` : undefined);
 	return {
 		tools,
-		refuse,
+		// With or without the tools: a workspace's past reads still count as outside text.
+		guards: workspaceGuards(names),
 		extension: defineExtension({
 			name: "workspaces",
 			tools,

@@ -10,18 +10,18 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { ApprovalService, approvalExtension } from "./approvals.ts";
 import { createBudget } from "./budget.ts";
 import { type Config, configFor, secretsOf, SETTINGS_DIR } from "./config.ts";
-import { createHomelab, type HomelabOptions } from "./extensions/homelab/index.ts";
+import { createHomelab, homelabGuards, type HomelabOptions } from "./extensions/homelab/index.ts";
 import { createFetch, type FetchOptions } from "./fetch.ts";
 import { createHistory } from "./history.ts";
 import { createJobs, type Deliver, type Gate } from "./jobs.ts";
-import { createMemory, refuseNote } from "./memory.ts";
+import { createMemory } from "./memory.ts";
 import { type Adapter, type Adapters, createNotifications, type Notice, type Notifications } from "./notifications.ts";
 import { ntfyAdapter } from "./ntfy.ts";
 import { createPush, loadPushKeys, type Push, pushAdapter } from "./push.ts";
 import { type Redactor, redactionExtension, redactorFor } from "./redact.ts";
 import { createReminders } from "./reminders.ts";
 import { findBwrap, prepareServerDirs, SandboxEnv } from "./sandbox.ts";
-import { backendFor, type SearchBackend, webSearchTool } from "./search.ts";
+import { backendFor, type SearchBackend, searchGuards, webSearchTool } from "./search.ts";
 import { createSelf } from "./self/index.ts";
 import { setTimeZone, timeZone } from "./time.ts";
 import { createWorkspaces, readWorkspaces, type Remote, sshRemote, type Workspace } from "./workspaces.ts";
@@ -156,7 +156,8 @@ export async function openHost(options: HostOptions = {}) {
 	registry.install(persona(owner));
 	registry.install(CodingTools);
 	registry.install(reminders.extension);
-	registry.install(createMemory(owner));
+	const memory = createMemory(owner);
+	registry.install(memory.extension);
 	const homelab = config.homelab === undefined ? undefined : createHomelab(config.homelab, owner, config.keysDir, options.homelab);
 	// Self-written tools are gates too, once they're loaded.
 	let selfGates = (): Gate[] => [];
@@ -186,7 +187,9 @@ export async function openHost(options: HostOptions = {}) {
 	}
 	// The service needs the Harness, which needs the registry; the hook reads it once calls start.
 	let approvals: ApprovalService | undefined;
-	registry.install(approvalExtension(() => approvals!, owner, { refusals: [jobs.refuse, refuseNote, workspaces.refuse] }));
+	// Each tool's approval rules, from the module that owns it; read per call, since self-written tools come and go.
+	const guards = [...memory.guards, ...reminders.guards, ...jobs.guards, ...homelabGuards, ...web.guards, ...searchGuards, ...workspaces.guards, ...history.guards];
+	registry.install(approvalExtension(() => approvals!, owner, () => [...guards, ...(self?.guards() ?? [])]));
 	// Last, so its afterTool sees what every other hook left.
 	registry.install(budget.extension);
 	registry.install(redactionExtension(redactor));

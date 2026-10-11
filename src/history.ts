@@ -15,6 +15,7 @@ import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context"
 import { Type } from "@earendil-works/pi-ai";
 import { AssistantEntry, type ConversationId, defineExtension, defineTool, type EntryRecord, type Harness, ToolResultEntry, type Tx, UserEntry } from "@earendil-works/pi-durable";
 import { ApprovalSettled } from "./approvals.ts";
+import { outsideText } from "./guards.ts";
 import { JobReported } from "./jobs.ts";
 import { ReminderFired } from "./reminders.ts";
 import { formatTime } from "./time.ts";
@@ -207,6 +208,8 @@ export function createHistory(file: string, owner: string) {
 
 	return {
 		tools: [search, read],
+		// Past answers can repeat anything gaidin read, so they're text from outside.
+		guards: [outsideText("search_history"), outsideText("read_history")],
 		extension: defineExtension({ name: "history", tools: [search, read] }),
 		/** Up to 50 things gaidin did, newest first, from after `cursor` on, and the cursor for the next 50. */
 		async timeline(cursor?: { entry: number; ref: string }): Promise<{ items: Activity[]; next?: { entry: number; ref: string } }> {

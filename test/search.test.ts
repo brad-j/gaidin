@@ -5,10 +5,9 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { UNTRUSTED_TOOLS } from "../src/approvals.ts";
 import { configFor, loadConfig, maskedConfig, secretsOf } from "../src/config.ts";
 import { context, startHost } from "../src/host.ts";
-import { type SearchBackend, type SearchQuery, tavily } from "../src/search.ts";
+import { searchGuards, type SearchBackend, type SearchQuery, tavily } from "../src/search.ts";
 
 const KEY = "tvly-dev-0123456789abcdef";
 
@@ -52,7 +51,7 @@ test("the agent's web_search returns labelled results", async (t) => {
 	assert.match(result, /Search results for \\"pi durable\\"/);
 	assert.match(result, /not from Brad/);
 	assert.match(result, /1\. Pi Durable\\n   https:\/\/example\.com\/pi/);
-	assert.ok(UNTRUSTED_TOOLS.has("web_search"));
+	assert.ok(searchGuards.some((g) => g.tool === "web_search" && g.outside));
 	assert.ok(h.switchable().some((tool) => tool.name === "web_search"));
 });
 

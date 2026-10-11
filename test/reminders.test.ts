@@ -7,7 +7,8 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import type { Conversation } from "@earendil-works/pi-durable";
 import { context, startHost } from "../src/host.ts";
-import { ReminderFired, type Reminder, Reminders } from "../src/reminders.ts";
+import type { Situation } from "../src/guards.ts";
+import { createReminders, ReminderFired, type Reminder, Reminders } from "../src/reminders.ts";
 import type { Adapters } from "../src/notifications.ts";
 
 function tempDir(t: TestContext): string {
@@ -142,4 +143,15 @@ test("a failed push is retried", async (t) => {
 	const { outcome } = (await host.harness.waitForTask(id, context)).state;
 	assert.deepEqual(outcome, { status: "completed", result: "sent" });
 	assert.equal(sent.length, 1);
+});
+
+test("cancelling a reminder asks while outside text is in the conversation, and says which", async () => {
+	const guard = createReminders(async () => {}, "Brad").guards.find((g) => g.tool === "cancel_reminder")!;
+	const reminders = { items: [{ taskId: 9, text: "stretch", at: 0 }] };
+	const ask = (id: number, read: string[]) => {
+		const situation: Situation = { fetchHosts: [], grants: [], conversationId: 1, outside: async () => read, snapshot: async (doc: object) => (doc === Reminders ? reminders : undefined) as never };
+		return guard.ask({ id }, situation);
+	};
+	assert.equal(await ask(9, []), undefined);
+	assert.equal((await ask(9, ["fetch_url"]))!.summary, 'cancel reminder 9 "stretch", after reading outside text (fetch_url)');
 });

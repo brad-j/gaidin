@@ -23,7 +23,8 @@ import type { Context } from "@earendil-works/chord";
 import { Type } from "@earendil-works/pi-ai";
 import { configure, defineExtension, defineTool, type Registry, type ToolExecutionApi, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import { type ApprovalService, signalOf, UNTRUSTED_TOOLS } from "../approvals.ts";
+import { type ApprovalService, signalOf } from "../approvals.ts";
+import { outsideText } from "../guards.ts";
 import { type FetchOptions, fetchPublic } from "../fetch.ts";
 import { assistantText } from "../host.ts";
 import type { Gate, GateArgs, GateResult } from "../jobs.ts";
@@ -407,9 +408,6 @@ export function createSelf(options: {
 	function install(name: string, tools: Described[], runner: Runner) {
 		runners.get(name)?.stop();
 		runners.set(name, runner);
-		for (const tool of registry.snapshot().extension(`self-${name}`)?.tools ?? []) UNTRUSTED_TOOLS.delete(tool.name);
-		// Whatever a self-written tool returns counts as outside text, so a note written after it asks first.
-		for (const tool of tools) UNTRUSTED_TOOLS.add(tool.name);
 		registry.install(defineExtension({ name: `self-${name}`, tools: tools.map((tool) => toolFor(tool, runner)) }));
 	}
 
@@ -511,7 +509,6 @@ export function createSelf(options: {
 			registry.uninstall(extension);
 			runners.get(args.name)?.stop();
 			runners.delete(args.name);
-			for (const name of names) UNTRUSTED_TOOLS.delete(name);
 			rmSync(join(approved, args.name), { recursive: true, force: true });
 			await commit(`remove ${args.name}`);
 			return { content: [{ type: "text", text: `Removed ${args.name}.` }] };
@@ -536,11 +533,18 @@ export function createSelf(options: {
 		}
 	}
 
+	/** The self-written tools, which the web view can switch off. */
+	const loaded = () => [...runners.keys()].flatMap((name) => registry.snapshot().extension(`self-${name}`)?.tools ?? []);
+
 	return {
 		extension: defineExtension({ name: "self", tools: [load, remove] }),
 		start,
-		/** The self-written tools, which the web view can switch off. */
-		tools: () => [...runners.keys()].flatMap((name) => registry.snapshot().extension(`self-${name}`)?.tools ?? []),
+		tools: loaded,
+		/**
+		 * What a self-written tool returns counts as outside text, so a note written after it asks first. Asking is the
+		 * exception here: load_extension, remove_extension and a tool's fetches (fetchFor) ask from inside the tool.
+		 */
+		guards: () => loaded().map((tool) => outsideText(tool.name)),
 		/** The self-written tools as gates for scheduled jobs. */
 		gates: (): Gate[] =>
 			[...runners].flatMap(([name, runner]) =>

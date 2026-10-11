@@ -6,6 +6,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
 import type { SearchConfig } from "./config.ts";
+import { outsideText } from "./guards.ts";
 import { array, number, object, optional, parse, string } from "./parse.ts";
 
 export type SearchQuery = { query: string; maxResults: number; topic: "general" | "news"; timeRange?: "day" | "week" | "month" | "year" };
@@ -67,6 +68,9 @@ export function backendFor(config: SearchConfig | undefined): SearchBackend | un
 			return tavily(config.apiKey);
 	}
 }
+
+/** Results are text from outside; declared whether or not search is set up, since past results can still be in a conversation. */
+export const searchGuards = [outsideText("web_search")];
 
 export function webSearchTool(backend: SearchBackend, owner: string) {
 	return defineTool({

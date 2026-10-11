@@ -1,7 +1,9 @@
 import { Type } from "@earendil-works/pi-ai";
 import { type ConversationId, defineDoc, defineEntry, defineExtension, defineTask, defineTool, type TaskId, type Tx } from "@earendil-works/pi-durable";
+import { guard, ifOutsideText, quoted } from "./guards.ts";
 import { formatTime } from "./time.ts";
 import { taskId } from "./ids.ts";
+import { number, object } from "./parse.ts";
 
 export type Reminder = { taskId: number; text: string; at: number };
 export type Notify = (reminder: Reminder) => Promise<void>;
@@ -149,9 +151,17 @@ export function createReminders(notify: Notify, owner = "the user") {
 		},
 	});
 
+	// Cancelling asks after outside text, so a page can't quietly undo what the owner set up.
+	const guards = [
+		guard("cancel_reminder", object({ id: number }), {
+			ask: (a, situation) => ifOutsideText(situation, async () => `cancel reminder ${a.id}${quoted((await situation.snapshot(Reminders))?.items.find((r) => r.taskId === a.id)?.text)}`),
+		}),
+	];
+
 	return {
 		ReminderTask,
 		snooze,
+		guards,
 		extension: defineExtension({
 			name: "reminders",
 			tools: [remind, listReminders, cancelReminder],

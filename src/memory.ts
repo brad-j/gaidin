@@ -3,12 +3,14 @@
 // read, add and delete them in the web view.
 //
 // Notes outlive the conversation that wrote them, which makes them the place a planted instruction
-// would want to land. So a write asks the owner first while outside text is in the conversation's
-// context (approvals.ts, untrustedIn).
+// would want to land. So writing or forgetting one asks the owner first while outside text is in the
+// conversation's context (`guards`).
+import type { Context } from "@earendil-works/chord";
 import { Type } from "@earendil-works/pi-ai";
-import { defineDoc, defineExtension, defineTool, section, type Tx } from "@earendil-works/pi-durable";
+import { defineDoc, defineExtension, defineTool, type DocumentReader, section, type Tx } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
-import type { Refusal } from "./approvals.ts";
+import { guard, ifOutsideText, quoted } from "./guards.ts";
+import { number, object, string } from "./parse.ts";
 
 export type Note = { id: number; text: string; createdAt: number; updatedAt: number; by: "owner" | "gaidin" };
 
@@ -36,12 +38,23 @@ export function noteProblem(notes: readonly Note[], text: string, replacing?: nu
 	return undefined;
 }
 
-/** A note that can't be written isn't put to the owner (approvals.ts). */
-export const refuseNote: Refusal = async (call, read, context) => {
-	if (call.name !== "remember" && call.name !== "update_memory") return undefined;
-	const notes = (await read.snapshot(Memory, context))?.notes ?? [];
-	return noteProblem(notes, String(call.arguments.text ?? ""), call.name === "update_memory" ? Number(call.arguments.id) : undefined);
-};
+const notesIn = async (read: DocumentReader, context: Context) => (await read.snapshot(Memory, context))?.notes ?? [];
+
+// A note that can't be written isn't put to the owner. One that can asks after outside text, as it will be stored:
+// one that won't fit is refused first, so it isn't cut.
+const guards = [
+	guard("remember", object({ text: string }), {
+		refuse: async (a, read, context) => noteProblem(await notesIn(read, context), a.text),
+		ask: (a, situation) => ifOutsideText(situation, () => `remember "${tidy(a.text)}"`),
+	}),
+	guard("update_memory", object({ id: number, text: string }), {
+		refuse: async (a, read, context) => noteProblem(await notesIn(read, context), a.text, a.id),
+		ask: (a, situation) => ifOutsideText(situation, () => `change note ${a.id} to "${tidy(a.text)}"`),
+	}),
+	guard("forget", object({ id: number }), {
+		ask: (a, situation) => ifOutsideText(situation, async () => `forget note ${a.id}${quoted((await situation.snapshot(Memory))?.notes.find((n) => n.id === a.id)?.text)}`),
+	}),
+];
 
 /** Adds a note, or throws with why not. */
 export async function addNote(tx: Tx, text: string, by: Note["by"]): Promise<Note> {
@@ -117,5 +130,5 @@ export function createMemory(owner: string) {
 		},
 	});
 
-	return defineExtension({ name: "memory", sections: [memorySection], tools: [remember, update, forget] });
+	return { extension: defineExtension({ name: "memory", sections: [memorySection], tools: [remember, update, forget] }), guards };
 }

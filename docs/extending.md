@@ -14,7 +14,7 @@
 | `history.ts` | `search_history` and `read_history`, over its own index of past messages |
 | `self/` | `load_extension`, `remove_extension`, and one extension `self-<name>` per tool set gaidin wrote |
 | `extensions/homelab/` | the homelab extension, when configured |
-| `approvals.ts` | the approval hook |
+| `approvals.ts` | the approval hook and `ask_owner`; each tool's rules are its guard (`guards.ts`) |
 | `redact.ts` | the redaction hook, installed last so it sees every result |
 
 The surfaces are separate: `server.ts` wires the socket, Slack (`slack.ts` for the owner's messages and threads, `slack-notifications.ts` for what gaidin posts and its buttons) and the web view (`web.ts`, `web/`), then starts the host. `sandbox.ts` is the tools' execution environment.
@@ -50,7 +50,22 @@ Durable state goes in a document (`defineDoc`) changed inside `api.commit`, and 
 
 ### Tools that reach outside
 
-A tool that changes anything outside the sandbox, or sends data to a place the owner hasn't approved, should ask first. Add a case to `defaultPolicy` in `approvals.ts` that returns a one-line `summary` of the call, and optionally an `always` grant for the second button. Slack and the web view render any request; their labels come from the request. If some calls can't succeed for reasons known before they run, such as a name that doesn't exist, add a `Refusal` to the list `host.ts` passes to `approvalExtension`, so they're blocked with the reason instead of being put to the owner.
+A tool that changes anything outside the sandbox, or sends data to a place the owner hasn't approved, should ask first. Its module declares that in a guard (`guards.ts`), returned beside its extension and added to the list `host.ts` hands to `approvalExtension`:
+
+```ts
+const guards = [
+	guard("weather_alert", object({ city: string, text: string }), {
+		ask: (a) => ({ summary: `send an alert for ${a.city}: ${clip(a.text)}` }),
+		refuse: (a) => (cities.includes(a.city) ? undefined : `No city ${a.city}`),
+	}),
+];
+```
+
+- `ask` returns a one-line `summary` of the call, a `detail` with whatever the summary cuts, and optionally an `always` grant for the second button, or nothing when the call can go ahead. It gets the call's arguments as the parser reads them, and a `Situation`: the hosts and workspaces the owner allowed, the conversation, the outside-text tools whose results are in its context (`ifOutsideText` asks only then), and a reader for gaidin's documents. Arguments the parser can't read ask, showing all of them.
+- `refuse` says why a call can't succeed for reasons known before it runs, such as a name that doesn't exist, so it's blocked with the reason instead of being put to the owner. It runs again after an approval.
+- A tool whose results are text from outside declares `outside: true`, or uses `outsideText(name)` when it never asks, so a note written after reading it asks first. Declare it even when the tool is switched off, since past results can still be in a conversation.
+
+Slack and the web view render any request; their labels come from the request. Self-written tools are the exception: `load_extension`, `remove_extension` and a self-written tool's fetches ask from inside the tool, since they need what only the run has (the diff, or a URL a redirect leads to).
 
 ## Tests
 

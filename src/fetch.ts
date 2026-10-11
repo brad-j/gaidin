@@ -4,7 +4,7 @@
 // special ranges are refused. GET only, no cookies or credentials, size-capped.
 //
 // What comes back is someone else's text, so it's labelled as such. A URL can still carry data out in
-// its path or query; the approval hook is where that gets a check. So a redirect is followed only on the
+// its path or query; asking the owner about a new host (`fetchGuard`) is where that gets a check. So a redirect is followed only on the
 // same host: one to another host comes back as `redirect`, and the next fetch of it is checked like any other.
 import { lookup as dnsLookup } from "node:dns";
 import { request as httpRequest, type IncomingMessage } from "node:http";
@@ -13,6 +13,8 @@ import { BlockList, isIP, type LookupFunction } from "node:net";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
+import { guard } from "./guards.ts";
+import { object, string } from "./parse.ts";
 
 /** Addresses fetch_url won't connect to. */
 export function blockedRanges(options: { allowLoopback?: boolean } = {}): BlockList {
@@ -226,5 +228,19 @@ export function createFetch(options: FetchOptions = {}, owner = "the user") {
 			return { content: [{ type: "text", text: render(fetched, args.maxChars ?? 20_000, owner) }], isError: fetched.status >= 400 };
 		},
 	});
-	return { tool: fetchUrl, extension: defineExtension({ name: "web", tools: [fetchUrl] }) };
+	// A host the owner hasn't allowed for good asks, offering to allow it. A page is text from outside.
+	const fetchGuard = guard("fetch_url", object({ url: string }), {
+		ask: (a, situation) => {
+			let host: string;
+			try {
+				host = new URL(a.url).hostname;
+			} catch {
+				return undefined; // the tool reports the bad URL itself
+			}
+			if (situation.fetchHosts.includes(host)) return undefined;
+			return { summary: `fetch ${a.url}`, always: { kind: "fetch-host", value: host, label: `Always allow ${host}`, done: `Always allowed ${host}` } };
+		},
+		outside: true,
+	});
+	return { tool: fetchUrl, guards: [fetchGuard], extension: defineExtension({ name: "web", tools: [fetchUrl] }) };
 }

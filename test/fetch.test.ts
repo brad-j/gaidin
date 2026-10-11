@@ -8,7 +8,8 @@ import test, { type TestContext } from "node:test";
 import { gzipSync } from "node:zlib";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { blockedRanges, fetchPublic, type FetchOptions, htmlToText, render } from "../src/fetch.ts";
+import type { Situation } from "../src/guards.ts";
+import { blockedRanges, createFetch, fetchPublic, type FetchOptions, htmlToText, render } from "../src/fetch.ts";
 import { context, startHost } from "../src/host.ts";
 
 const PAGE = `<html><head><title>Fish &amp; Chips</title><script>alert("x")</script></head>
@@ -143,4 +144,21 @@ test("the agent can call fetch_url, and an error status is an error result", asy
 
 test("htmlToText leaves an entity it doesn't know as it is, even one named like an object's property", () => {
 	assert.equal(htmlToText("<p>&constructor; &toString; &bogus; &AMP;</p>", "https://example.com/"), "&constructor; &toString; &bogus; &");
+});
+
+test("a fetch asks unless its host is allowed for good, offers to allow the host, and what it returns is outside text", async () => {
+	const [guard] = createFetch().guards;
+	const ask = (url: unknown, fetchHosts: string[] = []) => {
+		const situation: Situation = { fetchHosts, grants: [], conversationId: 1, outside: async () => [], snapshot: async () => undefined };
+		return guard!.ask({ url } as never, situation);
+	};
+	assert.equal(guard!.tool, "fetch_url");
+	assert.equal(guard!.outside, true);
+	assert.deepEqual(await ask("https://a.example/page"), {
+		summary: "fetch https://a.example/page",
+		always: { kind: "fetch-host", value: "a.example", label: "Always allow a.example", done: "Always allowed a.example" },
+	});
+	assert.equal(await ask("https://a.example/other", ["a.example"]), undefined);
+	// The tool reports a bad URL itself.
+	assert.equal(await ask("not a url"), undefined);
 });
