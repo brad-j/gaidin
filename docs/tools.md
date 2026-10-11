@@ -31,7 +31,7 @@ A reminder is a durable background task ([Concepts](concepts.md#durability)). Wh
 
 A reminder can be snoozed for 10 minutes or an hour from wherever it shows up: its ntfy push, its message in Slack (with Slack set up, each one is posted to the channel too), and its row in the web view. A snooze sets the reminder again from now, in the conversation it came from. The push's buttons need `web.url` in the settings, and the phone's ntfy app calls the web view itself, so they work while the phone is on the tailnet; on iOS they show when you long-press the notification. With `web.url`, tapping the push opens the web view.
 
-With ntfy, use a long random topic name and treat it as a secret: ntfy.sh topics have no password. Subscribe to it in the ntfy app on your phone; the topic field takes the name alone, not the URL.
+With ntfy, use a long random topic name and treat it as a secret: on ntfy.sh, anyone who knows a topic's name can read and post to it unless the topic is reserved and needs a token (`ntfy.token`). `gaidin doctor` and `gaidin serve` warn about a topic on ntfy.sh without one, for reminders and for [alerts](#alerts). Subscribe to it in the ntfy app on your phone; the topic field takes the name alone, not the URL.
 
 ## Questions
 

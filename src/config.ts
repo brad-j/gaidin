@@ -56,6 +56,11 @@ const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "alerts", "slac
 const TOPIC_URL = /^https?:\/\/[^/\s]+(\/[^/\s]+)*\/[-\w]{1,64}\/?$/;
 const TOPIC_NAME = "a topic is up to 64 letters, digits, - and _";
 
+/** A topic on ntfy.sh, where anyone who has the name can read and post unless the topic needs a token. */
+function onNtfySh(url: string): boolean {
+	return URL.canParse(url) && new URL(url).hostname === "ntfy.sh";
+}
+
 /** Where the settings live on a server (deploy/vm/setup.sh). Commands can't see it, so a copy or backup left there stays hidden. */
 export const SETTINGS_DIR = "/etc/gaidin";
 
@@ -174,6 +179,9 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	const ntfyIcon = text("ntfy.icon", ntfySection.icon);
 	if (ntfyUrl !== undefined && !TOPIC_URL.test(ntfyUrl)) errors.push(`ntfy.url must be a topic URL, like https://ntfy.sh/<topic>; ${TOPIC_NAME}`);
 	if (ntfyIcon !== undefined && !/^https?:\/\/[^/]+\/./.test(ntfyIcon)) errors.push("ntfy.icon must be the URL of a PNG or JPEG");
+	if (ntfyUrl !== undefined && ntfyToken === undefined && onNtfySh(ntfyUrl)) {
+		warnings.push("ntfy.url is on ntfy.sh without a token: anyone who learns the topic's name can read your reminders and job reports. Reserve the topic and set ntfy.token, or use your own ntfy server with access control");
+	}
 
 	// Alerts
 	const alertsSection = section("alerts");
@@ -182,6 +190,9 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	if (alertsUrl !== undefined && !TOPIC_URL.test(alertsUrl)) errors.push(`alerts.url must be a topic URL, like https://ntfy.sh/<topic>; ${TOPIC_NAME}`);
 	// Following its own topic, gaidin would investigate its own reminders.
 	if (alertsUrl !== undefined && alertsUrl === ntfyUrl?.replace(/\/+$/, "")) errors.push("alerts.url must be another topic than ntfy.url");
+	if (alertsUrl !== undefined && alertsToken === undefined && onNtfySh(alertsUrl)) {
+		warnings.push("alerts.url is on ntfy.sh without a token: anyone who learns the topic's name can send gaidin alerts to investigate, each a model run. Reserve the topic and set alerts.token, or use your own ntfy server with access control");
+	}
 
 	// Slack: all four or none
 	const slackSection = section("slack");

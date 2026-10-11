@@ -31,7 +31,7 @@ test("a settings file is read, with relative paths from its directory and defaul
 		timeZone: "America/New_York",
 		data: "state",
 		model: { apiKey: KEY },
-		ntfy: { url: "https://ntfy.sh/gaidin-abc123def456" },
+		ntfy: { url: "https://ntfy.sh/gaidin-abc123def456", token: "tk_reminders1234" },
 		slack: { botToken: "xoxb-1-2", appToken: "xapp-1-2", channelId: "C0C7UUU1MQF", userId: "U0123ABC" },
 		web: { user: "brad@example.com" },
 	});
@@ -173,4 +173,14 @@ test("alerts.url is a topic other than the reminders', and is redacted like it",
 	assert.ok(same.errors.some((error) => /alerts\.url must be another topic than ntfy\.url/.test(error)));
 	const placeholder = loadConfig({ file: file(t, { model: { apiKey: KEY }, alerts: { url: "https://ntfy.sh/<homelab alerts topic>" } }), env: {} });
 	assert.ok(placeholder.errors.some((error) => /alerts\.url must be a topic URL.*a topic is up to 64 letters/.test(error)));
+});
+
+test("a topic on ntfy.sh without a token is a warning, since anyone with its name can read or post to it", (t) => {
+	const warned = (settings: object) => loadConfig({ file: file(t, { model: { apiKey: KEY }, ...settings }), env: {} }).warnings.join(" | ");
+	const open = warned({ ntfy: { url: "https://ntfy.sh/gaidin-abc123def456" }, alerts: { url: "https://ntfy.sh/homelab-alerts-5f3a9c2e7b" } });
+	assert.match(open, /ntfy\.url is on ntfy\.sh without a token: anyone who learns the topic's name can read your reminders/);
+	assert.match(open, /alerts\.url is on ntfy\.sh without a token: anyone who learns the topic's name can send gaidin alerts/);
+	const tokens = warned({ ntfy: { url: "https://ntfy.sh/gaidin-abc123def456", token: "tk_reminders" }, alerts: { url: "https://ntfy.sh/homelab-alerts-5f3a9c2e7b", token: "tk_alerts" } });
+	assert.doesNotMatch(tokens, /without a token/);
+	assert.doesNotMatch(warned({ ntfy: { url: "https://ntfy.example.net/gaidin" }, alerts: { url: "https://ntfy.example.net/alerts" } }), /without a token/);
 });
