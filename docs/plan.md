@@ -42,7 +42,10 @@ What it is:
 
 Clean code, checked before the owner is asked:
 
-- The type check (`tsc --strict`) and the extension's own tests pass in the box. Every tool has a test.
+- The type check (`tsc --strict` with `noUnusedLocals`, `noUnusedParameters` and `allowUnreachableCode: false`) and the extension's own tests pass in the box. Every tool has a test.
+- An extension imports nothing but Node's built-ins (`node:` modules) and its own files. The server checks this itself rather than trusting the draft.
+- Oxlint runs the anti-slop rules that fit a tool: `no-chained-type-assertions`, `no-conditional-empty-object-spread`, `no-known-value-widening`, `no-module-mocking`, `no-reflect-apply`, `no-reflect-get`, `no-shape-in-symbol-names`, `no-unsafe-dictionary-type`, `no-widen-then-assert` and `require-safety-comment-for-type-assertion`. The other five are off: a tool takes its arguments as an object and checks outside values with `typeof`, which `no-object-parameters`, `no-runtime-typeof` and the three `unknown` rules forbid.
+- The checks run on the server, which installs only regular dependencies, so `typescript` and `@types/node` move there from the development ones, and `oxlint` and `@oxlint/plugins` are added.
 - A short style guide is part of the prompt while gaidin works on an extension. It asks for the least code that does the job, no options nobody asked for, no wrappers or helpers used once, no comments that restate the code, and no tool that duplicates an existing one.
 - A second model call reviews the diff against the guide and names any bloat. gaidin fixes what it finds, or the approval request shows the objection next to the diff.
 - The approval request shows the lines added and removed. A change that makes an extension smaller is as welcome as one that adds to it.
