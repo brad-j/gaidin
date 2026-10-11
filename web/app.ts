@@ -351,7 +351,10 @@ function renderStatusline() {
 	const total = budget
 		? [budget.dailyLimit > 0 ? `${money(budget.today)} of ${money(budget.dailyLimit)} today` : `${money(budget.today)} today`, budget.monthlyLimit > 0 ? `${money(budget.month)} of ${money(budget.monthlyLimit)} month` : ""]
 		: [state.allSpend === undefined ? "" : `${money(state.allSpend)} all`];
-	const spend = [here === undefined ? "" : `${money(here)} conversation`, ...total].filter(Boolean).join(" · ");
+	// Each part its own span, so a narrow screen can leave out the conversation's.
+	const parts: [string, string][] = [["here", here === undefined ? "" : `${money(here)} conversation`], ...total.map((t): [string, string] => ["total", t])];
+	const shown = parts.filter(([, text]) => text !== "");
+	const spend = shown.map(([, text]) => text).join(" · ");
 	const near = budget !== null && budget !== undefined && !budget.stopped && budget.dailyLimit > 0 && budget.today >= budget.dailyLimit * 0.8;
 	const signature = JSON.stringify([label, tone, spend, current, budget?.stopped, near]);
 	// Rebuilt only when something in it changed, so a button under the pointer stays put while text streams.
@@ -359,18 +362,23 @@ function renderStatusline() {
 	statusSignature = signature;
 
 	const segs: HTMLElement[] = [el("span", `status ${tone}`, label)];
-	if (transcript.running) segs.push(segment("esc stop", "Stop the run (Esc or Ctrl+C)", () => void stop(), "danger"));
+	if (transcript.running) {
+		const button = segment("stop", "Stop the run (Esc or Ctrl+C)", () => void stop(), "danger");
+		button.prepend(el("kbd", undefined, "esc"));
+		segs.push(button);
+	}
 	if (current) {
 		const settings = current;
-		segs.push(segment(settings.model, "Switch the model (/model)", () => prefill("/model ")));
-		segs.push(segment(`thinking ${settings.thinkingLevel}`, "Change the thinking level (/thinking)", () => prefill("/thinking ")));
+		segs.push(segment(settings.model, "Switch the model (/model)", () => prefill("/model "), "model"));
+		segs.push(segment(`thinking ${settings.thinkingLevel}`, "Change the thinking level (/thinking)", () => prefill("/thinking "), "thinking"));
 		const off = settings.tools.filter((t) => !t.enabled).map((t) => t.name);
-		segs.push(segment(off.length === 0 ? `tools ${settings.tools.length}/${settings.tools.length}` : `${off.join(" ")} off`, "Switch tools on and off (/tools)", () => void runCommand("/tools")));
-		if (settings.instructions !== "") segs.push(segment("instructions", "Standing instructions (/instructions)", () => void runCommand("/instructions")));
+		segs.push(segment(off.length === 0 ? `tools ${settings.tools.length}/${settings.tools.length}` : `${off.join(" ")} off`, "Switch tools on and off (/tools)", () => void runCommand("/tools"), "tools"));
+		if (settings.instructions !== "") segs.push(segment("instructions", "Standing instructions (/instructions)", () => void runCommand("/instructions"), "instructions"));
 	}
 	if (budget?.stopped) segs.push(segment("stopped · allow more", budget.reason ?? "The spend limit is reached (/budget)", () => void allowMore(), "danger"));
 	if (spend !== "") {
-		const line = el("span", `spend${budget?.stopped ? " stopped" : near ? " near" : ""}`, spend);
+		const line = el("span", `spend${budget?.stopped ? " stopped" : near ? " near" : ""}`);
+		line.append(...shown.map(([kind, text]) => el("span", kind, text)));
 		if (budget?.reason) line.title = budget.reason;
 		segs.push(line);
 	}
@@ -423,7 +431,11 @@ function renderHorizon() {
 			changed: async () => {
 				await Promise.all([loadReminders(), loadJobs()]);
 			},
-			prefill,
+			// The answer comes in the console, and on a phone only the console has the prompt.
+			prefill: (text) => {
+				go("console");
+				prefill(text);
+			},
 		});
 	}
 }
@@ -441,12 +453,17 @@ function view(): View {
 	return VIEWS.find((v) => v === first) ?? "console";
 }
 
+/** Shows `to` now, rather than when the hash change arrives, so the prompt is there to focus straight after. */
 function go(to: View) {
-	if (view() !== to) location.hash = `#/${to === "console" ? "" : to}`;
+	if (view() === to) return;
+	location.hash = `#/${to === "console" ? "" : to}`;
+	showView();
 }
 
 function showView() {
 	const shown = view();
+	// The CSS reads it: on a phone, only the console has the prompt.
+	document.body.dataset.view = shown;
 	for (const main of document.querySelectorAll<HTMLElement>("main[data-view]")) main.hidden = main.dataset.view !== shown;
 	for (const link of document.querySelectorAll<HTMLAnchorElement>("#views a")) {
 		if (link.dataset.view === shown) link.setAttribute("aria-current", "page");
@@ -565,7 +582,9 @@ function questionRow(request: Approval): HTMLElement {
 		button.addEventListener("click", () => void answerQuestion(request, choice));
 		buttons.append(button);
 	}
-	buttons.append(el("span", "expires", `type your answer below · waits until ${when.format(request.expiresAt)}`));
+	const expires = el("span", "expires");
+	expires.append(el("span", "typed", "type your answer below · "), `waits until ${when.format(request.expiresAt)}`);
+	buttons.append(expires);
 	const b = el("div", "b");
 	b.append(ask, buttons);
 	const node = el("div", "row approval question");
@@ -1037,6 +1056,13 @@ function accept(item: Suggestion, submitIfReady: boolean) {
 // --- controls ---------------------------------------------------------------------------------
 
 const input = $<HTMLTextAreaElement>("message");
+// A phone's one-line prompt has room for the short form.
+const narrow = matchMedia("(max-width: 600px)");
+const placeholder = () => {
+	input.placeholder = narrow.matches ? "Message, or / for commands" : "Message gaidin, or type / for commands";
+};
+narrow.addEventListener("change", placeholder);
+placeholder();
 
 /** The prompt grows with its text, up to the CSS max-height, keeping the log pinned if it was. */
 function fit() {

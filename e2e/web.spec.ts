@@ -210,3 +210,15 @@ test("Esc stops a run, and the log says gaidin will drop the request", async ({ 
 	await expect(stopped).toHaveCount(1);
 	await expect(page.locator("#approvals")).toBeEmpty();
 });
+
+test("on a phone only the console has the prompt, and a new reminder starts there", async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto("/#/schedule");
+	await expect(page.locator("#message")).toBeHidden();
+	await expect(page.locator("#views a")).toHaveCount(3);
+	await page.getByRole("button", { name: "+ new reminder" }).click();
+	await expect(page).toHaveURL(/#\/$/);
+	await expect(page.locator("#message")).toBeVisible();
+	await expect(page.locator("#message")).toHaveValue("Remind me to ");
+	await expect(page.locator("#message")).toBeFocused();
+});

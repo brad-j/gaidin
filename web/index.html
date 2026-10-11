@@ -104,13 +104,13 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 #horizon h1 img { display: block; }
 #views { display: flex; align-self: stretch; gap: var(--space-3xs); }
 #views a {
-	display: inline-flex; align-items: center; gap: var(--space-xs); padding: 2px var(--space-xs) 0; margin-bottom: -1px;
-	color: var(--color-ink-3); text-decoration: none; border-bottom: 2px solid transparent;
+	display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs); padding: 2px var(--space-sm) 0; margin-bottom: -1px;
+	color: var(--color-ink-3); font-family: var(--font-body); font-size: var(--text-sm); font-weight: 500; text-decoration: none; border-bottom: 2px solid transparent;
 	transition: color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
 }
 @media (hover: hover) { #views a:hover { color: var(--color-ink); } }
 #views a[aria-current="page"] { color: var(--color-ink); border-bottom-color: var(--color-accent); }
-#views .count { color: var(--color-ink-3); font-variant-numeric: tabular-nums; }
+#views .count { color: var(--color-ink-3); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 400; font-variant-numeric: tabular-nums; }
 #views .count:empty { display: none; }
 #views .count.warn { color: var(--color-warn); }
 #next-up { min-width: 0; max-width: 34ch; flex: 0 1 auto; margin-left: auto; color: var(--color-ink-2); }
@@ -371,50 +371,93 @@ main[hidden], #scroll[hidden] { display: none; }
 #statusline .status.page-problem { color: var(--color-warn); }
 #statusline .status.problem::before { background: var(--color-warn); }
 #statusline .seg.danger { color: var(--color-bad); }
+#statusline .seg kbd { opacity: 0.7; }
 #statusline .spend { padding: 0 var(--space-xs); font-variant-numeric: tabular-nums; }
+#statusline .spend > span + span::before { content: " · "; }
 #statusline .spend.near { color: var(--color-warn); }
 #statusline .spend.stopped { color: var(--color-bad); }
 #statusline .spacer { flex: 1; }
 
-/* --- narrow screens --------------------------------------------------------------------------- */
+/* --- phones ---------------------------------------------------------------------------------- */
+/* A phone gets the full width for text: no label column in the log, tabs across the header, a one-line
+ * prompt with Send beside it, and the prompt only on the console. Approvals stay docked on every view. */
 
 @media (max-width: 600px) {
-	:root { --col-label: 6ch; --col-gap: 1.5ch; }
-	#horizon { gap: var(--space-sm); padding: 0 var(--space-sm); }
-	#horizon h1 img { width: 28px; height: 28px; }
-	#views a { padding-left: var(--space-2xs); padding-right: var(--space-2xs); }
-	#next-up { max-width: none; }
-	.page { padding: var(--space-md) var(--space-sm); }
+	:root { --text-xs: 0.875rem; --text-2xs: 0.8125rem; }
+
+	#horizon { height: 48px; padding: 0; gap: 0; }
+	#horizon h1, #next-up { display: none; }
+	#views { flex: 1; gap: 0; }
+	#views a { flex: 1; padding: 2px var(--space-2xs) 0; font-size: var(--text-md); }
+
+	/* The log: the body takes the row, and the time sits to its right on the first row of an exchange. */
+	#log { padding: var(--space-sm) var(--space-sm) var(--space-md); }
+	.row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "b t"; column-gap: var(--space-sm); padding: var(--space-2xs) 0; }
+	.row .k, .row .t { display: none; }
+	.row .b { grid-area: b; }
+	.row.start .t { display: block; grid-area: t; padding-top: 3px; }
+	.row.start { margin-top: var(--space-sm); padding-top: var(--space-sm); }
+	.row.you .b { padding-left: var(--space-sm); border-left: 2px solid var(--color-accent); font-family: var(--font-body); font-size: var(--text-md); line-height: 1.45; }
+	.row.cmd .b { padding-left: var(--space-sm); border-left: 2px solid var(--color-rule-2); }
+	.row.tool .b, .row.think .b { font-size: var(--text-xs); }
+	.row.think summary::before { content: "thinking"; flex: none; color: var(--color-ink-3); font-family: var(--font-mono); }
+	.row.think .args { font-size: var(--text-xs); }
+	.row.remind .b::before, .row.job .b::before { margin-right: 1ch; padding: 0 var(--space-xs); border: 1px solid var(--color-warn); border-radius: 999px; color: var(--color-warn); font-size: var(--text-2xs); font-weight: 400; }
+	.row.remind .b::before { content: "reminder"; }
+	.row.job .b::before { content: "job"; }
+	.row .snooze { display: flex; margin: var(--space-2xs) 0 0; }
+	.out { grid-template-columns: auto minmax(0, 1fr) auto; }
+	.out .when { grid-column: 2; }
+	.help { grid-template-columns: auto minmax(0, 1fr); }
+	.help .a { display: none; }
+
+	/* The dock: approvals as cards, then the prompt as one line that grows, with Send beside it and the status below. */
+	#dock-inner { padding: var(--space-xs) var(--space-sm) var(--space-sm); }
+	#approvals { gap: var(--space-xs); }
+	.approval { padding: var(--space-sm); }
+	.approval .b { grid-column: 1 / -1; }
+	.approval .buttons { margin: var(--space-sm) 0 0; }
+	.approval .expires { flex-basis: 100%; margin-left: 0; }
+	#prompt { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "message send" "status status"; border-radius: 14px; }
+	#bar { display: contents; }
+	#message { grid-area: message; min-height: calc(1.45em + 2 * var(--space-sm)); padding: var(--space-sm) var(--space-sm); font-family: var(--font-body); line-height: 1.45; }
+	/* Only the console has the prompt to type an answer into. */
+	body:not([data-view="console"]) .approval .typed { display: none; }
+	#send { grid-area: send; align-self: end; margin: 0 var(--space-xs) var(--space-xs) 0; padding: 0 var(--space-md); border-radius: 10px; }
+	#statusline { grid-area: status; padding: var(--space-2xs) var(--space-xs); border-top: 1px solid var(--color-rule); }
+	#statusline .seg.thinking, #statusline .seg.tools, #statusline .seg.instructions, #statusline .seg.hint, #statusline .spend .here { display: none; }
+	#statusline .spend .here + span::before { content: none; }
+	#message::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	#menu { left: var(--space-sm); right: var(--space-sm); max-height: 45vh; }
+	#menu .item { grid-template-columns: minmax(0, 1fr); padding: var(--space-xs) var(--space-sm); }
+	body:not([data-view="console"]) #prompt, body:not([data-view="console"]) #menu { display: none; }
+	body:not([data-view="console"]) #dock-inner { padding-top: 0; }
+	body:not([data-view="console"]) #approvals:not(:empty) { margin: var(--space-xs) 0 0; }
+
+	/* Pages. */
+	.page { gap: var(--space-md); padding: var(--space-md) var(--space-sm) var(--space-lg); }
 	.section-head, .page-empty, .page-note, .crumbs, .skill-head, .skill-desc { padding-left: 0; }
+	.section-head h2 { font-size: 1.125rem; }
+	.sched-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "due actions" "body body"; row-gap: var(--space-2xs); padding: var(--space-sm) 0; }
+	.sched-row .due { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 1ch; }
+	.sched-row .due span { white-space: nowrap; }
 	.skill-row { padding-left: 0; padding-right: 0; }
 	.skill-body { grid-template-columns: minmax(0, 1fr); gap: var(--space-md); }
 	/* The files scroll sideways; the fade says there's more. */
 	.skill-files { position: static; flex-direction: row; gap: var(--space-2xs); overflow-x: auto; scrollbar-width: none; mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
 	.skill-files a { white-space: nowrap; overflow-wrap: normal; }
-	.sched-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "due actions" "body body"; row-gap: var(--space-2xs); padding-left: 0; padding-right: 0; }
-	.sched-row .due { flex-direction: row; align-items: baseline; gap: 1ch; }
-	#log, #dock-inner { padding-left: var(--space-sm); padding-right: var(--space-sm); }
-	.row { grid-template-columns: var(--col-label) minmax(0, 1fr); }
-	.row .t { display: none; }
-	#message { min-height: calc(2 * 1.55em + 2 * var(--space-sm)); padding: var(--space-sm) var(--space-sm) var(--space-2xs); }
-	/* The chips scroll sideways; the fade says there's more. */
-	#statusline { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
-	.row.start .t { display: none; }
-	#menu { left: var(--space-sm); right: var(--space-sm); }
-	.out { grid-template-columns: auto minmax(0, 1fr) auto; }
-	.out .when { grid-column: 2; }
-	.help { grid-template-columns: auto minmax(0, 1fr); }
-	.help .a { display: none; }
 }
-/* Below this the views need the header's width. */
-@media (max-width: 380px) {
-	#next-up { display: none; }
-}
+/* Touch: targets a finger can hit, and no keyboard hints. */
 @media (pointer: coarse) {
-	#send { min-height: 36px; }
-	#send kbd { display: none; }
+	#send { min-height: 38px; }
+	#send kbd, #statusline .seg kbd { display: none; }
 	#statusline .seg { min-height: 32px; }
 	#message { font-size: max(16px, var(--text-md)); }
+	.approval .buttons button { min-height: 40px; padding: 0 var(--space-md); }
+	.sched-row .actions button, .section-head button, .row .snooze button, .out button {
+		min-height: 36px; padding: 0 var(--space-sm); background: var(--color-paper-2); border-color: var(--color-rule-2); color: var(--color-ink-2);
+	}
+	.sched-row .actions button.danger { color: var(--color-bad); border-color: var(--color-bad); }
 }
 @media (prefers-reduced-motion: reduce) {
 	*, *::before { transition-duration: 0s !important; animation: none !important; }
@@ -448,7 +491,7 @@ main[hidden], #scroll[hidden] { display: none; }
 			<div id="approvals"></div>
 			<div id="menu" role="listbox" aria-label="Commands" hidden></div>
 			<form id="prompt">
-				<textarea id="message" rows="3" placeholder="Message gaidin, or / for commands" aria-label="Message gaidin" aria-controls="menu" autocomplete="off" spellcheck="true"></textarea>
+				<textarea id="message" rows="1" placeholder="Message gaidin, or type / for commands" aria-label="Message gaidin" aria-controls="menu" autocomplete="off" spellcheck="true"></textarea>
 				<div id="bar">
 					<div id="statusline"></div>
 					<button id="send" class="primary" type="submit">Send <kbd>↵</kbd></button>

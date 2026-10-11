@@ -27,7 +27,7 @@ type Context = { messages: readonly { role: string; content?: unknown }[] };
 
 /**
  * "fetch" fetches site.test, "ask" asks a question, "remind" sets a reminder due now, "dentist" one due in two hours,
- * and "briefing" schedules a weekday job; then it says what came back, in short for a fetch.
+ * "briefing" schedules a weekday job, and "markdown" gets a long answer; then it says what came back, in short for a fetch.
  */
 function step(ctx: Context) {
 	const last = ctx.messages.at(-1);
@@ -40,11 +40,34 @@ function step(ctx: Context) {
 	const call = (name: string, args: Record<string, string | number | string[]>) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: "toolUse" });
 	if (said.includes("fetch")) return call("fetch_url", { url: `http://site.test:${sitePort}/` });
 	if (said.includes("ask")) return call("ask_owner", { question: "Keep the old branch?", choices: ["Yes", "No"] });
+	if (said.includes("markdown")) return fauxAssistantMessage(fauxText(RICH));
 	if (said.includes("dentist")) return call("remind", { text: "Call the dentist", inMinutes: 120 });
 	if (said.includes("briefing")) return call("schedule_job", { title: "Morning briefing", instruction: "Summarise the weather and today's calendar.", time: "07:30", days: "weekdays" });
 	if (said.includes("remind")) return call("remind", { text: "stretch", inMinutes: 0 });
 	return fauxAssistantMessage(fauxText("Hello, Brad."));
 }
+
+/** A long answer with each kind of Markdown the log renders, for "markdown". */
+const RICH = [
+	"Here's where things stand on **think-2** this morning.",
+	"",
+	"## Backups",
+	"",
+	"- `vm-104` finished at 03:12, 41 GB",
+	"- `vm-107` failed: the NAS share was asleep",
+	"- Next run tonight at 03:00",
+	"",
+	"```sh",
+	"ssh think-2 'pvesm status | grep nas'",
+	"```",
+	"",
+	"| Host | Disk | Memory |",
+	"|---|---|---|",
+	"| think-1 | 61% | 48% |",
+	"| think-2 | 87% | 72% |",
+	"",
+	"I'd wake the NAS before tonight's run, or move `vm-107` to local storage.",
+].join("\n");
 
 const dir = mkdtempSync(join(tmpdir(), "gaidin-e2e-"));
 const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
