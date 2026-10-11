@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -151,6 +151,45 @@ test("a draft that fails the checks never reaches Brad", { skip, timeout: 120_00
 	assert.match(failed!, /turns a check off with eslint-disable/);
 	assert.match(failed!, /The type check failed:[\s\S]*'unused' is declared but its value is never read/);
 	assert.match(failed!, /Lint failed:[\s\S]*no-chained-type-assertions/);
+});
+
+test("the example in docs/tools.md's guide to writing a tool passes the checks", { skip, timeout: 120_000 }, async (t) => {
+	const docs = readFileSync(join(import.meta.dirname, "../docs/tools.md"), "utf8");
+	const example = /### Writing a tool[\s\S]*?```ts\n([\s\S]*?)```/.exec(docs)?.[1];
+	assert.ok(example, "docs/tools.md has no example under Writing a tool");
+	const index = `import type { Fetched, Tool } from "gaidin";\n\n${example}
+export const now = {
+	name: "weather_now",
+	description: "The temperature and weather code now at a place.",
+	parameters: { type: "object", properties: { place: { type: "string" } }, required: ["place"] },
+	execute: async (args: { place: string }, api: { fetch: (url: string) => Promise<Fetched> }) => {
+		const current = readCurrent(await api.fetch(\`https://api.open-meteo.com/v1/forecast?place=\${encodeURIComponent(args.place)}\`));
+		return \`\${current.temperature} °C, code \${current.code}\`;
+	},
+} satisfies Tool;
+
+export const tools = [now];
+`;
+	const test = `import assert from "node:assert/strict";
+import test from "node:test";
+import { now } from "./index.ts";
+
+const answering = (text: string, status = 200) => ({ fetch: async (url: string) => ({ url, status, contentType: "application/json", text }) });
+
+test("reads the current conditions", async () => {
+	assert.equal(await now.execute({ place: "Boston" }, answering('{"current":{"temperature_2m":17,"weather_code":3}}')), "17 °C, code 3");
+});
+test("refuses bad data", async () => {
+	await assert.rejects(now.execute({ place: "Boston" }, answering('{"current":{}}')), /missing a field/);
+	await assert.rejects(now.execute({ place: "Boston" }, answering("", 500)), /answered 500/);
+});
+`;
+	const { host, dir } = await start(t, [call("load_extension", { name: "kit" })]);
+	draft(dir, { "index.ts": index, "test.ts": test });
+	// Reaching Brad means the type check, the tests and lint all passed.
+	const asked = await runApproving(host, "load the kit");
+	assert.equal(asked.length, 1);
+	assert.match(asked[0]!, /^load_extension: add extension kit with weather_now /);
 });
 
 test("the reviewer's objections go back to gaidin, and with keep they go to Brad with the diff", { skip, timeout: 120_000 }, async (t) => {

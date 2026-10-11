@@ -139,6 +139,50 @@ The approval request shows the lines added and removed, with the diff under "all
 
 Each extension runs in one Node process under bubblewrap ([Security](security.md#self-written-tools)). A call that takes over a minute is stopped and the process starts again on the next call. Self-written tools can be switched off in the web view, and their results count as outside text. A tool can also be a scheduled job's [gate](#gates). Without bubblewrap there are no self-written tools.
 
+### Writing a tool
+
+`load_extension` tells gaidin to read this section before it drafts, so a draft passes the checks the first time instead of learning each rule from a failure.
+
+Most of the checks are about data from outside, which is where a tool goes wrong: `JSON.parse` returns `any`, and the shortcuts for reading it are what the lint rules refuse. Read only the fields the tool uses, check each one as it comes in, and build a value of a named type from them. This passes every check:
+
+```ts
+type Current = { temperature: number; code: number };
+
+/** The fields the tool reads from Open-Meteo's answer, checked as they come in. */
+function readCurrent(answer: Fetched): Current {
+	if (answer.status !== 200) throw new Error(`Open-Meteo answered ${answer.status}`);
+	const data: unknown = JSON.parse(answer.text);
+	if (typeof data !== "object" || data === null || !("current" in data)) throw new Error("The answer has no current conditions");
+	const current = data.current;
+	if (typeof current !== "object" || current === null || !("temperature_2m" in current) || !("weather_code" in current)) {
+		throw new Error("The current conditions are missing a field");
+	}
+	const temperature = current.temperature_2m;
+	const code = current.weather_code;
+	if (typeof temperature !== "number" || typeof code !== "number") throw new Error("A current condition isn't a number");
+	return { temperature, code };
+}
+```
+
+An `in` check lets TypeScript read the property, and a `typeof` check gives it its type. For a list, check `Array.isArray(value)` and check the items you use; before taking `list[0]`, check the list isn't empty. `Fetched` and `ToolApi` are types from `"gaidin"`, beside `Tool`.
+
+What the lint rules refuse, and what to write instead:
+
+| Refused | Instead |
+|---|---|
+| `Record<string, unknown>`, `{ [key: string]: unknown }`, or a dictionary of `any` or `object` | `unknown` and `in` checks as above, or a named type with the fields the tool uses |
+| `x as Forecast` with no comment | the checks above. An `as` passes lint with a `// SAFETY:` comment just before it saying why it holds, but the reviewer objects to one on outside data |
+| `x as unknown as Forecast` | the checks above |
+| `Reflect.get(obj, "key")`, `Reflect.apply` | `"key" in obj` and then `obj.key`; call functions directly |
+| `{ ...(unit ? { unit } : {}) }` | build the object, then `if (unit) result.unit = unit;` |
+| an explicit anonymous type on a value or return, like `function f(): { temp: number }` | leave the type to inference, use `satisfies`, or name the type (`type Current = ...`) |
+| a name containing "shape" | a name for what it is: `Forecast`, `readCurrent` |
+| `vi.mock`, `jest.mock` | hand the tool a fake: `execute(args, { fetch: async (url) => ({ url, status: 200, contentType: "application/json", text }) })` |
+
+The type check fails on an unused variable, import or parameter, and on unreachable code. A comment that turns any check off is refused before the checks run.
+
+The reviewer asks for the least code that works. Check only the fields the tool reads, not the whole answer; don't write a type and a check that repeat each other; and test the failure path as well as the answer: bad data, and a status other than 200.
+
 ## Homelab extension
 
 These two tools were written for the original deployment's homelab. [Extending](extending.md#the-homelab-extension) shows how to turn them on and what they expect.

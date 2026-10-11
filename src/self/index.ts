@@ -423,6 +423,7 @@ export function createSelf(options: {
 		name: "load_extension",
 		description:
 			`Check the extension drafted in extensions/<name>/ in the sandbox and, once ${owner} approves it, start using its tools. ` +
+			'Before drafting, read "Writing a tool" with read_skill (skill gaidin, file tools.md): it shows how to read JSON so the lint rules pass, and what they refuse. ' +
 			"Write it with the file tools first: index.ts exports `tools`, and test.ts tests each one with node:test. A tool looks like this:\n" +
 			`${EXAMPLE}\n` +
 			"execute gets arguments that match `parameters` and returns the result text, or throws. Write `satisfies Tool` as above, so a test " +

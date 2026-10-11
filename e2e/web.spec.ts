@@ -199,3 +199,14 @@ test("the skills page lists the gaidin skill and reads its files, following link
 	await page.goBack();
 	await expect(skills.locator(".skill-doc h2")).toHaveText("Tools");
 });
+
+test("Esc stops a run, and the log says gaidin will drop the request", async ({ page }) => {
+	await page.goto("/");
+	await send(page, "ask me something");
+	await expect(page.locator("#approvals")).toContainText("Keep the old branch?");
+	await page.keyboard.press("Escape");
+	const stopped = page.locator("#log .row.stopped");
+	await expect(stopped).toHaveText(/Stopped\. gaidin will drop that request unless you ask again\./);
+	await expect(stopped).toHaveCount(1);
+	await expect(page.locator("#approvals")).toBeEmpty();
+});

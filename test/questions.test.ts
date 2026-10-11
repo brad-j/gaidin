@@ -146,3 +146,24 @@ test("Slack asks a question with buttons, and a reply in its thread answers it, 
 	const answered: ApprovalRequest = (await host.approvals.state()).requests[question.id]!;
 	assert.equal(answered.by, "slack");
 });
+
+test("stopping a run tells the model the request was withdrawn; stopping when nothing runs leaves no note", async (t) => {
+	let seen = "";
+	const host = await open(t, [
+		call("ask_owner", { question: "Keep the old branch?", choices: ["Yes", "No"] }),
+		(ctx) => {
+			seen = JSON.stringify(ctx.messages);
+			return say("Hello.");
+		},
+	]);
+	t.after(() => host.harness.close(context));
+	assert.equal(await host.stop(), false, "a stop with nothing running reported a stopped run");
+	await host.root.submit({ type: "input", content: "clean up the branches" }, context);
+	await pendingOne(host.approvals);
+	assert.equal(await host.stop(), true);
+	await (await host.root.submit({ type: "input", content: "hi" }, context)).wait(context);
+	assert.match(seen, /Brad stopped the run above\. Treat the request it was working on as withdrawn/);
+	// The note sits between the stopped request and the next message.
+	assert.ok(seen.indexOf("clean up the branches") < seen.indexOf("Brad stopped the run") && seen.indexOf("Brad stopped the run") < seen.lastIndexOf('"hi"'));
+	assert.equal(await host.stop(), false);
+});

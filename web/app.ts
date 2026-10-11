@@ -274,7 +274,14 @@ function render() {
 			report.lastElementChild!.classList.add("prose");
 			out.push(line, report);
 		}
-		for (const message of entry.model ?? []) {
+		// The note a stop leaves for the model (host.ts stop) says the same as the "Stopped." above it, and more.
+		if (entry.kind === "gaidin.stopped") {
+			const text = "Stopped. gaidin will drop that request unless you ask again.";
+			const last = rows.at(-1);
+			if (last?.classList.contains("stopped")) last.lastElementChild!.textContent = text;
+			else out.push(row("sys stopped", "sys", text));
+		}
+		for (const message of entry.kind === "gaidin.stopped" ? [] : entry.model ?? []) {
 			if (message.role === "user") {
 				const split = splitStamp(textOf(message.content));
 				if (entry.kind === "pi.user") {
@@ -285,7 +292,7 @@ function render() {
 			} else if (message.role === "assistant") {
 				renderBlocks(message.content, String(entry.id), results, out);
 				if (message.stopReason === "error") out.push(row("err", "error", message.errorMessage ?? "The model returned an error."));
-				if (message.stopReason === "aborted") out.push(row("sys", "sys", "Stopped."));
+				if (message.stopReason === "aborted") out.push(row("sys stopped", "sys", "Stopped."));
 			}
 		}
 		if (out.length > 0) {

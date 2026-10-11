@@ -139,6 +139,8 @@ export function createWebServer(options: {
 	timeline?: ReturnType<typeof createHistory>["timeline"];
 	/** Notifications to the devices that sign up here. */
 	push?: Push;
+	/** Stops the root conversation's run and tells the model it was withdrawn (host.ts). Default: just stop it. */
+	stop?: () => Promise<boolean>;
 	/** The skills gaidin can open, and the local ones that couldn't be read. */
 	skills?: { skills: readonly Skill[]; problems: readonly string[] };
 }) {
@@ -267,7 +269,8 @@ export function createWebServer(options: {
 		"/api/abort": {
 			body: nothing,
 			handle: async () => {
-				await root.abort(context);
+				if (options.stop === undefined) await root.abort(context);
+				else await options.stop();
 				return { ok: true };
 			},
 		},

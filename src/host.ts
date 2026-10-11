@@ -4,7 +4,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels, type Models } from "@earendil-works/pi-ai/models";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { AssistantEntry, createRegistry, defineExtension, type EntryRecord, Harness, type ModelRef, section } from "@earendil-works/pi-durable";
+import { AssistantEntry, createRegistry, defineEntry, defineExtension, type EntryRecord, Harness, type ModelRef, section } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { ApprovalService, approvalExtension } from "./approvals.ts";
@@ -15,7 +15,6 @@ import { createFetch, type FetchOptions } from "./fetch.ts";
 import { createHistory } from "./history.ts";
 import { createJobs, type Deliver, type Gate } from "./jobs.ts";
 import { createMemory } from "./memory.ts";
-import { createSkills } from "./skills.ts";
 import { type Adapter, type Adapters, createNotifications, type Notice, type Notifications } from "./notifications.ts";
 import { ntfyAdapter } from "./ntfy.ts";
 import { createPush, loadPushKeys, type Push, pushAdapter } from "./push.ts";
@@ -24,6 +23,7 @@ import { createReminders } from "./reminders.ts";
 import { findBwrap, prepareServerDirs, SandboxEnv } from "./sandbox.ts";
 import { backendFor, type SearchBackend, searchGuards, webSearchTool } from "./search.ts";
 import { createSelf } from "./self/index.ts";
+import { createSkills } from "./skills.ts";
 import { setTimeZone, timeZone } from "./time.ts";
 import { createWorkspaces, readWorkspaces, type Remote, sshRemote, type Workspace } from "./workspaces.ts";
 
@@ -87,6 +87,9 @@ function persona(owner: string) {
 		],
 	});
 }
+
+/** A run the owner stopped. Its note tells the model the request was withdrawn, so the next message doesn't pick it up again. */
+export const RunStopped = defineEntry("gaidin.stopped");
 
 export type HostOptions = {
 	/** The settings. Default: defaults and the environment, without reading a file. */
@@ -227,11 +230,23 @@ export async function openHost(options: HostOptions = {}) {
 		harness.resume();
 	}
 
+	/** Stops the root conversation's run. Returns whether there was one; if so, a note tells the model the owner withdrew its request. */
+	async function stop(): Promise<boolean> {
+		// Stopping marks each task it aborts, so a newer marked task means something was running.
+		const lastStopped = () => root.commit(async (tx) => (await tx.scanTasks({ conversationId: root.id, abortRequested: true, order: "descending" }, 1)).items[0]?.id, context);
+		const before = await lastStopped();
+		await root.abort(context);
+		if ((await lastStopped()) === before) return false;
+		const note = `[${owner} stopped the run above. Treat the request it was working on as withdrawn: don't continue or redo it unless ${owner} asks again.]`;
+		await root.commit((tx) => tx.appendEntry(RunStopped, root.id, { model: [{ role: "user", content: note, timestamp: Date.now() }] }), context);
+		return true;
+	}
+
 	// The tools the web view can switch off: the coding tools, fetch_url (gaidin's only way to the internet), the history tools, the workspace tools
 	// and the self-written ones.
 	const builtIn = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...history.tools, ...workspaces.tools];
 	const switchable = () => [...builtIn, ...(self?.tools() ?? [])];
-	return { harness, root, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, skills, sandbox, push, start };
+	return { harness, root, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, skills, sandbox, push, start, stop };
 }
 
 export type Host = Awaited<ReturnType<typeof openHost>>;
