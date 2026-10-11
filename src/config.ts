@@ -56,12 +56,15 @@ const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "alerts", "slac
 const TOPIC_URL = /^https?:\/\/[^/\s]+(\/[^/\s]+)*\/[-\w]{1,64}\/?$/;
 const TOPIC_NAME = "a topic is up to 64 letters, digits, - and _";
 
+/** Where the settings live on a server (deploy/vm/setup.sh). Commands can't see it, so a copy or backup left there stays hidden. */
+export const SETTINGS_DIR = "/etc/gaidin";
+
 /** The settings file to use: `explicit`, GAIDIN_CONFIG, or the first default location that exists. */
 export function findConfigFile(explicit?: string, env: NodeJS.ProcessEnv = process.env, search = true): string | undefined {
 	const named = explicit ?? env.GAIDIN_CONFIG;
 	if (named) return resolve(named);
 	if (!search) return undefined;
-	return [resolve("gaidin.json"), "/etc/gaidin/config.json"].find((path) => existsSync(path));
+	return [resolve("gaidin.json"), `${SETTINGS_DIR}/config.json`].find((path) => existsSync(path));
 }
 
 /** Variables that override the file. Names stay as they were before there was a file. */

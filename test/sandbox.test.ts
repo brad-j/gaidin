@@ -113,6 +113,18 @@ test("shell commands see only the sandbox, their own processes and no network", 
 	assert.equal(existsSync(join(root, "late.txt")), false);
 });
 
+test("a hidden file reads as nothing, and a hidden directory is empty, backups and all", { skip: bwrap === undefined && "bwrap isn't installed" }, async (t) => {
+	const { root } = layout(t);
+	mkdirSync(join(root, "settings"));
+	writeFileSync(join(root, "settings", "config.json"), "the key");
+	writeFileSync(join(root, "settings", "config.json~"), "the old key");
+	writeFileSync(join(root, "other.json"), "another key");
+	const env = new SandboxEnv({ root, redactor: noRedaction, bwrap, hide: [join(root, "settings", "config.json"), join(root, "settings"), join(root, "other.json")] });
+	assert.doesNotMatch((await run(env, "cat settings/config.json settings/config.json~ other.json 2>&1")).output, /key/);
+	assert.equal((await run(env, "ls -A settings")).output, "");
+	assert.equal(readFileSync(join(root, "settings", "config.json~"), "utf8"), "the old key");
+});
+
 test("commands can read but not replace the directories the server writes into, and a symlink left there before is replaced", { skip: bwrap === undefined && "bwrap isn't installed" }, async (t) => {
 	const { dir, root } = layout(t);
 	symlinkSync(join(dir, "outside"), join(root, "uploads"));

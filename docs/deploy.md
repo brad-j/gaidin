@@ -44,7 +44,7 @@ On the VM:
 
 | Path | What |
 |---|---|
-| `/etc/gaidin/config.json` | the settings, with secrets; the sandbox can't read it |
+| `/etc/gaidin/config.json` | the settings, with secrets; the sandbox sees `/etc/gaidin` empty |
 | `/var/lib/gaidin/app` | the checkout, read-only to the service |
 | `/var/lib/gaidin/data` | the [data directory](concepts.md#the-data-directory) |
 | `/var/lib/gaidin/keys` | SSH keys for workspaces and container logs, and the workspace list |

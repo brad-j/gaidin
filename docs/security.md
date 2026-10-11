@@ -8,7 +8,7 @@ The transcript is kept forever, compaction included, so anything a tool returns 
 
 `src/redact.ts` keeps the server's own secrets (the API key, the ntfy URL and token, the two Slack tokens, the search key and the Web Push private key) out of tools and the transcript:
 
-- Shell commands can't read the settings file and don't inherit those values' environment variables.
+- Shell commands can't read the settings file, or anything else in `/etc/gaidin`, such as an editor's backup of it, and don't inherit those values' environment variables.
 - Shell output is redacted as it streams, holding back a few characters so a value split across two chunks is still caught. The live output, the stored result and the partial result saved after a crash are all clean.
 - An `afterTool` hook redacts every tool's final result, so a file tool reading `/proc/self/environ` gets `[redacted NAME]` too.
 - The bare ntfy topic name is redacted as well as its URL. Values under 8 characters aren't matched.
@@ -31,7 +31,7 @@ The VM's systemd unit adds a layer around the server itself: the app checkout is
 
 ## Self-written tools
 
-Tools gaidin writes for itself ([Tools](tools.md#self-written-tools)) never run in the server process, where they could read the settings and send the keys anywhere. `src/self/` runs each extension in its own bubblewrap box: no network, its own process tree, no environment variables, the settings file covered, nothing writable but its own `/tmp`, and nothing of the app's mounted but `src/self/` and the extension's approved copy, read-only. The server reads only JSON messages from it, on a channel of their own. The checks before approval run in the same kind of box, with the app's `node_modules` added read-only.
+Tools gaidin writes for itself ([Tools](tools.md#self-written-tools)) never run in the server process, where they could read the settings and send the keys anywhere. `src/self/` runs each extension in its own bubblewrap box: no network, its own process tree, no environment variables, the settings file and `/etc/gaidin` covered, nothing writable but its own `/tmp`, and nothing of the app's mounted but `src/self/` and the extension's approved copy, read-only. The server reads only JSON messages from it, on a channel of their own. The checks before approval run in the same kind of box, with the app's `node_modules` added read-only.
 
 The draft is copied out of the sandbox through the sandbox's own file operations, so a symlink can't pull in a file from outside. The approved copy lives outside the sandbox, so gaidin can't change running code without asking again.
 

@@ -61,12 +61,17 @@ async function systemArgs(): Promise<string[]> {
 	return args;
 }
 
-/** Covers each file in `hide` that is inside a mounted directory with /dev/null; bwrap can't mask one that isn't there. */
+/**
+ * Covers each file in `hide` that is inside a mounted directory with /dev/null, and each directory with an empty one;
+ * bwrap can't mask one that isn't there.
+ */
 async function hideArgs(hide: readonly string[], mounted: readonly string[]): Promise<string[]> {
 	const args: string[] = [];
-	for (const file of hide) {
-		const real = await realpath(file).catch(() => undefined);
-		if (real !== undefined && ["/usr", "/etc", "/opt", ...mounted].some((top) => inside(real, top))) args.push("--ro-bind", "/dev/null", real);
+	for (const path of hide) {
+		const real = await realpath(path).catch(() => undefined);
+		if (real === undefined || !["/usr", "/etc", "/opt", ...mounted].some((top) => inside(real, top))) continue;
+		if ((await lstat(real)).isDirectory()) args.push("--tmpfs", real);
+		else args.push("--ro-bind", "/dev/null", real);
 	}
 	return args;
 }

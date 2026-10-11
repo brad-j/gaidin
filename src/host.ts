@@ -9,7 +9,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { ApprovalService, approvalExtension } from "./approvals.ts";
 import { createBudget } from "./budget.ts";
-import { type Config, configFor, secretsOf } from "./config.ts";
+import { type Config, configFor, secretsOf, SETTINGS_DIR } from "./config.ts";
 import { createHomelab, type HomelabOptions } from "./extensions/homelab/index.ts";
 import { createFetch, type FetchOptions } from "./fetch.ts";
 import { createHistory } from "./history.ts";
@@ -172,8 +172,8 @@ export async function openHost(options: HostOptions = {}) {
 	const bwrap = mode === "bwrap" ? findBwrap() : undefined;
 	// Fail closed: without bubblewrap, shell commands would reach everything the server can.
 	if (mode === "bwrap" && bwrap === undefined) throw new Error('bwrap isn\'t on PATH. Install bubblewrap, or set "sandbox": "none" to run tools unconfined.');
-	// The settings file can hold secrets; nothing in a box can read it.
-	const hide = config.file === undefined ? [] : [config.file];
+	// The settings file can hold secrets; nothing in a box can read it, or anything else in the settings directory.
+	const hide = config.file === undefined ? [SETTINGS_DIR] : [config.file, SETTINGS_DIR];
 
 	const registry = createRegistry();
 	registry.install(persona(owner));
