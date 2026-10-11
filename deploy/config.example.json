@@ -7,6 +7,9 @@
     "id": "claude-haiku-5-5",
     "apiKey": "sk-ant-..."
   },
+  "alerts": {
+    "url": "https://ntfy.sh/<the topic your monitoring pushes to>"
+  },
   "ntfy": {
     "url": "https://ntfy.sh/gaidin-<long random name>",
     "icon": "https://gaidin.<your tailnet>.ts.net/icon-192.png"

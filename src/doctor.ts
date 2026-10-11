@@ -36,6 +36,7 @@ export async function runChecks(loaded: Loaded, options: { push?: boolean } = {}
 		sandbox(config),
 		model(config),
 		ntfy(config, options.push === true),
+		alerts(config),
 		slack(config),
 		web(config),
 		search(config),
@@ -113,6 +114,13 @@ async function ntfy(config: Config, push: boolean): Promise<Check[]> {
 	// Reads the topic's recent messages, which sends nothing.
 	const { status } = await json(`${config.ntfy.url}/json?poll=1&since=1m`, headers === undefined ? {} : { headers });
 	return [{ status: status === 200 ? "ok" : "fail", area: "ntfy", detail: status === 200 ? "topic reachable (gaidin doctor --push sends a test)" : `the topic answered ${status}` }];
+}
+
+async function alerts(config: Config): Promise<Check[]> {
+	if (config.alerts === undefined) return [{ status: "skip", area: "alerts", detail: "not set up; gaidin doesn't follow an alert topic" }];
+	const headers = config.alerts.token === undefined ? {} : { headers: { Authorization: `Bearer ${config.alerts.token}` } };
+	const { status } = await json(`${config.alerts.url}/json?poll=1&since=1m`, headers);
+	return [{ status: status === 200 ? "ok" : "fail", area: "alerts", detail: status === 200 ? "alert topic reachable" : `the alert topic answered ${status}` }];
 }
 
 async function slack(config: Config): Promise<Check[]> {

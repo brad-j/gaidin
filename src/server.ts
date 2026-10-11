@@ -14,6 +14,7 @@ import type { Config } from "./config.ts";
 import { assistantText, context, openHost } from "./host.ts";
 import { ReminderFired } from "./reminders.ts";
 import { createSlackSurface, recordPosted, slackApi, slackDownload, slackPoster, socketMode } from "./slack.ts";
+import { followAlerts } from "./alerts.ts";
 import { createSlackApprovals } from "./slack-approvals.ts";
 import { createSlackReminders } from "./slack-reminders.ts";
 import { stamp } from "./time.ts";
@@ -57,7 +58,8 @@ export async function serve(config: Config) {
 		process.exit(1);
 	}
 
-	const { harness, root, switchable, approvals, setDeliver, setAlsoNotify, setBudgetNotify, budget, explain, timeline, sandbox, reminders } = await openHost({ config });
+	const { harness, root, switchable, approvals, setDeliver, setAlsoNotify, setBudgetNotify, budget, explain, timeline, sandbox, reminders, jobs } = await openHost({ config });
+	const alerts = config.alerts === undefined ? undefined : followAlerts({ ...config.alerts, root, owner: config.owner, addJob: jobs.addJob });
 
 	let slack: { stop(): void } | undefined;
 	if (config.slack !== undefined) {
@@ -161,6 +163,7 @@ export async function serve(config: Config) {
 
 	async function shutdown() {
 		slack?.stop();
+		alerts?.stop();
 		web?.closeAllConnections();
 		web?.close();
 		server.close();

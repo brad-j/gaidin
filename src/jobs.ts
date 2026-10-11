@@ -42,6 +42,8 @@ export type Job = {
 	lastAt?: number;
 	lastResult?: "reported" | "quiet" | "failed";
 	runs: number;
+	/** The only tools its runs get, by name. Absent: every tool but the job tools. */
+	tools?: string[];
 };
 
 /** Active jobs. A job leaves the list when it's cancelled or has no more runs. */
@@ -210,6 +212,18 @@ export function createJobs(options: { deliver: () => Deliver; owner: string; exp
 		return stamp(lines.join("\n"));
 	}
 
+	/** Adds a job whose reports go to `conversationId`'s surface. Throws when there are already MAX_JOBS. */
+	async function addJob(tx: Tx, conversationId: ConversationId, fields: Pick<Job, "title" | "instruction" | "schedule" | "mode" | "tools">): Promise<Job> {
+		const doc = await tx.doc(Jobs);
+		if (doc.items.length >= MAX_JOBS) throw new Error(`There are already ${MAX_JOBS} jobs; cancel one first.`);
+		const first = nextRun(fields.schedule, Date.now())!;
+		// Background: the conversation goes idle while it waits, and Stop doesn't cancel it.
+		const taskId = await tx.createTask(JobTask, { title: fields.title, firstAt: first }, { ownership: { kind: "conversation" }, conversationId, background: true });
+		const job: Job = { taskId: taskId as number, ...fields, createdAt: Date.now(), nextAt: first, runs: 0 };
+		doc.items.push(job);
+		return { ...job };
+	}
+
 	// Filled in below; the task removes the jobs extension from its runs, so a job can't make more jobs.
 	let extension: Extension;
 
@@ -235,7 +249,8 @@ export function createJobs(options: { deliver: () => Deliver; owner: string; exp
 						const job = await findJob(tx, task.id);
 						if (job === undefined) return { status: "terminal", outcome: { status: "completed", result: "cancelled" } };
 						const created = await tx.createConversation({ ownership: { kind: "task", taskId: runtime.taskId } });
-						await configure(tx, created.id, { extensions: { remove: [extension] } });
+						const tools = job.tools === undefined ? undefined : runtime.registry.tools().flatMap((t) => (job.tools!.includes(t.tool.name) ? [t.tool] : []));
+						await configure(tx, created.id, { extensions: { remove: [extension] }, ...(tools === undefined ? {} : { tools }) });
 						return { status: "running", checkpoint: { phase: "run", at, firing, conversationId: created.id as number } };
 					}, context);
 					return;
@@ -337,21 +352,8 @@ export function createJobs(options: { deliver: () => Deliver; owner: string; exp
 		}),
 		execute: async (args, api, context) => {
 			const parsed = parseSchedule(args);
-			const first = nextRun(parsed, Date.now())!;
-			const created = await api.commit(async (tx) => {
-				const doc = await tx.doc(Jobs);
-				if (doc.items.length >= MAX_JOBS) throw new Error(`There are already ${MAX_JOBS} jobs; cancel one first.`);
-				// Background: the conversation goes idle while it waits, and Stop doesn't cancel it.
-				const taskId = await tx.createTask(JobTask, { title: args.title, firstAt: first }, {
-					ownership: { kind: "conversation" },
-					conversationId: api.conversationId,
-					background: true,
-				});
-				const job: Job = { taskId: taskId as number, title: args.title, instruction: args.instruction, schedule: parsed, mode: args.mode ?? "report", createdAt: Date.now(), nextAt: first, runs: 0 };
-				doc.items.push(job);
-				return job;
-			}, context);
-			return { content: [{ type: "text", text: `Job ${created.taskId} "${created.title}" scheduled ${describeSchedule(created.schedule)}${created.mode === "watch" ? ", as a watch" : ""}. First run ${formatTime(first)}.` }] };
+			const created = await api.commit((tx) => addJob(tx, api.conversationId, { title: args.title, instruction: args.instruction, schedule: parsed, mode: args.mode ?? "report" }), context);
+			return { content: [{ type: "text", text: `Job ${created.taskId} "${created.title}" scheduled ${describeSchedule(created.schedule)}${created.mode === "watch" ? ", as a watch" : ""}. First run ${formatTime(created.nextAt!)}.` }] };
 		},
 	});
 
@@ -379,7 +381,7 @@ export function createJobs(options: { deliver: () => Deliver; owner: string; exp
 	});
 
 	extension = defineExtension({ name: "jobs", tools: [schedule, list, cancel], tasks: [JobTask] });
-	return { extension, JobTask };
+	return { extension, JobTask, addJob };
 }
 
 export function describeJob(job: Job): string {

@@ -27,6 +27,8 @@ export type Config = {
 	timeZone: string;
 	dataDir: string;
 	model: { provider: "anthropic" | "faux"; id: string; apiKey?: string; choices: string[] };
+	/** An ntfy topic other systems send alerts to, which gaidin follows and investigates (alerts.ts). */
+	alerts?: { url: string; token?: string };
 	/** `icon` is the URL of a PNG or JPEG the ntfy app shows beside each push. */
 	ntfy?: { url: string; token?: string; icon?: string };
 	slack?: { botToken: string; appToken: string; channelId: string; userId: string };
@@ -47,7 +49,7 @@ export type Config = {
 export type Loaded = { config: Config; errors: string[]; warnings: string[] };
 
 const DEFAULT_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
-const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "slack", "web", "sandbox", "budget", "approvals", "search", "keys", "extensions"];
+const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "alerts", "slack", "web", "sandbox", "budget", "approvals", "search", "keys", "extensions"];
 
 /** The settings file to use: `explicit`, GAIDIN_CONFIG, or the first default location that exists. */
 export function findConfigFile(explicit?: string, env: NodeJS.ProcessEnv = process.env, search = true): string | undefined {
@@ -162,6 +164,14 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	if (ntfyIcon !== undefined && !/^https?:\/\/[^/]+\/./.test(ntfyIcon)) errors.push("ntfy.icon must be the URL of a PNG or JPEG");
 	if (ntfyUrl === undefined) warnings.push("No ntfy.url: reminders print to the server's output instead of pushing");
 
+	// Alerts
+	const alertsSection = section("alerts");
+	const alertsUrl = text("alerts.url", alertsSection.url)?.replace(/\/+$/, "");
+	const alertsToken = text("alerts.token", alertsSection.token);
+	if (alertsUrl !== undefined && !/^https?:\/\/[^/]+\/[^/]+/.test(alertsUrl)) errors.push("alerts.url must be a topic URL, like https://ntfy.sh/<topic>");
+	// Following its own topic, gaidin would investigate its own reminders.
+	if (alertsUrl !== undefined && alertsUrl === ntfyUrl?.replace(/\/+$/, "")) errors.push("alerts.url must be another topic than ntfy.url");
+
 	// Slack: all four or none
 	const slackSection = section("slack");
 	const slack = {
@@ -253,7 +263,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	}
 
 	// A file holding secrets should be readable by its owner and the service only.
-	const secretsInFile = [model.apiKey, ntfySection.url, ntfySection.token, slackSection.botToken, slackSection.appToken, searchSection.apiKey].some((v) => v !== undefined);
+	const secretsInFile = [model.apiKey, ntfySection.url, ntfySection.token, slackSection.botToken, slackSection.appToken, searchSection.apiKey, alertsSection.url, alertsSection.token].some((v) => v !== undefined);
 	if (file !== undefined && secretsInFile && existsSync(file) && (statSync(file).mode & 0o007) !== 0) {
 		warnings.push(`${file} holds secrets and anyone on the machine can read it; chmod o-rwx it`);
 	}
@@ -267,6 +277,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 		...(ntfyUrl === undefined
 			? {}
 			: { ntfy: { url: ntfyUrl, ...(ntfyToken === undefined ? {} : { token: ntfyToken }), ...(ntfyIcon === undefined ? {} : { icon: ntfyIcon }) } }),
+		...(alertsUrl === undefined ? {} : { alerts: { url: alertsUrl, ...(alertsToken === undefined ? {} : { token: alertsToken }) } }),
 		...(slackGiven.length === 4 ? { slack: slack as NonNullable<Config["slack"]> } : {}),
 		...(webUser === undefined ? {} : { web: { user: webUser, port, ...(webUrl === undefined ? {} : { url: webUrl }) } }),
 		sandbox: sandbox as Config["sandbox"],
@@ -293,6 +304,8 @@ export function secretsOf(config: Config): Record<string, string | undefined> {
 		SLACK_BOT_TOKEN: config.slack?.botToken,
 		SLACK_APP_TOKEN: config.slack?.appToken,
 		TAVILY_API_KEY: config.search?.apiKey,
+		ALERTS_URL: config.alerts?.url,
+		ALERTS_TOKEN: config.alerts?.token,
 	};
 }
 
@@ -306,6 +319,7 @@ export function maskedConfig(config: Config): Config {
 		...(config.ntfy === undefined
 			? {}
 			: { ntfy: { ...config.ntfy, url: ntfyMask(config.ntfy.url), ...(config.ntfy.token === undefined ? {} : { token: mask(config.ntfy.token)! }) } }),
+		...(config.alerts === undefined ? {} : { alerts: { url: ntfyMask(config.alerts.url), ...(config.alerts.token === undefined ? {} : { token: mask(config.alerts.token)! }) } }),
 		...(config.slack === undefined ? {} : { slack: { ...config.slack, botToken: mask(config.slack.botToken)!, appToken: mask(config.slack.appToken)! } }),
 		...(config.search === undefined ? {} : { search: { ...config.search, apiKey: mask(config.search.apiKey)! } }),
 	};

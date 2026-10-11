@@ -13,7 +13,7 @@ import type { ShellExecOptions, ShellOutputInfo } from "@earendil-works/pi-durab
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 
 /** Environment variables that hold credentials. */
-export const SECRET_NAMES = ["ANTHROPIC_API_KEY", "NTFY_URL", "NTFY_TOKEN", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "TAVILY_API_KEY"] as const;
+export const SECRET_NAMES = ["ANTHROPIC_API_KEY", "NTFY_URL", "NTFY_TOKEN", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "TAVILY_API_KEY", "ALERTS_URL", "ALERTS_TOKEN"] as const;
 
 // Shorter values would redact ordinary text.
 const MIN_LENGTH = 8;
@@ -29,15 +29,15 @@ export function redactorFromEnv(env: NodeJS.ProcessEnv = process.env): Redactor 
 	return redactorFor(Object.fromEntries(SECRET_NAMES.map((name) => [name, env[name]])));
 }
 
-/** A redactor for secret values by name. An ntfy topic URL also redacts the bare topic name. */
+/** A redactor for secret values by name. An ntfy topic URL, for reminders or alerts, also redacts the bare topic name. */
 export function redactorFor(values: Record<string, string | undefined>): Redactor {
 	const secrets = new Map<string, string>();
 	for (const [name, value] of Object.entries(values)) {
 		if (!value) continue;
 		secrets.set(value, name);
-		if (name === "NTFY_URL") {
+		if (name === "NTFY_URL" || name === "ALERTS_URL") {
 			const topic = value.replace(/\/+$/, "").split("/").at(-1);
-			if (topic) secrets.set(topic, "NTFY_TOPIC");
+			if (topic) secrets.set(topic, name === "NTFY_URL" ? "NTFY_TOPIC" : "ALERTS_TOPIC");
 		}
 	}
 	return createRedactor(secrets);

@@ -8,6 +8,7 @@
 | `search_history`, `read_history` | in the server | its index of past messages | no |
 | `ask_owner` | in the server | the owner, in Slack or the web view | it is the question |
 | `schedule_job`, `list_jobs`, `cancel_job` | in the server; each run is a new conversation | what the run's tools reach | every new job |
+| alert investigations | in the server; each is a job run | read-only tools only | for a host not allowed for good |
 | `fetch_url` | in the server | the public internet only | for a host not allowed for good |
 | `web_search` | in the server | the configured search backend | no |
 | `load_extension`, `remove_extension` | in the server | the sandbox's `extensions/`, the owner | every load and removal |
@@ -63,6 +64,14 @@ With `mode: "watch"`, a run reports only when something needs the owner and othe
 Each job is a durable background task ([Concepts](concepts.md#durability)). At its time it starts a new conversation with the agent settings of the conversation it was made in, so the run doesn't carry that conversation's history and its instruction has to stand alone. The run has every tool except the job tools, so a job can't create jobs. Its answer goes to Slack as a message of its own (a reply in its thread continues that run's conversation), or to ntfy without Slack, and a "Scheduled" entry in the conversation records it. A failed delivery is retried up to five times. A run due while the server was down happens when it starts, and a repeating job then carries on from the next time after that.
 
 Creating a job always asks the owner ([Security](security.md#approvals)), because it acts later without them. There can be at most 20 jobs. Each run is a full model request, so a frequent job costs accordingly, and its transcript is kept like any other.
+
+## Alerts
+
+With `alerts.url` in the settings, gaidin follows an ntfy topic that monitoring already pushes to, such as Uptime Kuma, the NAS, Proxmox, Beszel or failing systemd units, and investigates what arrives (`src/alerts.ts`). It only connects out to ntfy, so nothing new listens on the server and the senders don't change.
+
+Alerts that arrive within a minute of each other become one investigation: a one-off [watch job](#scheduled-jobs) titled after the first alert. Its run gets the alerts as data and only read-only tools: `homelab_status`, `container_logs`, `fetch_url` (which still asks before a new host), `web_search`, `search_history` and `read_history`, whichever are set up. It reports what's wrong, the likely cause and what to do, to Slack, or to the reminder topic without Slack, and stays quiet when nothing needs the owner, such as when every alert is a recovery. A reply in the report's thread continues the investigation, and the timeline lists it.
+
+The last alert handed to an investigation is stored, so after a restart gaidin reads the topic on from there; ntfy.sh keeps messages for 12 hours. Each investigation is a model run, so a burst of alerts costs money; the [spend limits](deploy.md#spend-limits) cap it. `alerts.url` can't be the reminder topic, or gaidin would investigate its own reminders.
 
 ## fetch_url
 

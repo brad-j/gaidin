@@ -7,7 +7,7 @@ import test, { type TestContext } from "node:test";
 import { configFor, loadConfig, maskedConfig, secretsOf } from "../src/config.ts";
 import { runChecks } from "../src/doctor.ts";
 import { context } from "../src/host.ts";
-import { createRedactor } from "../src/redact.ts";
+import { createRedactor, redactorFor } from "../src/redact.ts";
 import { findBwrap, SandboxEnv } from "../src/sandbox.ts";
 
 const KEY = "sk-ant-api03-test-key-0123456789";
@@ -155,4 +155,16 @@ test("web.url is the web view's address, without a trailing slash", (t) => {
 	const read = (url: string) => loadConfig({ file: file(t, { model: { apiKey: KEY }, web: { user: "brad@example.com", url } }), env: {} });
 	assert.equal(read("https://gaidin.example.ts.net/").config.web?.url, "https://gaidin.example.ts.net");
 	assert.ok(read("gaidin.example.ts.net").errors.some((error) => /web\.url must be the web view's address/.test(error)));
+});
+
+test("alerts.url is a topic other than the reminders', and is redacted like it", (t) => {
+	const alerts = "https://ntfy.sh/homelab-alerts-5f3a9c2e7b";
+	const { config, errors } = loadConfig({ file: file(t, { model: { apiKey: KEY }, ntfy: { url: "https://ntfy.sh/gaidin-abc123def456" }, alerts: { url: alerts } }), env: {} });
+	assert.deepEqual(errors, []);
+	assert.equal(config.alerts?.url, alerts);
+	assert.ok(!JSON.stringify(maskedConfig(config)).includes("5f3a9c2e7b"));
+	const redacted = redactorFor(secretsOf(config)).redact(`subscribed to ${alerts} (homelab-alerts-5f3a9c2e7b)`);
+	assert.ok(!redacted.includes("5f3a9c2e7b"), redacted);
+	const same = loadConfig({ file: file(t, { model: { apiKey: KEY }, ntfy: { url: alerts }, alerts: { url: `${alerts}/` } }), env: {} });
+	assert.ok(same.errors.some((error) => /alerts\.url must be another topic than ntfy\.url/.test(error)));
 });
