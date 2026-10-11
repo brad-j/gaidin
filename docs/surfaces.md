@@ -46,7 +46,7 @@ The web view is a console on the root conversation, live from every surface:
 - The dock holds pending approvals and questions above the prompt. Approvals have Allow, the wider grant where there is one, and Deny (Alt+Y, Alt+A, Alt+N for the oldest). Questions have a button per choice, and whatever you type at the prompt next is taken as the answer.
 - The status line shows whether a run is going, with Esc or Ctrl+C to stop it, the model, thinking level and tools, and the cost of the conversation and today's spend against any limit. When the spend guard has stopped gaidin, it shows a button to allow more today.
 
-Everything else is a slash command; `/help` lists them. `/next` lists reminders and jobs and `/cancel` cancels one, `/pause` and `/resume` pause and resume a job (`/next` has buttons for all three), `/model`, `/thinking`, `/tools`, `/tool` and `/instructions` change the agent's settings, `/memory`, `/remember` and `/forget` manage gaidin's notes, `/timeline` lists what gaidin did and who allowed it, newest first, and `/budget` shows the spend. Enter sends, Shift+Enter starts a new line, the up and down arrows recall earlier messages, and Tab completes commands.
+Everything else is a slash command; `/help` lists them. `/next` lists reminders and jobs and `/cancel` cancels one, `/pause` and `/resume` pause and resume a job (`/next` has buttons for all three), `/model`, `/thinking`, `/tools`, `/tool` and `/instructions` change the agent's settings, `/memory`, `/remember` and `/forget` manage gaidin's notes, `/timeline` lists what gaidin did and who allowed it, newest first, `/notifications` signs devices up for [notifications](#notifications), and `/budget` shows the spend. Enter sends, Shift+Enter starts a new line, the up and down arrows recall earlier messages, and Tab completes commands.
 
 It shows no keys or Slack settings, and turning a tool off there is the quickest way to take it away from the model.
 
@@ -61,3 +61,22 @@ sudo tailscale serve --bg --yes 8410
 Serve removes any identity headers a client sends and adds `Tailscale-User-Login` for requests from a person's device. The server answers only the login in `web.user` and returns 403 to everyone else, including tagged devices, which get no identity. POSTs need a JSON body and an `Origin` matching the page, so another site open in your browser can't drive it.
 
 Without `web.user` there's no web view. The page is `web/index.html` and `web/app.ts`; Node strips the TypeScript types as it serves the file, so there's no build step.
+
+### As an app
+
+The web view installs as an app: on an iPhone or iPad, Share, then Add to Home Screen; in Chrome or Edge, Install from the address bar or menu. It opens in its own window, without the browser's bars, and keeps clear of the notch and the home bar. Its service worker (`web/sw.js`) shows notifications and, when the server can't be reached, such as from a phone off the tailnet, a page that says so with a button to try again. It caches nothing, so what you see is always the server's.
+
+## Notifications
+
+gaidin tells you about reminders, job reports and spend-limit stops (the last two only without Slack, which gets them otherwise), and about approval requests and questions, which are waiting on you, whatever else is set up. It sends each one every way that's set up:
+
+- Web Push, to every device signed up in the web view, when the settings have `web.url`.
+- ntfy, when the settings have `ntfy.url`. Approval requests and questions don't go there.
+
+A notification counts as sent when one way reached someone; when none did, a reminder or report is tried again. With neither set up, they print to the server's output.
+
+### Web Push
+
+Run `/notifications` in the web view and press "turn on here" to sign that device up; the browser asks whether to allow notifications. On an iPhone or iPad this works only in the app on the Home Screen, which is where the request has to come from. `/notifications` also lists the signed-up devices, removes one, and sends a test.
+
+A notification shows its text and opens the web view when tapped; it has no buttons. Each is sent to the push service of the device's browser (Apple's, Google's or Mozilla's), which delivers it to the device. It's encrypted to the device (RFC 8291), so the push service sees only its size and timing, and signed with gaidin's own key (VAPID, RFC 8292), so the push service takes notifications for these devices only from gaidin. The key pair is made on first start, in `<data>/push-keys.json`, and `web.url` is the contact address the push services are given. The server has to reach them over HTTPS; `gaidin doctor` checks Apple's and Google's. A device the push service says is gone is dropped.

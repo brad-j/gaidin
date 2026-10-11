@@ -1,7 +1,10 @@
 {
+	"id": "/",
 	"name": "gaidin",
 	"short_name": "gaidin",
+	"description": "A personal agent",
 	"start_url": "/",
+	"scope": "/",
 	"display": "standalone",
 	"background_color": "#0a0d10",
 	"theme_color": "#0a0d10",

@@ -36,6 +36,7 @@ export async function runChecks(loaded: Loaded, options: { push?: boolean } = {}
 		sandbox(config),
 		model(config),
 		ntfy(config, options.push === true),
+		push(config),
 		alerts(config),
 		slack(config),
 		web(config),
@@ -105,7 +106,7 @@ async function model(config: Config): Promise<Check[]> {
 }
 
 async function ntfy(config: Config, push: boolean): Promise<Check[]> {
-	if (config.ntfy === undefined) return [{ status: "skip", area: "ntfy", detail: "not set up; reminders print to the server's output" }];
+	if (config.ntfy === undefined) return [{ status: "skip", area: "ntfy", detail: "not set up; notifications go only to devices signed up in the web view" }];
 	const headers = config.ntfy.token === undefined ? undefined : { Authorization: `Bearer ${config.ntfy.token}` };
 	if (push) {
 		const response = await fetch(config.ntfy.url, { method: "POST", body: "gaidin doctor: test push", headers: { Title: "gaidin", ...(config.ntfy.icon ? { Icon: config.ntfy.icon } : {}), ...headers }, signal: AbortSignal.timeout(10_000) });
@@ -114,6 +115,17 @@ async function ntfy(config: Config, push: boolean): Promise<Check[]> {
 	// Reads the topic's recent messages, which sends nothing.
 	const { status } = await json(`${config.ntfy.url}/json?poll=1&since=1m`, headers === undefined ? {} : { headers });
 	return [{ status: status === 200 ? "ok" : "fail", area: "ntfy", detail: status === 200 ? "topic reachable (gaidin doctor --push sends a test)" : `the topic answered ${status}` }];
+}
+
+/** Web Push sends to the push services of Apple and Google (and others), so the server has to reach them. */
+async function push(config: Config): Promise<Check[]> {
+	if (config.web?.url === undefined) return [{ status: "skip", area: "push", detail: "not set up; notifications from the web view need web.url" }];
+	const services = ["web.push.apple.com", "fcm.googleapis.com"];
+	const unreachable = (
+		await Promise.all(services.map(async (host) => (await fetch(`https://${host}/`, { signal: AbortSignal.timeout(10_000) }).then(() => true, () => false)) ? [] : [host]))
+	).flat();
+	if (unreachable.length > 0) return [{ status: "fail", area: "push", detail: `can't reach ${unreachable.join(" or ")}, so notifications to those devices won't arrive` }];
+	return [{ status: "ok", area: "push", detail: "push services reachable; sign devices up with /notifications in the web view" }];
 }
 
 async function alerts(config: Config): Promise<Check[]> {

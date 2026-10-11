@@ -166,7 +166,6 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	const ntfyIcon = text("ntfy.icon", ntfySection.icon);
 	if (ntfyUrl !== undefined && !TOPIC_URL.test(ntfyUrl)) errors.push(`ntfy.url must be a topic URL, like https://ntfy.sh/<topic>; ${TOPIC_NAME}`);
 	if (ntfyIcon !== undefined && !/^https?:\/\/[^/]+\/./.test(ntfyIcon)) errors.push("ntfy.icon must be the URL of a PNG or JPEG");
-	if (ntfyUrl === undefined) warnings.push("No ntfy.url: reminders print to the server's output instead of pushing");
 
 	// Alerts
 	const alertsSection = section("alerts");
@@ -201,6 +200,9 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	if (!Number.isInteger(port) || port < 1 || port > 65535) errors.push(`web.port must be a port number, not ${JSON.stringify(portValue)}`);
 	const webUrl = text("web.url", webSection.url)?.replace(/\/+$/, "");
 	if (webUrl !== undefined && !/^https?:\/\/[^/]+$/.test(webUrl)) errors.push("web.url must be the web view's address, like https://gaidin.example.ts.net");
+	if (ntfyUrl === undefined && (webUser === undefined || webUrl === undefined)) {
+		warnings.push("Neither ntfy.url nor web.url: reminders print to the server's output instead of reaching a phone");
+	}
 
 	// Sandbox
 	const sandbox = e.sandbox ?? text("sandbox", raw.sandbox) ?? "bwrap";

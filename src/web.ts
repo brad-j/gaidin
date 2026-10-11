@@ -4,7 +4,7 @@
 //
 // The page is web/index.html and web/app.ts, with its types stripped as it's served. Its icon is assets/logo.svg,
 // and the header shows assets/logo-transparent.svg. The PNG icons, for phone home screens and ntfy.icon, are
-// renders of the same two files.
+// renders of the same two files. web/sw.js is the service worker that shows notifications (push.ts).
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -17,6 +17,7 @@ import { context } from "./host.ts";
 import type { createHistory } from "./history.ts";
 import { describeSchedule, Jobs, pauseJob, removeJob, resumeJob } from "./jobs.ts";
 import { addNote, forgetNote, Memory } from "./memory.ts";
+import type { Push } from "./push.ts";
 import { type Reminder, Reminders, removeReminder } from "./reminders.ts";
 import { stamp } from "./time.ts";
 
@@ -45,6 +46,8 @@ export function createWebServer(options: {
 	snooze?: (tx: Tx, id: number, minutes: number) => Promise<Reminder | undefined>;
 	/** What gaidin did, for /timeline. */
 	timeline?: ReturnType<typeof createHistory>["timeline"];
+	/** Notifications to the devices that sign up here. */
+	push?: Push;
 }) {
 	const { harness, root, user, switchable, approvals } = options;
 	const choices = options.models ?? [];
@@ -64,6 +67,7 @@ export function createWebServer(options: {
 		["/icon-512.png", asset("assets/icon-512.png", "image/png")],
 		["/icon-maskable-512.png", asset("assets/icon-maskable-512.png", "image/png")],
 		["/manifest.webmanifest", asset("web/manifest.webmanifest", "application/manifest+json")],
+		["/sw.js", asset("web/sw.js", "text/javascript; charset=utf-8")],
 	]);
 
 	async function settings(): Promise<Settings> {
@@ -145,6 +149,10 @@ export function createWebServer(options: {
 		if (get && url.pathname === "/api/budget") return json(response, options.budget === undefined ? null : await options.budget.refresh());
 		if (get && url.pathname === "/api/usage") return json(response, await harness.usage(context));
 		if (get && url.pathname === "/api/approvals") return json(response, await approvals.pending());
+		if (get && url.pathname === "/api/push") {
+			const push = options.push;
+			return json(response, push === undefined ? null : { publicKey: push.publicKey, devices: (await push.devices()).map(({ endpoint, label, addedAt }) => ({ endpoint, label, addedAt })) });
+		}
 		if (request.method !== "POST") throw new HttpError(404, "Not found");
 
 		const body = await readJson(request);
@@ -213,6 +221,23 @@ export function createWebServer(options: {
 				if (!["once", "always", "deny"].includes(decision)) throw new HttpError(400, `Unknown decision ${decision}`);
 				const decided = await approvals.decide(String(body.id), decision as Decision, "web");
 				return json(response, { ok: decided !== undefined });
+			}
+			case "/api/push/subscribe": {
+				if (options.push === undefined) throw new HttpError(404, "Notifications need web.url in the settings");
+				const keys = (body.keys ?? {}) as Record<string, unknown>;
+				try {
+					await options.push.add({ endpoint: String(body.endpoint), p256dh: String(keys.p256dh), auth: String(keys.auth), label: String(body.label ?? "a device") });
+				} catch (error) {
+					throw new HttpError(400, error instanceof Error ? error.message : String(error));
+				}
+				return json(response, { ok: true });
+			}
+			case "/api/push/unsubscribe":
+				return json(response, { ok: (await options.push?.remove(String(body.endpoint))) === true });
+			case "/api/push/test": {
+				if (options.push === undefined) throw new HttpError(404, "Notifications need web.url in the settings");
+				const sent = await options.push.send({ title: "gaidin", body: "Notifications work on this device.", tag: "test" });
+				return json(response, { sent });
 			}
 			case "/api/settings":
 				await configure(body);

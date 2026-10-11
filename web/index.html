@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>gaidin</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -88,7 +88,11 @@ button.plain { background: transparent; border-color: transparent; color: var(--
 @media (hover: hover) { button.plain:hover:not(:disabled) { background: var(--color-paper-3); border-color: transparent; color: var(--color-ink); } }
 kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit; opacity: 0.75; }
 
-#app { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); height: 100dvh; }
+/* Installed as an app, the page runs under the notch and the home bar; the insets keep it clear of both. */
+#app {
+	display: grid; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); height: 100dvh;
+	padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
 
 /* --- horizon: the next 24 hours ---------------------------------------------------------------- */
 
@@ -205,7 +209,8 @@ kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: inherit;
 .out .on { color: var(--color-voice); }
 .out .off { color: var(--color-bad); }
 .out button { justify-self: end; }
-.out .actions { justify-self: end; display: flex; gap: 1ch; }
+.actions { display: flex; flex-wrap: wrap; gap: 1ch; }
+.out .actions { justify-self: end; flex-wrap: nowrap; }
 .timeline { grid-template-columns: auto auto minmax(0, 2fr) minmax(0, 1fr); }
 .timeline > span { overflow-wrap: anywhere; }
 .help { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 0 2ch; }

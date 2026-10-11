@@ -997,6 +997,65 @@ async function showMemory() {
 	say("sys", out);
 }
 
+// --- notifications ------------------------------------------------------------------------------
+// Web Push to this device (push.ts on the server, sw.js here): reminders, job reports, and what gaidin is waiting on.
+
+type PushInfo = { publicKey: string; devices: { endpoint: string; label: string; addedAt: number }[] };
+
+/** What kind of device this is, to tell the signed-up ones apart. */
+function deviceLabel(): string {
+	const ua = navigator.userAgent;
+	return /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : "Linux";
+}
+
+async function turnOnHere(publicKey: string) {
+	// Asked before anything else, while the tap still counts: iOS allows the request only in answer to one.
+	if ((await Notification.requestPermission()) !== "granted") return say("err", "Notifications aren't allowed for gaidin here. Allow them in the device's settings, then try again.");
+	const key = Uint8Array.from(atob(publicKey.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+	const subscription = await (await navigator.serviceWorker.ready).pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+	const { endpoint, keys } = subscription.toJSON();
+	await post("/api/push/subscribe", { endpoint, keys, label: deviceLabel() });
+	say("sys", "Notifications are on for this device.");
+}
+
+async function removeDevice(endpoint: string) {
+	const mine = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+	await post("/api/push/unsubscribe", { endpoint });
+	if (mine?.endpoint === endpoint) await mine.unsubscribe();
+	say("sys", mine?.endpoint === endpoint ? "Notifications are off for this device." : "That device won't get notifications any more.");
+}
+
+async function showNotifications() {
+	const info = await load<PushInfo | null>("/api/push");
+	if (info === null) return say("sys", "Notifications need web.url in gaidin's settings.");
+	if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+		return say("sys", /iPhone|iPad/.test(navigator.userAgent)
+			? "On an iPhone or iPad, add gaidin to the Home Screen (Share, then Add to Home Screen) and open it from there to turn notifications on."
+			: "This browser can't get notifications.");
+	}
+	const mine = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+	const button = (label: string, run: () => Promise<void>) => {
+		const b = el("button", "plain", label);
+		b.type = "button";
+		b.addEventListener("click", () => void run().catch((error) => notice(String(error))));
+		return b;
+	};
+	const out = el("div", "out");
+	for (const device of info.devices) {
+		const here = device.endpoint === mine?.endpoint;
+		out.append(el("span", "dim", here ? "here" : ""), el("span", "when", `since ${when.format(device.addedAt)}`), el("span", undefined, device.label), button("remove", () => removeDevice(device.endpoint)));
+	}
+	const actions = el("div", "actions");
+	if (!info.devices.some((d) => d.endpoint === mine?.endpoint)) actions.append(button("turn on here", () => turnOnHere(info.publicKey)));
+	if (info.devices.length > 0) {
+		actions.append(button("send a test", async () => {
+			const { sent } = await post("/api/push/test", {});
+			say("sys", `Sent to ${sent} device${sent === 1 ? "" : "s"}.`);
+		}));
+	}
+	say("sys", info.devices.length === 0 ? "No device gets notifications yet." : out, actions);
+}
+
 type Activity = { entry: number; at: number; place: string; kind: string; name: string; detail: string; outcome: string };
 type Cursor = { entry: number; ref: string };
 
@@ -1118,6 +1177,7 @@ const commands: Command[] = [
 	{ name: "tools", help: "The tools you can switch off", run: showTools },
 	{ name: "memory", help: "gaidin's notes, which every conversation sees", run: showMemory },
 	{ name: "timeline", help: "What gaidin did and who allowed it, newest first", run: () => showTimeline() },
+	{ name: "notifications", help: "Turn notifications on or off for this device, and see the others", run: showNotifications },
 	{
 		name: "remember",
 		args: "<text>",
@@ -1436,6 +1496,8 @@ $("jump").addEventListener("click", () => {
 $("next-up").addEventListener("click", () => void runCommand("/next"));
 $("later").addEventListener("click", () => void runCommand("/next"));
 
+// The service worker shows notifications, and a short page when the server can't be reached.
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch((error) => notice(String(error)));
 connect();
 void loadReminders();
 void loadJobs();

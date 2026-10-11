@@ -1,16 +1,11 @@
 import type { Notify } from "./reminders.ts";
 
-/**
- * Posts to an ntfy topic URL, e.g. https://ntfy.sh/<topic>. The topic name is a secret. Without one,
- * reminders are printed to stderr instead.
- */
-/** Sends a scheduled job's report as a notification, cut to fit; without ntfy, prints it. */
-export function ntfyReporter(ntfy: { url: string; token?: string; icon?: string } | undefined) {
+// Notifications through ntfy: posts to a topic URL, e.g. https://ntfy.sh/<topic>. The topic name is a secret.
+// host.ts sends each notification this way and by Web Push (push.ts), whichever are set up.
+
+/** Sends a scheduled job's report or another notice as a notification, cut to fit. */
+export function ntfyReporter(ntfy: { url: string; token?: string; icon?: string }) {
 	return async (report: { title: string; text: string }) => {
-		if (ntfy === undefined) {
-			console.error(`[job] ${report.title}: ${report.text}`);
-			return;
-		}
 		const body = report.text.length > 3000 ? `${report.text.slice(0, 3000)}…` : report.text;
 		const response = await fetch(ntfy.url, {
 			method: "POST",
@@ -39,12 +34,7 @@ function snoozeActions(web: string, id: number): string {
 	return [snooze("Snooze 10 min", 10), snooze("Snooze 1 h", 60)].join("; ");
 }
 
-export function ntfyNotifier(ntfy: { url: string; token?: string; icon?: string } | undefined, web?: string): Notify {
-	if (ntfy === undefined) {
-		return async (reminder) => {
-			console.error(`[reminder] ${reminder.text} (no ntfy.url, not pushed)`);
-		};
-	}
+export function ntfyNotifier(ntfy: { url: string; token?: string; icon?: string }, web?: string): Notify {
 	const { url, token, icon } = ntfy;
 	return async (reminder) => {
 		const response = await fetch(url, {

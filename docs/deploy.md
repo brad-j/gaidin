@@ -9,13 +9,13 @@ gaidin serve                    # run the agent and its surfaces
 gaidin ask "MESSAGE"            # send a message and print the run; --id ID reattaches
 gaidin watch                    # print everything the agent does, until Ctrl+C
 gaidin doctor                   # check the settings and everything the server needs
-gaidin doctor --push            # the same, and send a test notification
+gaidin doctor --push            # the same, and send a test notification through ntfy
 gaidin config                   # print the settings in use, secrets shortened
 ```
 
 From a checkout, `pnpm gaidin ...` runs it, and `pnpm serve`, `pnpm ask`, `pnpm watch` and `pnpm doctor` are shortcuts. On the VM, `setup.sh` installs `/usr/local/bin/gaidin`, which runs it as the service's user with the service's settings.
 
-`gaidin doctor` doesn't start the server and spends no tokens. It checks the settings, Node, the data directory, that bubblewrap can start a sandbox, the API key and model (by looking the model up), the ntfy topic, both Slack tokens, the search key and its remaining credits, `tailscale serve`, each workspace, and the homelab feeds and log hosts, and says what to fix.
+`gaidin doctor` doesn't start the server and spends no tokens. It checks the settings, Node, the data directory, that bubblewrap can start a sandbox, the API key and model (by looking the model up), the ntfy topic, that the push services can be reached, both Slack tokens, the search key and its remaining credits, `tailscale serve`, each workspace, and the homelab feeds and log hosts, and says what to fix.
 
 ## Running it locally
 
@@ -85,7 +85,7 @@ The settings file is JSON: the first of `--config`, `GAIDIN_CONFIG`, `./gaidin.j
 | `model.id` | `GAIDIN_MODEL_ID` | `claude-haiku-5-5` | The model new conversations start with. |
 | `model.choices` | | Haiku, Sonnet and Opus 5.5 | Models the web view offers. |
 | `model.provider` | `GAIDIN_MODEL` | `anthropic` | `faux` runs a scripted model with no key or network, for testing. |
-| `ntfy.url` | `NTFY_URL` | | Full topic URL for reminders. Without it they print to the server's output. |
+| `ntfy.url` | `NTFY_URL` | | Full topic URL for [notifications](surfaces.md#notifications) through ntfy. Without it and without `web.url`, reminders print to the server's output. |
 | `ntfy.token` | `NTFY_TOKEN` | | Access token, if the topic needs one. |
 | `alerts.url` | | | An ntfy topic URL that monitoring pushes alerts to. gaidin follows it and investigates what arrives ([Tools](tools.md#alerts)). A secret, like `ntfy.url`. |
 | `alerts.token` | | | Access token, if that topic needs one. |
@@ -96,7 +96,7 @@ The settings file is JSON: the first of `--config`, `GAIDIN_CONFIG`, `./gaidin.j
 | `slack.userId` | `SLACK_USER_ID` | | The one Slack user it answers. |
 | `web.user` | `GAIDIN_WEB_USER` | | Tailscale login allowed into the web view. Without it there's no web view. |
 | `web.port` | `GAIDIN_WEB_PORT` | `8410` | Loopback port for the web view. |
-| `web.url` | | | The web view's address on the tailnet, such as `https://gaidin.<tailnet>.ts.net`. With it, tapping a reminder's push opens the web view, and the push has buttons to snooze it. |
+| `web.url` | | | The web view's address on the tailnet, such as `https://gaidin.<tailnet>.ts.net`. With it, devices can sign up for [notifications](surfaces.md#notifications) from the web view, and tapping an ntfy reminder opens the web view and has buttons to snooze it. |
 | `sandbox` | `GAIDIN_SANDBOX` | `bwrap` | `none` runs tools without bubblewrap. |
 | `search.provider` | | | `tavily`; without it there's no `web_search`. |
 | `search.apiKey` | `TAVILY_API_KEY` | | A Tavily key, `tvly-...`. Setting the variable alone also turns search on. |

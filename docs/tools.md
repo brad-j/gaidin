@@ -3,7 +3,7 @@
 | Tool | Runs | Reaches | Asks first |
 |---|---|---|---|
 | `read`, `write`, `edit`, `bash` | in the sandbox | the sandbox directory only, no network | no |
-| `remind`, `list_reminders`, `cancel_reminder` | in the server | its ntfy topic | no |
+| `remind`, `list_reminders`, `cancel_reminder` | in the server | the owner's [notifications](surfaces.md#notifications) | no |
 | `remember`, `update_memory`, `forget` | in the server | the notes in every system prompt | after outside text in the same run |
 | `search_history`, `read_history` | in the server | its index of past messages | no |
 | `ask_owner` | in the server | the owner, in Slack or the web view | it is the question |
@@ -27,11 +27,11 @@ Pi Durable's `read`, `write`, `edit` and `bash`, confined to the sandbox directo
 
 `remind` takes the text and either `inMinutes` or `at` (ISO 8601 with a UTC offset) and returns the time it set, which the model reads back. `list_reminders` shows the open ones; `cancel_reminder` takes an id. The web view lists and cancels them too.
 
-A reminder is a durable background task ([Concepts](concepts.md#durability)). When it fires, it posts to `NTFY_URL` with the title "gaidin" and records a "Reminder" entry in the conversation, which the web view shows and the model doesn't see. A failed push is retried up to five times with backoff, and the entry records whether it was delivered. Without `NTFY_URL`, reminders print to the server's output.
+A reminder is a durable background task ([Concepts](concepts.md#durability)). When it fires, it's sent as a [notification](surfaces.md#notifications) titled "gaidin" and recorded as a "Reminder" entry in the conversation, which the web view shows and the model doesn't see. When no way of notifying reached anyone, it's retried up to five times with backoff, and the entry records whether it was delivered.
 
-A reminder can be snoozed for 10 minutes or an hour from wherever it shows up: its push, its message in Slack (with Slack set up, each one is posted to the channel too), and its row in the web view. A snooze sets the reminder again from now, in the conversation it came from. The push's buttons need `web.url` in the settings, and the phone's ntfy app calls the web view itself, so they work while the phone is on the tailnet; on iOS they show when you long-press the notification. With `web.url`, tapping the push opens the web view.
+A reminder can be snoozed for 10 minutes or an hour from wherever it shows up: its ntfy push, its message in Slack (with Slack set up, each one is posted to the channel too), and its row in the web view. A snooze sets the reminder again from now, in the conversation it came from. The push's buttons need `web.url` in the settings, and the phone's ntfy app calls the web view itself, so they work while the phone is on the tailnet; on iOS they show when you long-press the notification. With `web.url`, tapping the push opens the web view.
 
-ntfy.sh topics have no password, so use a long random topic name and treat it as a secret. Subscribe to it in the ntfy app on your phone; the topic field takes the name alone, not the URL.
+With ntfy, use a long random topic name and treat it as a secret: ntfy.sh topics have no password. Subscribe to it in the ntfy app on your phone; the topic field takes the name alone, not the URL.
 
 ## Questions
 
@@ -61,7 +61,7 @@ The same index holds the web view's [timeline](surfaces.md#web-view): tool calls
 
 With `mode: "watch"`, a run reports only when something needs the owner and otherwise ends quietly; the run answers `NOTHING_TO_REPORT` to stay silent. `list_jobs` shows each job's next and last run, and `cancel_job` takes an id. The web view lists them too, with Cancel.
 
-Each job is a durable background task ([Concepts](concepts.md#durability)). At its time it starts a new conversation with the agent settings of the conversation it was made in, so the run doesn't carry that conversation's history and its instruction has to stand alone. It does get the job's last three reports, each cut to 800 characters, and how many runs since had nothing to report, and a watch is told not to report again what those covered unless it has got worse. A report counts once it's delivered. The run has every tool except the job tools, so a job can't create jobs. Its answer goes to Slack as a message of its own (a reply in its thread continues that run's conversation), or to ntfy without Slack, and a "Scheduled" entry in the conversation records it. A failed delivery is retried up to five times. A run due while the server was down happens when it starts, and a repeating job then carries on from the next time after that.
+Each job is a durable background task ([Concepts](concepts.md#durability)). At its time it starts a new conversation with the agent settings of the conversation it was made in, so the run doesn't carry that conversation's history and its instruction has to stand alone. It does get the job's last three reports, each cut to 800 characters, and how many runs since had nothing to report, and a watch is told not to report again what those covered unless it has got worse. A report counts once it's delivered. The run has every tool except the job tools, so a job can't create jobs. Its answer goes to Slack as a message of its own (a reply in its thread continues that run's conversation), or as a [notification](surfaces.md#notifications) without Slack, and a "Scheduled" entry in the conversation records it. A failed delivery is retried up to five times. A run due while the server was down happens when it starts, and a repeating job then carries on from the next time after that.
 
 A run that fails (the model errors, the run breaks off, or its gate fails) delays the next one by at least 15 minutes, doubled for each failure in a row up to 4 hours. You're told about the first failure in a row, not the ones after it. After five in a row the job pauses: its runs are skipped until you resume it, from the button on the message saying it paused in Slack or with `/resume` in the web view, and it then runs at its next scheduled time. `/pause` pauses a job by hand. A run the [spend limits](deploy.md#spend-limits) stopped, one you stopped, and a report that couldn't be delivered don't count as failures, so an outage of Slack or ntfy doesn't pause every job. An answer, or a gate check that finds nothing new, ends the streak. `list_jobs` shows a job's failures and whether it's paused.
 

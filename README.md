@@ -6,7 +6,7 @@ In the Wheel of Time, a Warder (gaidin) is bonded to one Aes Sedai and always on
 
 It can:
 
-- set reminders that push to your phone through ntfy, days ahead, across restarts
+- set reminders that reach your phone as notifications, days ahead, across restarts
 - run scheduled jobs: a morning briefing, a check every few hours, a watch that only speaks up when something's wrong, or a follow-up it promised
 - remember what you tell it across conversations, in notes you can see and edit
 - search the web and read public pages and APIs, asking you before it contacts a new host
@@ -30,7 +30,7 @@ pnpm watch                                   # everything the agent does, from a
 pnpm check                                   # type check and tests
 ```
 
-`pnpm gaidin --help` lists the commands, and `deploy/config.example.json` shows every section of the settings. `GAIDIN_MODEL=faux pnpm serve` runs a scripted model with no key and no network. Without `ntfy.url`, reminders print to the server's output.
+`pnpm gaidin --help` lists the commands, and `deploy/config.example.json` shows every section of the settings. `GAIDIN_MODEL=faux pnpm serve` runs a scripted model with no key and no network. Without `web.url` or `ntfy.url`, reminders print to the server's output.
 
 ## Documentation
 

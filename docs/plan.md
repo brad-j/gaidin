@@ -32,6 +32,7 @@
 18. Failure streaks: a run that didn't finish delays the next by 15 minutes doubled per failure, up to 4 hours, and the job pauses after 5 in a row; the owner hears about the first failure and the pause, and resumes it from Slack or the web view ([Tools](tools.md#scheduled-jobs)). Deliveries that fail every retry don't count, so a Slack or ntfy outage doesn't pause every job.
 19. Gates: a check before each run, without the model, that wakes it only for something new: the homelab extension's, or a self-written tool's that fetches only from hosts allowed for good. A job without a gate repeats at most every 6 hours; with one, every 15 minutes ([Tools](tools.md#gates)).
 20. Refusals: a call that can't succeed (a job that can't be made, a note that won't fit, an unknown workspace) is blocked with the reason instead of being put to the owner, and checked again after an approval, which can come days later ([Security](security.md#approvals)).
+21. The web view as an app: it installs on a phone or computer, keeps clear of the notch, shows a page when the server can't be reached, and gets notifications by Web Push (reminders, reports, and approval requests and questions), with encryption and signing written on `node:crypto`. ntfy stays as a second way ([Surfaces](surfaces.md#notifications)).
 
 ## Next
 

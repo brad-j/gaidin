@@ -6,7 +6,7 @@ The transcript is kept forever, compaction included, so anything a tool returns 
 
 ## Redaction
 
-`src/redact.ts` keeps the server's own secrets (the API key, the ntfy URL and token, the two Slack tokens, and the search key) out of tools and the transcript:
+`src/redact.ts` keeps the server's own secrets (the API key, the ntfy URL and token, the two Slack tokens, the search key and the Web Push private key) out of tools and the transcript:
 
 - Shell commands can't read the settings file and don't inherit those values' environment variables.
 - Shell output is redacted as it streams, holding back a few characters so a value split across two chunks is still caught. The live output, the stored result and the partial result saved after a crash are all clean.
@@ -35,7 +35,7 @@ The draft is copied out of the sandbox through the sandbox's own file operations
 
 ## Network access
 
-The sandbox has none. The server reaches the network for `fetch_url`, the homelab tools, the workspaces, Slack, ntfy and the model provider. `fetch_url` refuses every private, CGNAT, loopback, link-local and reserved address, checked at connect time and after each redirect ([Tools](tools.md#fetch_url)).
+The sandbox has none. The server reaches the network for `fetch_url`, the homelab tools, the workspaces, Slack, ntfy, the push services and the model provider. `fetch_url` refuses every private, CGNAT, loopback, link-local and reserved address, checked at connect time and after each redirect ([Tools](tools.md#fetch_url)).
 
 A URL can carry data out in its path or query, which is why a fetch to a new host asks first.
 
