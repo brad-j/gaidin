@@ -27,7 +27,7 @@ type Row = { id: number; conversation: number; place: Place; role: string; at: n
 const PLACES = { main: "main conversation", thread: "Slack thread", job: "job run" } satisfies Record<Place, string>;
 
 /** Tools left off the timeline: the sandbox's, ask_owner (its approval entry has the question and answer), and ones that only read gaidin's own state. */
-const QUIET = new Set(["read", "write", "edit", "bash", "ask_owner", "list_reminders", "list_jobs", "search_history", "read_history"]);
+const QUIET = new Set(["read", "write", "edit", "bash", "ask_owner", "list_reminders", "list_jobs", "search_history", "read_history", "read_skill"]);
 
 /** One thing on the timeline. `at` is 0 when the entry doesn't say when. */
 export type Activity = {

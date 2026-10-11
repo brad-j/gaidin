@@ -39,13 +39,15 @@ Give gaidin its own channel. In a channel shared with another bot, both would an
 
 ## Web view
 
-The web view is a console on the root conversation, live from every surface, with pages beside it. The header switches between them (`#/` and `#/schedule`, so the back button and a reload keep your place) and names the next reminder or scheduled job run. The console:
+The web view is a console on the root conversation, live from every surface, with pages beside it. The header switches between them (`#/`, `#/schedule` and `#/skills`, so the back button and a reload keep your place) and names the next reminder or scheduled job run. The console:
 
 - The log shows your messages and gaidin's answers, rendered as Markdown, with thinking and tool calls folded to one line each; open one to see its input and output, which streams while it runs. Fired reminders and job reports appear in it too.
 - The dock holds pending approvals and questions above the prompt. Approvals have Allow, the wider grant where there is one, and Deny (Alt+Y, Alt+A, Alt+N for the oldest). Questions have a button per choice, and whatever you type at the prompt next is taken as the answer.
 - The status line shows whether a run is going, with Esc or Ctrl+C to stop it, the model, thinking level and tools, and the cost of the conversation and today's spend against any limit. When the spend guard has stopped gaidin, it shows a button to allow more today.
 
 The schedule page lists open reminders and scheduled jobs, soonest first. Each job shows its schedule, gate, runs and last result, and opens to show its instruction and the last reports it sent. Jobs pause, resume and cancel from there, and reminders cancel; cancelling takes a second press. A paused or failing job turns the page's count in the header amber. New reminders and jobs are asked of gaidin at the prompt, so they go through its approvals; the dock stays on every page, and sending from it goes back to the console.
+
+The skills page lists the [skills](tools.md#skills) gaidin can open, and any local ones it couldn't load and why. A skill opens to its files, rendered as documents; links between them stay on the page, so the built-in gaidin skill reads as this documentation.
 
 Everything else is a slash command; `/help` lists them. `/next` lists reminders and jobs and `/cancel` cancels one, `/pause` and `/resume` pause and resume a job (`/next` has buttons for all three), `/model`, `/thinking`, `/tools`, `/tool` and `/instructions` change the agent's settings, `/memory`, `/remember` and `/forget` manage gaidin's notes, `/timeline` lists what gaidin did and who allowed it, newest first, `/notifications` signs devices up for [notifications](#notifications), and `/budget` shows the spend. Enter sends, Shift+Enter starts a new line, the up and down arrows recall earlier messages, and Tab completes commands.
 

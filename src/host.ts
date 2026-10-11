@@ -15,6 +15,7 @@ import { createFetch, type FetchOptions } from "./fetch.ts";
 import { createHistory } from "./history.ts";
 import { createJobs, type Deliver, type Gate } from "./jobs.ts";
 import { createMemory } from "./memory.ts";
+import { createSkills } from "./skills.ts";
 import { type Adapter, type Adapters, createNotifications, type Notice, type Notifications } from "./notifications.ts";
 import { ntfyAdapter } from "./ntfy.ts";
 import { createPush, loadPushKeys, type Push, pushAdapter } from "./push.ts";
@@ -158,6 +159,8 @@ export async function openHost(options: HostOptions = {}) {
 	registry.install(reminders.extension);
 	const memory = createMemory(owner);
 	registry.install(memory.extension);
+	const skills = createSkills(resolve(dir, "skills"));
+	registry.install(skills.extension);
 	const homelab = config.homelab === undefined ? undefined : createHomelab(config.homelab, owner, config.keysDir, options.homelab);
 	// Self-written tools are gates too, once they're loaded.
 	let selfGates = (): Gate[] => [];
@@ -228,7 +231,7 @@ export async function openHost(options: HostOptions = {}) {
 	// and the self-written ones.
 	const builtIn = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...history.tools, ...workspaces.tools];
 	const switchable = () => [...builtIn, ...(self?.tools() ?? [])];
-	return { harness, root, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, sandbox, push, start };
+	return { harness, root, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, skills, sandbox, push, start };
 }
 
 export type Host = Awaited<ReturnType<typeof openHost>>;

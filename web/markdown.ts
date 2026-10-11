@@ -22,11 +22,15 @@ function inline(text: string, parent: HTMLElement) {
 
 /** A link to an http(s) or mailto address; anything else is shown as its label. A label holding a URL stays plain, so links don't nest. */
 function link(href: string, label?: string): Node {
-	if (!/^(https?:|mailto:)/i.test(href)) return document.createTextNode(label ?? href);
+	const local = /^(https?:|mailto:)/i.test(href) ? undefined : options.link?.(href);
+	if (!/^(https?:|mailto:)/i.test(href) && local === undefined) return document.createTextNode(label ?? href);
 	const a = el("a");
-	a.href = href;
-	a.target = "_blank";
-	a.rel = "noopener noreferrer";
+	if (local !== undefined) a.href = local;
+	else {
+		a.href = href;
+		a.target = "_blank";
+		a.rel = "noopener noreferrer";
+	}
 	if (label === undefined || /https?:\/\//.test(label)) a.textContent = label ?? href;
 	else inline(label, a);
 	return a;
@@ -39,10 +43,30 @@ const ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
 const QUOTE = /^ {0,3}> ?(.*)$/;
 const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 
-export function markdown(source: string): HTMLElement {
+export type MarkdownOptions = {
+	/** Where a relative link goes on this page, or undefined to show it as plain text. */
+	link?: (href: string) => string | undefined;
+	/** A document rather than an answer: # is a page title (h2) and ## a section (h3), and headings get ids for anchors. */
+	document?: boolean;
+};
+
+/** The options of the markdown() call in progress; it's synchronous, so one at a time. */
+let options: MarkdownOptions = {};
+
+export function markdown(source: string, given: MarkdownOptions = {}): HTMLElement {
 	const root = el("div", "md");
-	blocks(source.replace(/\r\n?/g, "\n").split("\n"), root);
+	options = given;
+	try {
+		blocks(source.replace(/\r\n?/g, "\n").split("\n"), root);
+	} finally {
+		options = {};
+	}
 	return root;
+}
+
+/** A heading's anchor, as GitHub makes them: "Tools that reach outside" is "tools-that-reach-outside". */
+export function anchor(text: string): string {
+	return text.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, "").trim().replace(/\s/g, "-");
 }
 
 function cells(row: string): string[] {
@@ -83,7 +107,10 @@ function blocks(lines: string[], parent: HTMLElement) {
 		const heading = HEADING.exec(line);
 		if (heading) {
 			const level = heading[1].length;
-			const h = el(level <= 2 ? "h3" : level === 3 ? "h4" : "h5");
+			const h = options.document
+				? el(level === 1 ? "h2" : level === 2 ? "h3" : "h4")
+				: el(level <= 2 ? "h3" : level === 3 ? "h4" : "h5");
+			if (options.document) h.id = `h-${anchor(heading[2])}`;
 			inline(heading[2], h);
 			parent.append(h);
 			i++;

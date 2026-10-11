@@ -67,6 +67,7 @@ const web = createWebServer({
 	approvals: host.approvals,
 	budget: host.budget,
 	timeline: host.timeline,
+	skills: host.skills,
 	snooze: host.reminders.snooze,
 });
 await new Promise<void>((resolve) => web.listen(0, "127.0.0.1", resolve));

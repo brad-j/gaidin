@@ -20,6 +20,7 @@ import { addNote, forgetNote, Memory, type Note } from "./memory.ts";
 import { array, integer, literal, number, object, optional, ParseError, type Parser, parseJson, string } from "./parse.ts";
 import type { Device, Push } from "./push.ts";
 import { type Reminder, Reminders, removeReminder } from "./reminders.ts";
+import { readSkillFile, type Skill } from "./skills.ts";
 import { stamp } from "./time.ts";
 
 const WEB_DIR = resolve(import.meta.dirname, "../web");
@@ -71,6 +72,8 @@ export type Settings = {
 export type ListedJob = Job & { when: string };
 export type PushInfo = { publicKey: string; devices: Pick<Device, "endpoint" | "label" | "addedAt">[] };
 export type Timeline = Awaited<ReturnType<ReturnType<typeof createHistory>["timeline"]>>;
+/** A skill as the page lists it, without where it is on the server. */
+export type ListedSkill = Omit<Skill, "dir">;
 
 // The protocol between the page (web/app.ts) and this server: what each route answers, and what each POST takes.
 // The route tables below are checked against these, and the page's requests are typed by them.
@@ -87,6 +90,9 @@ export type Gets = {
 	"/api/usage": UsageState;
 	"/api/approvals": ApprovalRequest[];
 	"/api/push": PushInfo | null;
+	"/api/skills": { skills: ListedSkill[]; problems: string[] };
+	/** `?name=&file=`: one of a skill's files; SKILL.md when no file is given. */
+	"/api/skills/file": { name: string; file: string; text: string };
 };
 
 type Ok = { ok: boolean };
@@ -133,6 +139,8 @@ export function createWebServer(options: {
 	timeline?: ReturnType<typeof createHistory>["timeline"];
 	/** Notifications to the devices that sign up here. */
 	push?: Push;
+	/** The skills gaidin can open, and the local ones that couldn't be read. */
+	skills?: { skills: readonly Skill[]; problems: readonly string[] };
 }) {
 	const { harness, root, user, switchable, approvals } = options;
 	const choices = options.models ?? [];
@@ -144,7 +152,7 @@ export function createWebServer(options: {
 	const page = readFileSync(resolve(WEB_DIR, "index.html"));
 	const script = (name: string) => stripTypeScriptTypes(readFileSync(resolve(WEB_DIR, name), "utf8"));
 	// app.ts imports the other modules by their .ts names, which the browser asks for beside /app.js.
-	const modules = ["api.ts", "dom.ts", "markdown.ts", "schedule.ts", "transcript.ts"];
+	const modules = ["api.ts", "dom.ts", "markdown.ts", "schedule.ts", "skills.ts", "transcript.ts"];
 	const scripts = new Map([["/app.js", script("app.ts")], ...modules.map((name) => [`/${name}`, script(name)] as const)]);
 	const asset = (name: string, type: string) => ({ body: readFileSync(resolve(import.meta.dirname, "..", name)), type });
 	const files = new Map([
@@ -230,6 +238,17 @@ export function createWebServer(options: {
 		"/api/push": async () => {
 			const push = options.push;
 			return push === undefined ? null : { publicKey: push.publicKey, devices: (await push.devices()).map(({ endpoint, label, addedAt }) => ({ endpoint, label, addedAt })) };
+		},
+		"/api/skills": async () => ({
+			skills: (options.skills?.skills ?? []).map(({ name, description, source, files }) => ({ name, description, source, files })),
+			problems: [...(options.skills?.problems ?? [])],
+		}),
+		"/api/skills/file": async (url) => {
+			const name = url.searchParams.get("name") ?? "";
+			const file = url.searchParams.get("file") ?? "SKILL.md";
+			const skill = options.skills?.skills.find((s) => s.name === name);
+			if (skill === undefined || !skill.files.includes(file)) throw new HttpError(404, `No skill file ${name}/${file}`);
+			return { name, file, text: readSkillFile(skill, file) };
 		},
 	};
 

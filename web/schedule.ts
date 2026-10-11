@@ -42,7 +42,7 @@ export function renderSchedule(root: HTMLElement, reminders: readonly Reminder[]
 
 	const sortedJobs = [...jobs].sort((a, b) => (a.paused ? Infinity : a.nextAt ?? Infinity) - (b.paused ? Infinity : b.nextAt ?? Infinity));
 	root.replaceChildren(
-		...(problem === undefined ? [] : [el("p", "sched-problem", problem)]),
+		...(problem === undefined ? [] : [el("p", "page-problem", problem)]),
 		section("Reminders", reminders.length, "new reminder", () => hooks.prefill("Remind me to "),
 			reminders.length === 0 ? empty("No reminders. Ask gaidin for one, like “remind me to call the dentist at 3”.") : list(reminders.map((r) => reminderRow(r, hooks)))),
 		section("Jobs", jobs.length, "new job", () => hooks.prefill("Schedule a job: "),
@@ -52,7 +52,7 @@ export function renderSchedule(root: HTMLElement, reminders: readonly Reminder[]
 
 function section(title: string, count: number, action: string, run: () => void, body: HTMLElement): HTMLElement {
 	const node = el("section", "sched");
-	const head = el("div", "sched-head");
+	const head = el("div", "section-head");
 	const button = el("button", "plain", `+ ${action}`);
 	button.type = "button";
 	button.addEventListener("click", run);
@@ -62,7 +62,7 @@ function section(title: string, count: number, action: string, run: () => void, 
 }
 
 function empty(text: string): HTMLElement {
-	return el("p", "sched-empty", text);
+	return el("p", "page-empty", text);
 }
 
 function list(rows: HTMLElement[]): HTMLElement {

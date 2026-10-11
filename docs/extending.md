@@ -12,6 +12,7 @@
 | `fetch.ts` | `fetch_url` |
 | `workspaces.ts` | the workspace tools |
 | `history.ts` | `search_history` and `read_history`, over its own index of past messages |
+| `skills.ts` | the skills list in the system prompt and `read_skill`; `docs/` is the built-in skill, and a test checks that `docs/SKILL.md` lists every file in it |
 | `self/` | `load_extension`, `remove_extension`, and one extension `self-<name>` per tool set gaidin wrote |
 | `extensions/homelab/` | the homelab extension, when configured |
 | `approvals.ts` | the approval hook and `ask_owner`; each tool's rules are its guard (`guards.ts`) |

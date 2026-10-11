@@ -8,6 +8,7 @@ import { load, post } from "./api.ts";
 import { $, clock, el, fromNow, money, when } from "./dom.ts";
 import { markdown } from "./markdown.ts";
 import { renderSchedule, troubled } from "./schedule.ts";
+import { renderSkills, skillRoute } from "./skills.ts";
 import { applyEvent, newTranscript } from "./transcript.ts";
 
 type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
@@ -424,11 +425,13 @@ function renderHorizon() {
 // The console is the conversation; the others are pages beside it. The dock stays on every view, so
 // approvals are never out of sight, and anything sent from it goes back to the console to be answered.
 
-const VIEWS = ["console", "schedule"] as const;
+const VIEWS = ["console", "schedule", "skills"] as const;
 type View = (typeof VIEWS)[number];
 
+/** The view an address names by its first part: #/schedule, #/skills/gaidin. */
 function view(): View {
-	return VIEWS.find((v) => location.hash === `#/${v}`) ?? "console";
+	const first = /^#\/([^/#]*)/.exec(location.hash)?.[1];
+	return VIEWS.find((v) => v === first) ?? "console";
 }
 
 function go(to: View) {
@@ -437,8 +440,7 @@ function go(to: View) {
 
 function showView() {
 	const shown = view();
-	$("scroll").hidden = shown !== "console";
-	$("schedule-view").hidden = shown !== "schedule";
+	for (const main of document.querySelectorAll<HTMLElement>("main[data-view]")) main.hidden = main.dataset.view !== shown;
 	for (const link of document.querySelectorAll<HTMLAnchorElement>("#views a")) {
 		if (link.dataset.view === shown) link.setAttribute("aria-current", "page");
 		else link.removeAttribute("aria-current");
@@ -446,7 +448,8 @@ function showView() {
 	if (shown === "console") {
 		stick = true;
 		schedule();
-	} else renderHorizon();
+	} else if (shown === "schedule") renderHorizon();
+	else void renderSkills($("skills"), skillRoute(location.hash));
 }
 
 // --- requests ---------------------------------------------------------------------------------

@@ -35,6 +35,10 @@ Tools gaidin writes for itself ([Tools](tools.md#self-written-tools)) never run 
 
 The draft is copied out of the sandbox through the sandbox's own file operations, so a symlink can't pull in a file from outside. The approved copy lives outside the sandbox, so gaidin can't change running code without asking again.
 
+## Skills
+
+A [skill](tools.md#skills) is instructions gaidin follows when a request matches it, so it's trusted as much as the system prompt. Skills come only from the app's `docs/` and from `skills/` in the data directory, and no tool can write either: the sandbox can't see them, and there's no tool that writes skills. `read_skill` opens only the files a skill had when the server started, each checked again on every read so that one swapped for a link out of the skill is refused. A skill's text isn't outside text, so reading one doesn't make memory writes ask.
+
 ## Network access
 
 The sandbox has none. The server reaches the network for `fetch_url`, the homelab tools, the workspaces, Slack, ntfy, the push services and the model provider. `fetch_url` refuses every private, CGNAT, loopback, link-local and reserved address, checked at connect time and after each redirect ([Tools](tools.md#fetch_url)).

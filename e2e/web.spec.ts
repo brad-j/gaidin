@@ -173,3 +173,29 @@ test("the schedule view lists reminders and jobs, and pauses, opens and cancels 
 	await expect(schedule).toContainText("No reminders.");
 	await expect(views).toContainText("schedule 1");
 });
+
+test("the skills page lists the gaidin skill and reads its files, following links between them", async ({ page }) => {
+	await page.goto("/");
+	await page.getByRole("navigation", { name: "Views" }).getByRole("link", { name: "skills" }).click();
+	const skills = page.locator("#skills");
+	await expect(skills.locator(".skill-row")).toHaveCount(1);
+	await skills.getByRole("link", { name: /gaidin/ }).click();
+	await expect(page).toHaveURL(/#\/skills\/gaidin$/);
+	await expect(page.locator("#log")).toBeHidden();
+	await expect(skills.locator(".skill-doc")).toContainText("This is gaidin's documentation");
+	// The front matter is shown as the description above, not in the document.
+	await expect(skills.locator(".skill-doc")).not.toContainText("description:");
+
+	await skills.getByRole("navigation", { name: "Files" }).getByRole("link", { name: "tools.md" }).click();
+	await expect(page).toHaveURL(/#\/skills\/gaidin\/tools\.md$/);
+	await expect(skills.locator(".skill-doc h2")).toHaveText("Tools");
+	// A link to another doc opens it here, at the heading it names.
+	await skills.locator(".skill-doc").getByRole("link", { name: "Security" }).first().click();
+	await expect(page).toHaveURL(/#\/skills\/gaidin\/security\.md#[a-z-]+$/);
+	await expect(skills.locator(".skill-doc h2")).toHaveText("Security");
+
+	await page.reload();
+	await expect(skills.locator(".skill-doc h2")).toHaveText("Security");
+	await page.goBack();
+	await expect(skills.locator(".skill-doc h2")).toHaveText("Tools");
+});
