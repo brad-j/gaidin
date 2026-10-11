@@ -2,7 +2,8 @@
 // and the agent's settings. It listens on loopback only; `tailscale serve` puts HTTPS in front and adds
 // Tailscale-User-Login, and only GAIDIN_WEB_USER is let in.
 //
-// The page is web/index.html and web/app.ts, with its types stripped as it's served. Its icon is assets/logo.svg.
+// The page is web/index.html and web/app.ts, with its types stripped as it's served. Its icon is assets/logo.svg,
+// and the header shows assets/logo-transparent.svg.
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -49,6 +50,7 @@ export function createWebServer(options: {
 	const page = readFileSync(resolve(WEB_DIR, "index.html"));
 	const script = stripTypeScriptTypes(readFileSync(resolve(WEB_DIR, "app.ts"), "utf8"));
 	const icon = readFileSync(resolve(import.meta.dirname, "../assets/logo.svg"));
+	const logo = readFileSync(resolve(import.meta.dirname, "../assets/logo-transparent.svg"));
 
 	async function settings(): Promise<Settings> {
 		const agent = await root.agent(context);
@@ -109,6 +111,7 @@ export function createWebServer(options: {
 		if (get && url.pathname === "/") return reply(response, 200, page, "text/html; charset=utf-8");
 		if (get && url.pathname === "/app.js") return reply(response, 200, script, "text/javascript; charset=utf-8");
 		if (get && url.pathname === "/favicon.svg") return reply(response, 200, icon, "image/svg+xml");
+		if (get && url.pathname === "/logo.svg") return reply(response, 200, logo, "image/svg+xml");
 		if (get && url.pathname === "/events") return events(response);
 		if (get && url.pathname === "/api/settings") return json(response, await settings());
 		if (get && url.pathname === "/api/reminders") {
