@@ -60,7 +60,7 @@ sudo tailscale serve --bg --yes 8410
 
 Serve removes any identity headers a client sends and adds `Tailscale-User-Login` for requests from a person's device. The server answers only the login in `web.user` and returns 403 to everyone else, including tagged devices, which get no identity. POSTs need a JSON body and an `Origin` matching the page, so another site open in your browser can't drive it.
 
-Without `web.user` there's no web view. The page is `web/index.html` and `web/app.ts`; Node strips the TypeScript types as it serves the file, so there's no build step.
+Without `web.user` there's no web view. The page is `web/index.html`, `web/app.ts` and `web/transcript.ts`; Node strips the TypeScript types as it serves them, so there's no build step.
 
 ### As an app
 

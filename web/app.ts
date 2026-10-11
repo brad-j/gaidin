@@ -1,7 +1,10 @@
-// Client for src/web.ts. Served with its types stripped, so it keeps to erasable TypeScript.
-// It rebuilds the root conversation from the server's event stream: a snapshot, then one batch of
-// events per commit (pi-durable's watchEvents). Everything it reads comes from that server, in the
-// shapes below.
+// Client for src/web.ts. Served with its types stripped, so it keeps to erasable TypeScript, and imports the
+// server's types with `import type`, which stripping removes. The conversation itself is transcript.ts's copy,
+// rebuilt from the server's event stream; this draws it, and does what else an event calls for.
+import type { Message } from "@earendil-works/pi-ai";
+import type { ApprovalRequest } from "../src/approvals.ts";
+import type { Gets, Posts, StreamEvent } from "../src/web.ts";
+import { applyEvent, newTranscript } from "./transcript.ts";
 
 type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
 type Fields = { readonly [key: string]: Json };
@@ -9,170 +12,57 @@ const isText = (value: Json | undefined): value is string => typeof value === "s
 const isNumber = (value: Json | undefined): value is number => typeof value === "number";
 const isFields = (value: Json | undefined): value is Fields => typeof value === "object" && value !== null && !Array.isArray(value);
 
-type Text = { type: "text"; text: string };
-type Block = Text | { type: "thinking"; thinking: string; redacted?: boolean } | { type: "toolCall"; id: string; name: string; arguments: Fields };
+type Transcript = ReturnType<typeof newTranscript>;
+type Block = NonNullable<Transcript["partial"]>["content"][number];
 type Part = { type: string; text?: string };
-type Message =
-	| { role: "user"; content: string | Part[] }
-	| { role: "assistant"; content: Block[]; stopReason?: string; errorMessage?: string }
-	| { role: "toolResult"; toolCallId: string; toolName: string; content: Part[]; isError?: boolean }
-	| { role: "system"; content: string | Part[] };
-type Entry = { id: number; kind: string; model?: readonly Message[]; data?: Json };
-type Usage = { cost: { total: number } };
-type UsageState = { models: Record<string, Usage>; tools: Record<string, Usage> };
-type Slot = { callId: string; name: string; output: string };
-type Reminder = { taskId: number; text: string; at: number };
-type Job = { taskId: number; title: string; when: string; mode: string; nextAt?: number; lastAt?: number; lastResult?: string; paused?: { at: number; reason: string }; gate?: { name: string } };
-type Approval = { id: string; summary: string; detail?: string; tool: string; expiresAt: number; kind?: string; choices?: string[]; always?: { kind: string; value: string; label: string } };
-type Note = { id: number; text: string; by: string; updatedAt: number };
-type Budget = { today: number; month: number; dailyLimit: number; monthlyLimit: number; stopped: boolean; reason?: string };
-type Settings = { model: string; models: string[]; thinkingLevel: string; instructions: string; tools: { name: string; enabled: boolean }[] };
-/** What the server's event stream sends (web.ts): pi-durable's events, and word that the approvals changed. */
-type AgentEvent = import("@earendil-works/pi-durable").AgentEvent | import("@earendil-works/pi-durable").SnapshotEvent | { type: "approvals_changed" };
+type Reminder = Gets["/api/reminders"][number];
+type Job = Gets["/api/jobs"][number];
+type Settings = Gets["/api/settings"];
+type Approval = ApprovalRequest;
 
 function $<T extends HTMLElement = HTMLElement>(id: string): T {
 	// SAFETY: every id asked for is an element of that type in index.html.
 	return document.getElementById(id) as T;
 }
 
+/** The conversation, as the event stream has it. */
+const transcript = newTranscript();
+
 type State = {
-	entries: Map<number, Entry>;
-	/** The assistant message being generated. */
-	partial: { content: Block[] } | undefined;
-	/** Running tool calls and their output so far, by tool call id. */
-	slots: Map<string, Slot>;
-	running: boolean;
 	connected: boolean;
-	retry: string | undefined;
-	usage: UsageState | undefined;
 	allSpend: number | undefined;
-	budget: Budget | null | undefined;
+	budget: Gets["/api/budget"] | undefined;
 };
-const state: State = {
-	entries: new Map(),
-	partial: undefined,
-	slots: new Map(),
-	running: false,
-	connected: false,
-	retry: undefined,
-	usage: undefined,
-	allSpend: undefined,
-	budget: undefined,
-};
+const state: State = { connected: false, allSpend: undefined, budget: undefined };
 /** Tool calls and thinking blocks the owner has opened, so a re-render keeps them open. */
 const opened = new Set<string>();
 
 // --- events -----------------------------------------------------------------------------------
 
-function apply(event: AgentEvent) {
+function apply(event: StreamEvent) {
+	applyEvent(transcript, event);
 	switch (event.type) {
 		case "snapshot":
 			// A (re)connection may have missed changes.
 			void loadApprovals();
-			state.entries = new Map(event.entries.map((e: Entry) => [e.id, e]));
-			state.partial = event.generation?.message ? structuredClone(event.generation.message) : undefined;
-			state.slots = new Map(
-				event.tools.filter((t: any) => t.status === "running").map((t: any) => [t.callId, { callId: t.callId, name: t.name, output: t.output ?? "" }]),
-			);
-			state.running = event.run !== undefined;
-			state.usage = event.usage;
-			break;
-		case "run_start":
-			state.running = true;
 			break;
 		case "run_end":
-			state.running = false;
-			state.partial = undefined;
-			state.retry = undefined;
 			void loadSpend();
 			void loadReminders();
 			void loadJobs();
 			break;
-		case "message_start":
-			if (event.message.role === "assistant") state.partial = structuredClone(event.message);
-			break;
-		case "message_update":
-			if (state.partial !== undefined) for (const change of event.changes) applyChange(state.partial, change);
-			break;
-		case "message_end":
-			state.partial = undefined;
-			add(event.entry);
-			break;
-		case "tool_execution_start":
-			state.slots.set(event.toolCallId, { callId: event.toolCallId, name: event.toolName, output: "" });
-			break;
-		case "tool_execution_update": {
-			const slot = state.slots.get(event.toolCallId);
-			if (slot === undefined || event.output === undefined) break;
-			if ("set" in event.output) slot.output = event.output.set;
-			else slot.output = slot.output.slice(event.output.trimStart ?? 0) + (event.output.append ?? "");
-			break;
-		}
-		case "tool_execution_end":
-			state.slots.delete(event.toolCallId);
-			if (event.entry) add(event.entry);
-			break;
 		case "entry_appended":
-			add(event.entry);
 			if (event.entry.kind === "gaidin.reminder-fired") void loadReminders();
 			if (event.entry.kind === "gaidin.job-reported") void loadJobs();
 			break;
-		case "usage_changed":
-			state.usage = event.usage;
-			break;
 		case "agent_changed":
 			void loadSettings();
-			break;
-		case "auto_retry_start":
-			state.retry = `retrying: ${event.errorMessage}`;
-			break;
-		case "auto_retry_end":
-			state.retry = undefined;
 			break;
 		case "approvals_changed":
 			void loadApprovals();
 			break;
 		case "task_failed":
 			notice(`${event.kind} failed: ${event.message}`);
-			break;
-	}
-}
-
-function add(entry: Entry) {
-	state.entries.set(entry.id, entry);
-}
-
-function applyChange(message: { content: Block[] }, change: import("@earendil-works/pi-durable").MessageChange) {
-	switch (change.type) {
-		case "text_start":
-		case "thinking_start":
-		case "toolcall_start":
-		case "block":
-			message.content[change.contentIndex] = structuredClone(change.block);
-			break;
-		case "text_delta": {
-			const block = message.content[change.contentIndex];
-			if (block?.type === "text") block.text += change.delta;
-			break;
-		}
-		case "thinking_delta": {
-			const block = message.content[change.contentIndex];
-			if (block?.type === "thinking") block.thinking += change.delta;
-			break;
-		}
-		case "toolcall_delta": {
-			const block = message.content[change.contentIndex];
-			if (block?.type !== "toolCall") break;
-			// Appends to the string at `path` inside the call's arguments.
-			let target: any = block.arguments;
-			const { path } = change;
-			for (const key of path.slice(0, -1)) target = target[key] ??= {};
-			const last = path.at(-1)!;
-			target[last] = (target[last] ?? "") + change.delta;
-			break;
-		}
-		case "message":
-			message.content = structuredClone(change.message.content);
 			break;
 	}
 }
@@ -185,7 +75,7 @@ function connect() {
 	};
 	source.onmessage = (message) => {
 		// SAFETY: the server sends each event as JSON (web.ts events()).
-		apply(JSON.parse(message.data) as AgentEvent);
+		apply(JSON.parse(message.data) as StreamEvent);
 		schedule();
 	};
 	// EventSource reconnects by itself, and the server starts every connection with a snapshot.
@@ -519,8 +409,8 @@ function renderBlocks(blocks: Block[], key: string, results: Map<string, Extract
 			out.push(row("think", "think", fold(`${key}:${index}`, [el("span", "args", preview)], [[undefined, block.redacted ? "Redacted by the provider." : block.thinking]])));
 		} else if (block.type === "toolCall") {
 			const result = results.get(block.id);
-			const slot = state.slots.get(block.id);
-			const status = result ? (result.isError ? "error" : "done") : slot ? "running" : state.running ? "waiting" : "no result";
+			const slot = transcript.tools.get(block.id);
+			const status = result ? (result.isError ? "error" : "done") : slot ? "running" : transcript.running ? "waiting" : "no result";
 			const output = result ? textOf(result.content) : slot?.output ?? "";
 			const args = block.arguments ?? {};
 			const sections: [string | undefined, string][] = [["input", block.name === "bash" && isText(args.command) ? args.command : JSON.stringify(args, null, 2)]];
@@ -540,7 +430,7 @@ let stick = false;
 
 function lastEntryId(): number {
 	let last = 0;
-	for (const id of state.entries.keys()) if (id > last) last = id;
+	for (const id of transcript.entries.keys()) if (id > last) last = id;
 	return last;
 }
 
@@ -559,12 +449,12 @@ function render() {
 	renderStatusline();
 	const asks = approvals.filter((a) => a.kind === "question").length;
 	const allows = approvals.length - asks;
-	document.title = asks > 0 ? `(${asks}) question · gaidin` : allows > 0 ? `(${allows}) approval · gaidin` : state.running ? "working · gaidin" : "gaidin";
+	document.title = asks > 0 ? `(${asks}) question · gaidin` : allows > 0 ? `(${allows}) approval · gaidin` : transcript.running ? "working · gaidin" : "gaidin";
 
 	const scroller = $("scroll");
 	const atBottom = stick || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48;
 
-	const entries = [...state.entries.values()].sort((a, b) => a.id - b.id);
+	const entries = [...transcript.entries.values()].sort((a, b) => a.id - b.id);
 	const results = new Map<string, Extract<Message, { role: "toolResult" }>>();
 	for (const entry of entries) for (const m of entry.model ?? []) if (m.role === "toolResult") results.set(m.toolCallId, m);
 
@@ -623,7 +513,7 @@ function render() {
 		}
 		flush(entry.id);
 	}
-	if (state.partial !== undefined) renderBlocks(state.partial.content, "partial", results, rows);
+	if (transcript.partial !== undefined) renderBlocks(transcript.partial.content, "partial", results, rows);
 	flush(Infinity);
 	if (rows.length === 0) rows.push(row("sys", "gaidin", "No messages yet. Type below, or / for commands."));
 
@@ -654,10 +544,10 @@ function renderStatusline() {
 	let label = "idle";
 	let tone = "";
 	if (!state.connected) [label, tone] = ["reconnecting", "problem"];
-	else if (state.retry) [label, tone] = [state.retry, "problem"];
-	else if (state.running) [label, tone] = ["working", "running"];
-	const here = state.usage
-		? [...Object.values(state.usage.models), ...Object.values(state.usage.tools)].reduce((sum, u) => sum + (u.cost?.total ?? 0), 0)
+	else if (transcript.retry) [label, tone] = [transcript.retry, "problem"];
+	else if (transcript.running) [label, tone] = ["working", "running"];
+	const here = transcript.usage
+		? [...Object.values(transcript.usage.models), ...Object.values(transcript.usage.tools)].reduce((sum, u) => sum + (u.cost?.total ?? 0), 0)
 		: undefined;
 	const budget = state.budget;
 	// Today's spend against the daily limit when there's a budget; otherwise the totals.
@@ -672,7 +562,7 @@ function renderStatusline() {
 	statusSignature = signature;
 
 	const segs: HTMLElement[] = [el("span", `status ${tone}`, label)];
-	if (state.running) segs.push(segment("esc stop", "Stop the run (Esc or Ctrl+C)", () => void stop(), "danger"));
+	if (transcript.running) segs.push(segment("esc stop", "Stop the run (Esc or Ctrl+C)", () => void stop(), "danger"));
 	if (current) {
 		const settings = current;
 		segs.push(segment(settings.model, "Switch the model (/model)", () => prefill("/model ")));
@@ -765,29 +655,31 @@ function notice(text: string) {
 	if (text !== "") say("err", text);
 }
 
-/** A POST to the server, which answers each route with its own shape, T. */
-async function post<T = any>(path: string, body: { [key: string]: Json | undefined }): Promise<T> {
+/** A POST to one of the server's routes, with the body it takes. */
+async function post<P extends keyof Posts>(path: P, body: Posts[P]["body"]): Promise<Posts[P]["answer"]> {
 	const response = await fetch(path, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(body),
 	});
 	if (!response.ok) throw new Error(`${path}: ${await response.text()}`);
-	return response.json();
+	// SAFETY: web.ts's route table is checked against Posts, so the route answers with Posts[P]["answer"].
+	return response.json() as Promise<Posts[P]["answer"]>;
 }
 
-async function load<T>(path: string): Promise<T> {
-	const response = await fetch(path);
+/** A GET of one of the server's routes, with `query` after it. */
+async function load<P extends keyof Gets>(path: P, query = ""): Promise<Gets[P]> {
+	const response = await fetch(path + query);
 	if (!response.ok) throw new Error(`${path}: ${await response.text()}`);
-	// SAFETY: each route answers with the shape its caller names as T (web.ts).
-	return response.json() as Promise<T>;
+	// SAFETY: web.ts's route table is checked against Gets, so the route answers with Gets[P].
+	return response.json() as Promise<Gets[P]>;
 }
 
 async function loadSpend() {
 	try {
-		const usage = await load<UsageState>("/api/usage");
+		const usage = await load("/api/usage");
 		state.allSpend = [...Object.values(usage.models), ...Object.values(usage.tools)].reduce((s, u) => s + (u.cost?.total ?? 0), 0);
-		state.budget = await load<Budget | null>("/api/budget");
+		state.budget = await load("/api/budget");
 		schedule();
 	} catch (error) {
 		notice(String(error));
@@ -802,7 +694,7 @@ function snoozeButtons(id: number): HTMLElement {
 		button.type = "button";
 		button.addEventListener("click", async () => {
 			try {
-				const { at } = await post<{ at: number }>("/api/reminders/snooze", { id, minutes });
+				const { at } = await post("/api/reminders/snooze", { id, minutes });
 				say("sys", `Snoozed until ${when.format(at)}.`);
 				void loadReminders();
 			} catch (error) {
@@ -816,7 +708,7 @@ function snoozeButtons(id: number): HTMLElement {
 
 async function loadReminders() {
 	try {
-		reminders = await load<Reminder[]>("/api/reminders");
+		reminders = await load("/api/reminders");
 		renderHorizon();
 	} catch (error) {
 		notice(String(error));
@@ -825,7 +717,7 @@ async function loadReminders() {
 
 async function loadJobs() {
 	try {
-		jobs = await load<Job[]>("/api/jobs");
+		jobs = await load("/api/jobs");
 		renderHorizon();
 	} catch (error) {
 		notice(String(error));
@@ -834,20 +726,17 @@ async function loadJobs() {
 
 async function loadSettings() {
 	try {
-		current = await load<Settings>("/api/settings");
+		current = await load("/api/settings");
 		schedule();
 	} catch (error) {
 		notice(String(error));
 	}
 }
 
-/** Saves the settings with `change` applied; the server wants all of them every time. */
-async function configure(change: { model?: string; thinkingLevel?: string; instructions?: string; disabledTools?: string[] }) {
-	const settings = current ?? (await load<Settings>("/api/settings"));
+/** Saves the settings with `change` applied. The server keeps any setting not given, except the switched-off tools, which it takes whole. */
+async function configure(change: Partial<Posts["/api/settings"]["body"]>) {
+	const settings = current ?? (await load("/api/settings"));
 	current = await post("/api/settings", {
-		model: settings.model,
-		thinkingLevel: settings.thinkingLevel,
-		instructions: settings.instructions,
 		disabledTools: settings.tools.filter((t) => !t.enabled).map((t) => t.name),
 		...change,
 	});
@@ -862,7 +751,7 @@ const alt = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌥" : "Alt+";
 
 async function loadApprovals() {
 	try {
-		approvals = await load<Approval[]>("/api/approvals");
+		approvals = await load("/api/approvals");
 		renderApprovals();
 		schedule();
 	} catch (error) {
@@ -956,11 +845,11 @@ async function decide(decision: Decision, request = firstApproval()) {
 type Choice = { value: string; hint?: string };
 type Command = { name: string; args?: string; help: string; run: (arg: string) => void | Promise<void>; complete?: () => Choice[] };
 
-const LEVELS = ["off", "low", "medium", "high"];
+const LEVELS = ["off", "low", "medium", "high"] as const;
 
 async function stop(echo?: string) {
 	if (echo) say("cmd", echo);
-	if (!state.running) return say("sys", "Nothing is running.");
+	if (!transcript.running) return say("sys", "Nothing is running.");
 	try {
 		await post("/api/abort", {});
 	} catch (error) {
@@ -1011,7 +900,7 @@ function showUpcoming() {
 }
 
 async function showTools() {
-	const settings = current ?? (await load<Settings>("/api/settings"));
+	const settings = current ?? (await load("/api/settings"));
 	const out = el("div", "out");
 	for (const tool of settings.tools) {
 		const button = el("button", "plain", tool.enabled ? "turn off" : "turn on");
@@ -1023,7 +912,7 @@ async function showTools() {
 }
 
 async function showMemory() {
-	const notes = await load<Note[]>("/api/memory");
+	const notes = await load("/api/memory");
 	if (notes.length === 0) return say("sys", "gaidin has no notes yet. /remember adds one, or tell gaidin something worth keeping.");
 	const out = el("div", "out");
 	for (const note of notes) {
@@ -1038,7 +927,6 @@ async function showMemory() {
 // --- notifications ------------------------------------------------------------------------------
 // Web Push to this device (push.ts on the server, sw.js here): reminders, job reports, and what gaidin is waiting on.
 
-type PushInfo = { publicKey: string; devices: { endpoint: string; label: string; addedAt: number }[] };
 
 /** What kind of device this is, to tell the signed-up ones apart. */
 function deviceLabel(): string {
@@ -1052,7 +940,8 @@ async function turnOnHere(publicKey: string) {
 	const key = Uint8Array.from(atob(publicKey.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
 	const subscription = await (await navigator.serviceWorker.ready).pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
 	const { endpoint, keys } = subscription.toJSON();
-	await post("/api/push/subscribe", { endpoint, keys, label: deviceLabel() });
+	if (endpoint === undefined || keys?.p256dh === undefined || keys.auth === undefined) return say("err", "The browser didn't give a push address and keys for this device.");
+	await post("/api/push/subscribe", { endpoint, keys: { p256dh: keys.p256dh, auth: keys.auth }, label: deviceLabel() });
 	say("sys", "Notifications are on for this device.");
 	await showNotifications();
 }
@@ -1066,7 +955,7 @@ async function removeDevice(endpoint: string) {
 }
 
 async function showNotifications() {
-	const info = await load<PushInfo | null>("/api/push");
+	const info = await load("/api/push");
 	if (info === null) return say("sys", "Notifications need web.url in gaidin's settings.");
 	if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
 		return say("sys", /iPhone|iPad/.test(navigator.userAgent)
@@ -1096,15 +985,14 @@ async function showNotifications() {
 	say("sys", info.devices.length === 0 ? "No device gets notifications yet." : out, actions);
 }
 
-type Activity = { entry: number; at: number; place: string; kind: string; name: string; detail: string; outcome: string };
-type Cursor = { entry: number; ref: string };
+type Cursor = NonNullable<Gets["/api/timeline"]["next"]>;
 
 const GOOD = /^(ok|allowed once|always allowed|answered|reported|pushed)\b/;
 const BAD = /^(denied|blocked|expired|not delivered|push failed)\b/;
 
 /** What gaidin did, 50 at a time, newest first, with who allowed it. */
 async function showTimeline(cursor?: Cursor) {
-	const page = await load<{ items: Activity[]; next?: Cursor }>(cursor === undefined ? "/api/timeline" : `/api/timeline?entry=${cursor.entry}&ref=${encodeURIComponent(cursor.ref)}`);
+	const page = await load("/api/timeline", cursor === undefined ? "" : `?entry=${cursor.entry}&ref=${encodeURIComponent(cursor.ref)}`);
 	if (page.items.length === 0) return say("sys", cursor === undefined ? "Nothing on the timeline yet." : "Nothing older.");
 	const out = el("div", "out timeline");
 	for (const item of page.items) {
@@ -1210,8 +1098,10 @@ const commands: Command[] = [
 		complete: () => LEVELS.map((l) => ({ value: l, hint: l === current?.thinkingLevel ? "current" : undefined })),
 		run: async (arg) => {
 			if (arg === "") return say("sys", `Thinking ${current?.thinkingLevel ?? "unknown"}. Levels: ${LEVELS.join(", ")}.`);
-			await configure({ thinkingLevel: arg });
-			say("sys", `Thinking set to ${arg}. Applies from the next request.`);
+			const level = LEVELS.find((l) => l === arg);
+			if (level === undefined) return say("err", `No thinking level ${arg}. Levels: ${LEVELS.join(", ")}.`);
+			await configure({ thinkingLevel: level });
+			say("sys", `Thinking set to ${level}. Applies from the next request.`);
 		},
 	},
 	{ name: "tools", help: "The tools you can switch off", run: showTools },
@@ -1247,7 +1137,7 @@ const commands: Command[] = [
 		complete: () => (current?.tools ?? []).map((t) => ({ value: `${t.name} ${t.enabled ? "off" : "on"}`, hint: t.enabled ? "on now" : "off now" })),
 		run: async (arg) => {
 			const [name, setting] = arg.split(/\s+/);
-			const settings = current ?? (await load<Settings>("/api/settings"));
+			const settings = current ?? (await load("/api/settings"));
 			const tool = settings.tools.find((t) => t.name === name);
 			if (!tool) throw new Error(`No switchable tool "${name}". /tools lists them.`);
 			const on = setting === undefined ? !tool.enabled : setting === "on";
@@ -1383,7 +1273,7 @@ let historyAt = -1;
 let draft = "";
 
 function history(): string[] {
-	const prompts = [...state.entries.values()]
+	const prompts = [...transcript.entries.values()]
 		.sort((a, b) => a.id - b.id)
 		.filter((e) => e.kind === "pi.user")
 		.flatMap((e) => (e.model ?? []).flatMap((m) => (m.role === "user" ? [splitStamp(textOf(m.content)).text] : [])));
@@ -1507,7 +1397,7 @@ document.addEventListener("keydown", (press) => {
 			return;
 		}
 	}
-	if (key === "Escape" && state.running) {
+	if (key === "Escape" && transcript.running) {
 		press.preventDefault();
 		void stop();
 		return;
@@ -1517,7 +1407,7 @@ document.addEventListener("keydown", (press) => {
 		const selected = (window.getSelection()?.toString() ?? "") !== "" || input.selectionStart !== input.selectionEnd;
 		if (selected) return;
 		press.preventDefault();
-		if (state.running) void stop("^C");
+		if (transcript.running) void stop("^C");
 		else if (input.value !== "") prefill("");
 		return;
 	}

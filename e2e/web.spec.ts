@@ -112,3 +112,22 @@ test("a fired reminder in the log can be snoozed", async ({ page }) => {
 	await snooze.click();
 	await expect(page.locator("#log")).toContainText("Snoozed until");
 });
+
+test("settings commands change one setting and keep the others, and the timeline loads", async ({ page }) => {
+	await page.goto("/");
+	const log = page.locator("#log");
+	await send(page, "/tool fetch_url off");
+	await expect(log).toContainText("fetch_url off.");
+	await send(page, "/thinking high");
+	await expect(log).toContainText("Thinking set to high.");
+	await send(page, "/thinking banana");
+	await expect(log).toContainText("No thinking level banana. Levels: off, low, medium, high.");
+	// Changing the thinking level left fetch_url off.
+	await send(page, "/clear");
+	await send(page, "/tools");
+	await expect(log).toContainText(/off\s*fetch_url/);
+	await send(page, "/thinking");
+	await expect(log).toContainText("Thinking high.");
+	await send(page, "/timeline");
+	await expect(log).toContainText(/Nothing on the timeline yet\.|older|ok|running/);
+});

@@ -42,9 +42,15 @@ test("only Brad's tailnet login gets in", async (t) => {
 	const page = await call("/");
 	assert.equal(page.status, 200);
 	assert.match(await page.text(), /<title>gaidin<\/title>/);
-	const script = await call("/app.js");
-	assert.equal(script.status, 200);
-	assert.doesNotMatch(await script.text(), /: HTMLElement\b/);
+	for (const path of ["/app.js", "/transcript.ts"]) {
+		const script = await call(path);
+		assert.equal(script.status, 200);
+		assert.match(script.headers.get("content-type")!, /^text\/javascript/);
+		const code = await script.text();
+		assert.doesNotMatch(code, /: (HTMLElement|Transcript)\b/, `${path} has types left`);
+		// Only the page's own modules: the server's types it imports are stripped with the rest.
+		assert.deepEqual([...code.matchAll(/^import .* from "([^"]+)";$/gm)].map((m) => m[1]), path === "/app.js" ? ["./transcript.ts"] : [], path);
+	}
 	for (const path of ["/favicon.svg", "/logo.svg"]) {
 		const icon = await call(path);
 		assert.equal(icon.headers.get("content-type"), "image/svg+xml");

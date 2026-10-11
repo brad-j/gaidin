@@ -2,7 +2,7 @@
 // and the agent's settings. It listens on loopback only; `tailscale serve` puts HTTPS in front and adds
 // Tailscale-User-Login, and only GAIDIN_WEB_USER is let in.
 //
-// The page is web/index.html and web/app.ts, with its types stripped as it's served. Its icon is assets/logo.svg,
+// The page is web/index.html, web/app.ts and web/transcript.ts, with their types stripped as they're served. Its icon is assets/logo.svg,
 // and the header shows assets/logo-transparent.svg. The PNG icons, for phone home screens and ntfy.icon, are
 // renders of the same two files. web/sw.js is the service worker that shows notifications (push.ts).
 import { randomUUID } from "node:crypto";
@@ -10,15 +10,15 @@ import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { resolve } from "node:path";
-import { type AgentEvent, type Conversation, type Harness, type ModelRef, type SnapshotEvent, type ToolRegistration, type Tx, watchEvents } from "@earendil-works/pi-durable";
-import type { ApprovalService, Decision } from "./approvals.ts";
-import type { BudgetGuard } from "./budget.ts";
+import { type AgentEvent, type Conversation, type Harness, type ModelRef, type SnapshotEvent, type ToolRegistration, type Tx, type UsageState, watchEvents } from "@earendil-works/pi-durable";
+import type { ApprovalRequest, ApprovalService, Decision } from "./approvals.ts";
+import type { BudgetGuard, BudgetStatus } from "./budget.ts";
 import { context } from "./host.ts";
 import type { createHistory } from "./history.ts";
-import { describeSchedule, Jobs, pauseJob, removeJob, resumeJob } from "./jobs.ts";
-import { addNote, forgetNote, Memory } from "./memory.ts";
+import { describeSchedule, type Job, Jobs, pauseJob, removeJob, resumeJob } from "./jobs.ts";
+import { addNote, forgetNote, Memory, type Note } from "./memory.ts";
 import { array, integer, literal, number, object, optional, ParseError, type Parser, parseJson, string } from "./parse.ts";
-import type { Push } from "./push.ts";
+import type { Device, Push } from "./push.ts";
 import { type Reminder, Reminders, removeReminder } from "./reminders.ts";
 import { stamp } from "./time.ts";
 
@@ -39,15 +39,26 @@ const SECURITY_HEADERS = {
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
-type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
+export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
 
+// What each POST route takes.
+const nothing = object({});
 const byId = object({ id: integer });
+const messageBody = object({ content: string, requestId: optional(string) });
+const snoozeBody = object({ id: integer, minutes: integer });
+const noteBody = object({ text: string });
+const allowBody = object({ amount: optional(number) });
+const answerBody = object({ id: string, answer: string });
+const decideBody = object({ id: string, decision: literal<Decision>("once", "always", "deny") });
+const subscribeBody = object({ endpoint: string, keys: object({ p256dh: string, auth: string }), label: optional(string) });
+const endpointBody = object({ endpoint: string });
 const settingsChange = object({
 	model: optional(string),
 	thinkingLevel: optional(literal(...THINKING)),
 	instructions: optional(string),
 	disabledTools: optional(array(string)),
 });
+type BodyOf<P> = P extends Parser<infer T> ? T : never;
 
 export type Settings = {
 	model: string;
@@ -56,6 +67,55 @@ export type Settings = {
 	instructions: string;
 	tools: { name: string; enabled: boolean }[];
 };
+/** A scheduled job as the page lists it, with its schedule in words. */
+export type ListedJob = Job & { when: string };
+export type PushInfo = { publicKey: string; devices: Pick<Device, "endpoint" | "label" | "addedAt">[] };
+export type Timeline = Awaited<ReturnType<ReturnType<typeof createHistory>["timeline"]>>;
+
+// The protocol between the page (web/app.ts) and this server: what each route answers, and what each POST takes.
+// The route tables below are checked against these, and the page's requests are typed by them.
+
+/** What each GET route answers. */
+export type Gets = {
+	"/api/settings": Settings;
+	"/api/reminders": Reminder[];
+	"/api/jobs": ListedJob[];
+	/** `?entry=&ref=` continues from the cursor the last page gave. */
+	"/api/timeline": Timeline;
+	"/api/memory": Note[];
+	"/api/budget": BudgetStatus | null;
+	"/api/usage": UsageState;
+	"/api/approvals": ApprovalRequest[];
+	"/api/push": PushInfo | null;
+};
+
+type Ok = { ok: boolean };
+/** What each POST route takes, as its parser reads it, and what it answers. */
+export type Posts = {
+	"/api/message": { body: BodyOf<typeof messageBody>; answer: { ok: true; answered?: true } };
+	"/api/abort": { body: BodyOf<typeof nothing>; answer: Ok };
+	"/api/reminders/snooze": { body: BodyOf<typeof snoozeBody>; answer: { ok: true; at: number } };
+	"/api/reminders/cancel": { body: BodyOf<typeof byId>; answer: Ok };
+	"/api/memory/add": { body: BodyOf<typeof noteBody>; answer: Note };
+	"/api/memory/forget": { body: BodyOf<typeof byId>; answer: Ok };
+	"/api/budget/allow": { body: BodyOf<typeof allowBody>; answer: BudgetStatus };
+	"/api/jobs/cancel": { body: BodyOf<typeof byId>; answer: Ok };
+	"/api/jobs/pause": { body: BodyOf<typeof byId>; answer: Ok };
+	"/api/jobs/resume": { body: BodyOf<typeof byId>; answer: Ok };
+	"/api/approvals/answer": { body: BodyOf<typeof answerBody>; answer: Ok };
+	"/api/approvals/decide": { body: BodyOf<typeof decideBody>; answer: Ok };
+	"/api/push/subscribe": { body: BodyOf<typeof subscribeBody>; answer: Ok };
+	"/api/push/unsubscribe": { body: BodyOf<typeof endpointBody>; answer: Ok };
+	"/api/push/test": { body: BodyOf<typeof nothing>; answer: { sent: number } };
+	"/api/settings": { body: BodyOf<typeof settingsChange>; answer: Settings };
+};
+
+/** A POST route: how its body is read, and what it does with it. */
+type PostRoute<R extends { body: unknown; answer: unknown }> = { body: Parser<R["body"]>; handle: (body: R["body"]) => Promise<R["answer"]> };
+/** The server's GET routes, each answering as Gets says. */
+type GetRoutes = { [P in keyof Gets]: (url: URL) => Promise<Gets[P]> };
+/** The server's POST routes, each taking and answering as Posts says. */
+type PostRoutes = { [P in keyof Posts]: PostRoute<Posts[P]> };
 
 export function createWebServer(options: {
 	harness: Harness;
@@ -82,7 +142,9 @@ export function createWebServer(options: {
 		for (const send of streams) send({ type: "approvals_changed" });
 	});
 	const page = readFileSync(resolve(WEB_DIR, "index.html"));
-	const script = stripTypeScriptTypes(readFileSync(resolve(WEB_DIR, "app.ts"), "utf8"));
+	const script = (name: string) => stripTypeScriptTypes(readFileSync(resolve(WEB_DIR, name), "utf8"));
+	// app.ts imports ./transcript.ts, which the browser asks for beside /app.js.
+	const scripts = new Map([["/app.js", script("app.ts")], ["/transcript.ts", script("transcript.ts")]]);
 	const asset = (name: string, type: string) => ({ body: readFileSync(resolve(import.meta.dirname, "..", name)), type });
 	const files = new Map([
 		["/favicon.svg", asset("assets/logo.svg", "image/svg+xml")],
@@ -148,139 +210,138 @@ export function createWebServer(options: {
 		});
 	}
 
-	async function route(request: IncomingMessage, response: ServerResponse) {
-		const url = new URL(request.url ?? "/", "http://gaidin");
-		const get = request.method === "GET";
-		if (get && url.pathname === "/") return reply(response, 200, page, "text/html; charset=utf-8");
-		if (get && url.pathname === "/app.js") return reply(response, 200, script, "text/javascript; charset=utf-8");
-		const file = get ? files.get(url.pathname) : undefined;
-		if (file !== undefined) return reply(response, 200, file.body, file.type);
-		if (get && url.pathname === "/events") return events(response);
-		if (get && url.pathname === "/api/settings") return json(response, await settings());
-		if (get && url.pathname === "/api/reminders") {
-			const items = (await harness.snapshot(Reminders, context))?.items ?? [];
-			return json(response, [...items].sort((a, b) => a.at - b.at));
-		}
-		if (get && url.pathname === "/api/jobs") {
+	const gets: GetRoutes = {
+		"/api/settings": settings,
+		"/api/reminders": async () => [...((await harness.snapshot(Reminders, context))?.items ?? [])].sort((a, b) => a.at - b.at),
+		"/api/jobs": async () => {
 			const items = (await harness.snapshot(Jobs, context))?.items ?? [];
-			return json(response, items.map((job) => ({ ...job, when: describeSchedule(job.schedule) })).sort((a, b) => (a.nextAt ?? 0) - (b.nextAt ?? 0)));
-		}
-		if (get && url.pathname === "/api/timeline") {
+			return items.map((job) => ({ ...job, when: describeSchedule(job.schedule) })).sort((a, b) => (a.nextAt ?? 0) - (b.nextAt ?? 0));
+		},
+		"/api/timeline": async (url) => {
 			const entry = Number(url.searchParams.get("entry"));
 			const ref = url.searchParams.get("ref");
-			return json(response, (await options.timeline?.(ref === null || !Number.isInteger(entry) ? undefined : { entry, ref })) ?? { items: [] });
-		}
-		if (get && url.pathname === "/api/memory") return json(response, (await harness.snapshot(Memory, context))?.notes ?? []);
-		if (get && url.pathname === "/api/budget") return json(response, options.budget === undefined ? null : await options.budget.refresh());
-		if (get && url.pathname === "/api/usage") return json(response, await harness.usage(context));
-		if (get && url.pathname === "/api/approvals") return json(response, await approvals.pending());
-		if (get && url.pathname === "/api/push") {
+			return (await options.timeline?.(ref === null || !Number.isInteger(entry) ? undefined : { entry, ref })) ?? { items: [] };
+		},
+		"/api/memory": async () => (await harness.snapshot(Memory, context))?.notes ?? [],
+		"/api/budget": async () => (options.budget === undefined ? null : await options.budget.refresh()),
+		"/api/usage": () => harness.usage(context),
+		"/api/approvals": () => approvals.pending(),
+		"/api/push": async () => {
 			const push = options.push;
-			return json(response, push === undefined ? null : { publicKey: push.publicKey, devices: (await push.devices()).map(({ endpoint, label, addedAt }) => ({ endpoint, label, addedAt })) });
-		}
-		if (request.method !== "POST") throw new HttpError(404, "Not found");
+			return push === undefined ? null : { publicKey: push.publicKey, devices: (await push.devices()).map(({ endpoint, label, addedAt }) => ({ endpoint, label, addedAt })) };
+		},
+	};
 
-		const text = await readBody(request);
-		/** The request's JSON body as `parser` has it; a body that isn't, or none, is a 400. */
-		const body = <T>(parser: Parser<T>) => parseJson(text === "" ? "{}" : text, parser, "the request");
-		switch (url.pathname) {
-			case "/api/message": {
-				const message = body(object({ content: string, requestId: optional(string) }));
+	const posts: PostRoutes = {
+		"/api/message": {
+			body: messageBody,
+			handle: async (message) => {
 				const content = message.content.trim();
 				if (content === "") throw new HttpError(400, "Empty message");
-				if ((await approvals.intercept(root.id, content, "web")) === "answered") return json(response, { ok: true, answered: true });
+				if ((await approvals.intercept(root.id, content, "web")) === "answered") return { ok: true, answered: true };
 				const requestId = `web:${message.requestId ?? randomUUID()}`;
 				await root.submit({ type: "input", content: stamp(content), requestId }, context);
-				return json(response, { ok: true });
-			}
-			case "/api/abort":
+				return { ok: true };
+			},
+		},
+		"/api/abort": {
+			body: nothing,
+			handle: async () => {
 				await root.abort(context);
-				return json(response, { ok: true });
-			case "/api/reminders/snooze": {
-				// A reminder push's button, pressed on the owner's phone.
-				const { id, minutes } = body(object({ id: integer, minutes: integer }));
+				return { ok: true };
+			},
+		},
+		"/api/reminders/snooze": {
+			body: snoozeBody,
+			// A reminder push's button, pressed on the owner's phone.
+			handle: async ({ id, minutes }) => {
 				if (minutes < 1 || minutes > 1440) throw new HttpError(400, "minutes must be 1 to 1440");
 				const snoozed = await root.commit((tx) => options.snooze?.(tx, id, minutes), context);
 				if (snoozed === undefined) throw new HttpError(404, "No such reminder");
-				return json(response, { ok: true, at: snoozed.at });
-			}
-			case "/api/reminders/cancel": {
-				const { id } = body(byId);
-				const removed = await root.commit((tx) => removeReminder(tx, id), context);
-				return json(response, { ok: removed !== undefined });
-			}
-			case "/api/memory/add": {
+				return { ok: true, at: snoozed.at };
+			},
+		},
+		"/api/reminders/cancel": { body: byId, handle: async ({ id }) => ({ ok: (await root.commit((tx) => removeReminder(tx, id), context)) !== undefined }) },
+		"/api/memory/add": {
+			body: noteBody,
+			handle: async ({ text }) => {
 				try {
-					const { text: note } = body(object({ text: string }));
-					const added = await root.commit((tx) => addNote(tx, note, "owner"), context);
-					return json(response, added);
+					return await root.commit((tx) => addNote(tx, text, "owner"), context);
 				} catch (error) {
-					if (error instanceof ParseError) throw error;
 					throw new HttpError(400, error instanceof Error ? error.message : String(error));
 				}
-			}
-			case "/api/memory/forget": {
-				const { id } = body(byId);
-				const removed = await root.commit((tx) => forgetNote(tx, id), context);
-				return json(response, { ok: removed !== undefined });
-			}
-			case "/api/budget/allow": {
+			},
+		},
+		"/api/memory/forget": { body: byId, handle: async ({ id }) => ({ ok: (await root.commit((tx) => forgetNote(tx, id), context)) !== undefined }) },
+		"/api/budget/allow": {
+			body: allowBody,
+			handle: async ({ amount: asked }) => {
 				if (options.budget === undefined) throw new HttpError(404, "No budget");
 				const { dailyLimit } = options.budget.status();
 				// One more day's worth, or $5 when there's no daily limit.
-				const amount = body(object({ amount: optional(number) })).amount ?? (dailyLimit > 0 ? dailyLimit : 5);
+				const amount = asked ?? (dailyLimit > 0 ? dailyLimit : 5);
 				if (amount <= 0 || amount > 1000) throw new HttpError(400, "amount must be between 0 and 1000 dollars");
-				return json(response, await options.budget.allowMore(amount));
-			}
-			case "/api/jobs/cancel": {
-				const { id } = body(byId);
-				const removed = await root.commit((tx) => removeJob(tx, id), context);
-				return json(response, { ok: removed !== undefined });
-			}
-			case "/api/jobs/pause": {
-				const { id } = body(byId);
-				const paused = await root.commit((tx) => pauseJob(tx, id, "paused by the owner"), context);
-				return json(response, { ok: paused !== undefined });
-			}
-			case "/api/jobs/resume": {
-				const { id } = body(byId);
-				const resumed = await root.commit((tx) => resumeJob(tx, id), context);
-				return json(response, { ok: resumed !== undefined });
-			}
-			case "/api/approvals/answer": {
-				const { id, answer } = body(object({ id: string, answer: string }));
-				const answered = await approvals.answer(id, answer, "web");
-				return json(response, { ok: answered !== undefined });
-			}
-			case "/api/approvals/decide": {
-				const { id, decision } = body(object({ id: string, decision: literal<Decision>("once", "always", "deny") }));
-				const decided = await approvals.decide(id, decision, "web");
-				return json(response, { ok: decided !== undefined });
-			}
-			case "/api/push/subscribe": {
+				return options.budget.allowMore(amount);
+			},
+		},
+		"/api/jobs/cancel": { body: byId, handle: async ({ id }) => ({ ok: (await root.commit((tx) => removeJob(tx, id), context)) !== undefined }) },
+		"/api/jobs/pause": { body: byId, handle: async ({ id }) => ({ ok: (await root.commit((tx) => pauseJob(tx, id, "paused by the owner"), context)) !== undefined }) },
+		"/api/jobs/resume": { body: byId, handle: async ({ id }) => ({ ok: (await root.commit((tx) => resumeJob(tx, id), context)) !== undefined }) },
+		"/api/approvals/answer": { body: answerBody, handle: async ({ id, answer }) => ({ ok: (await approvals.answer(id, answer, "web")) !== undefined }) },
+		"/api/approvals/decide": { body: decideBody, handle: async ({ id, decision }) => ({ ok: (await approvals.decide(id, decision, "web")) !== undefined }) },
+		"/api/push/subscribe": {
+			body: subscribeBody,
+			handle: async (device) => {
 				if (options.push === undefined) throw new HttpError(404, "Notifications need web.url in the settings");
-				const device = body(object({ endpoint: string, keys: object({ p256dh: string, auth: string }), label: optional(string) }));
 				try {
 					await options.push.add({ endpoint: device.endpoint, p256dh: device.keys.p256dh, auth: device.keys.auth, label: device.label ?? "a device" });
 				} catch (error) {
 					throw new HttpError(400, error instanceof Error ? error.message : String(error));
 				}
-				return json(response, { ok: true });
-			}
-			case "/api/push/unsubscribe":
-				return json(response, { ok: (await options.push?.remove(body(object({ endpoint: string })).endpoint)) === true });
-			case "/api/push/test": {
+				return { ok: true };
+			},
+		},
+		"/api/push/unsubscribe": { body: endpointBody, handle: async ({ endpoint }) => ({ ok: (await options.push?.remove(endpoint)) === true }) },
+		"/api/push/test": {
+			body: nothing,
+			handle: async () => {
 				if (options.push === undefined) throw new HttpError(404, "Notifications need web.url in the settings");
-				const sent = await options.push.send({ title: "gaidin", body: "Notifications work on this device.", tag: "test" });
-				return json(response, { sent });
-			}
-			case "/api/settings":
-				await configure(body(settingsChange));
-				return json(response, await settings());
-			default:
-				throw new HttpError(404, "Not found");
-		}
+				return { sent: await options.push.send({ title: "gaidin", body: "Notifications work on this device.", tag: "test" }) };
+			},
+		},
+		"/api/settings": {
+			body: settingsChange,
+			handle: async (change) => {
+				await configure(change);
+				return settings();
+			},
+		},
+	};
+
+	/** Runs the POST route at `path` on the request's JSON body; a body that isn't what the route takes, or none, is a 400. */
+	async function handlePost<P extends keyof Posts>(path: P, text: string): Promise<Posts[P]["answer"]> {
+		const route: PostRoute<Posts[P]> = posts[path];
+		return route.handle(parseJson(text === "" ? "{}" : text, route.body, "the request"));
 	}
+
+	async function route(request: IncomingMessage, response: ServerResponse) {
+		const url = new URL(request.url ?? "/", "http://gaidin");
+		const path = url.pathname;
+		if (request.method === "GET") {
+			if (path === "/") return reply(response, 200, page, "text/html; charset=utf-8");
+			const code = scripts.get(path);
+			if (code !== undefined) return reply(response, 200, code, "text/javascript; charset=utf-8");
+			const file = files.get(path);
+			if (file !== undefined) return reply(response, 200, file.body, file.type);
+			if (path === "/events") return events(response);
+			if (isGet(path)) return json(response, await gets[path](url));
+		}
+		if (request.method !== "POST" || !isPost(path)) throw new HttpError(404, "Not found");
+		return json(response, await handlePost(path, await readBody(request)));
+	}
+
+	const isGet = (path: string): path is keyof Gets => Object.hasOwn(gets, path);
+	const isPost = (path: string): path is keyof Posts => Object.hasOwn(posts, path);
 
 	return createServer((request, response) => {
 		// tailscale serve sets this for a person's device; tagged devices and anything else get no header.
