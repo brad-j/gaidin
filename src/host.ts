@@ -68,7 +68,8 @@ function persona(owner: string) {
 					`Each of ${owner}'s messages starts with the local time in brackets, in the ${timeZone()} time zone. ` +
 					`Use the reminder tools for anything ${owner} wants to be reminded of, and read back the time the tool reports. ` +
 					`Use schedule_job for work to do later or on a schedule: briefings, regular checks, and watches. ` +
-					`When you tell ${owner} you'll check on something later, schedule it, so it happens.`,
+					`When you tell ${owner} you'll check on something later, schedule it, so it happens. ` +
+					`When you need a decision only ${owner} can make, ask with ask_owner and wait for the answer rather than guessing.`,
 				{ tag: false },
 			),
 		],
@@ -95,7 +96,7 @@ export type HostOptions = {
 	fetch?: FetchOptions;
 	/** Machines gaidin can work on, and how to reach them. Default: the keys directory's `workspaces` file, over ssh. */
 	workspaces?: { list: Workspace[]; remote: Remote | undefined };
-	/** How long a request for approval waits for the owner. Default 30 minutes. */
+	/** Replaces the settings' approvals.waitHours, in milliseconds. */
 	approvalTimeoutMs?: number;
 	/** Replaces the settings' sandbox: "none" runs shell commands without bubblewrap. */
 	sandbox?: "bwrap" | "none";
@@ -162,7 +163,7 @@ export async function openHost(options: HostOptions = {}) {
 		},
 		context,
 	);
-	approvals = new ApprovalService(harness, options.approvalTimeoutMs === undefined ? {} : { timeoutMs: options.approvalTimeoutMs });
+	approvals = new ApprovalService(harness, { timeoutMs: options.approvalTimeoutMs ?? config.approvals.waitHours * 3_600_000 });
 	const root = await harness.root(context, { agent: { model, cwd: sandbox } });
 	// After the root exists: the guard's first read would otherwise create it without its agent.
 	await budget.attach(harness);

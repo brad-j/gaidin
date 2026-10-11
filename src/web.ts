@@ -128,6 +128,7 @@ export function createWebServer(options: {
 			case "/api/message": {
 				const content = typeof body.content === "string" ? body.content.trim() : "";
 				if (content === "") throw new HttpError(400, "Empty message");
+				if ((await approvals.intercept(root.id, content, "web")) === "answered") return json(response, { ok: true, answered: true });
 				const requestId = typeof body.requestId === "string" ? `web:${body.requestId}` : `web:${randomUUID()}`;
 				await root.submit({ type: "input", content: stamp(content), requestId }, context);
 				return json(response, { ok: true });
@@ -162,6 +163,10 @@ export function createWebServer(options: {
 			case "/api/jobs/cancel": {
 				const removed = await root.commit((tx) => removeJob(tx, Number(body.id)), context);
 				return json(response, { ok: removed !== undefined });
+			}
+			case "/api/approvals/answer": {
+				const answered = await approvals.answer(String(body.id), String(body.answer ?? ""), "web");
+				return json(response, { ok: answered !== undefined });
 			}
 			case "/api/approvals/decide": {
 				const decision = String(body.decision);

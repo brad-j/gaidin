@@ -1,5 +1,6 @@
-// Approval requests in Slack: a message with buttons in the gaidin channel, in the thread when the
-// conversation is a thread's fork, updated with the outcome once it's decided anywhere.
+// Approval requests and questions in Slack: a message with buttons in the gaidin channel, in the thread
+// when the conversation is a thread's fork, updated with the outcome once it's decided anywhere. A
+// question is answered with a button or a reply in its thread (src/slack.ts hands those over).
 import type { Harness } from "@earendil-works/pi-durable";
 import type { ApprovalRequest, ApprovalService, Decision } from "./approvals.ts";
 import { context } from "./host.ts";
@@ -17,11 +18,39 @@ function escape(text: string): string {
 const OUTCOME: Record<Exclude<ApprovalRequest["status"], "pending">, string> = {
 	approved: "Allowed",
 	denied: "Denied",
+	answered: "Answered",
 	expired: "No answer in time",
 	cancelled: "No longer needed: the run stopped",
+	superseded: "Skipped: you sent a new message instead",
 };
 
+function questionBlocks(request: ApprovalRequest): { text: string; blocks: unknown[] } {
+	const question = escape(request.summary);
+	if (request.status !== "pending") {
+		const outcome = request.status === "answered" ? `Answered: ${escape(request.answer ?? "")}` : OUTCOME[request.status];
+		return { text: `gaidin asked: ${request.summary}`, blocks: [{ type: "section", text: { type: "mrkdwn", text: `gaidin asked: ${question}\n*${outcome}*` } }] };
+	}
+	const blocks: unknown[] = [
+		{ type: "section", text: { type: "mrkdwn", text: `*gaidin asks:* ${question}` } },
+	];
+	if (request.choices !== undefined && request.choices.length > 0) {
+		blocks.push({
+			type: "actions",
+			block_id: "gaidin-question",
+			elements: request.choices.map((choice, i) => ({
+				type: "button",
+				action_id: `gaidin-answer-${i}`,
+				text: { type: "plain_text", text: choice },
+				value: JSON.stringify({ id: request.id, answer: choice }),
+			})),
+		});
+	}
+	blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `Reply in this thread to answer in your own words. Waits until ${formatTime(request.expiresAt)}.` }] });
+	return { text: `gaidin asks: ${request.summary}`, blocks };
+}
+
 export function blocksFor(request: ApprovalRequest): { text: string; blocks: unknown[] } {
+	if (request.kind === "question") return questionBlocks(request);
 	const what = `\`${escape(request.summary)}\``;
 	if (request.status !== "pending") {
 		const how = request.decision === "always" && request.always !== undefined ? request.always.done : request.decision === "once" ? "Allowed once" : OUTCOME[request.status];
@@ -71,19 +100,24 @@ export function createSlackApprovals(options: { harness: Harness; approvals: App
 	approvals.onChange((request) => (request.status === "pending" ? ask(request) : show(request)));
 
 	return {
-		/** A button press. Only Brad's, in the gaidin channel, count. */
+		/** A button press. Only the owner's, in the gaidin channel, count. */
 		async action(payload: SlackAction) {
 			if (payload.user?.id !== user || payload.channel?.id !== channel) return;
 			for (const action of payload.actions ?? []) {
 				if (!action.action_id.startsWith("gaidin-")) continue;
-				let parsed: { id?: unknown; decision?: unknown };
+				let parsed: { id?: unknown; decision?: unknown; answer?: unknown };
 				try {
 					parsed = JSON.parse(action.value ?? "");
 				} catch {
 					continue;
 				}
-				if (typeof parsed.id !== "string" || !DECISIONS.includes(parsed.decision as Decision)) continue;
-				const decided = await approvals.decide(parsed.id, parsed.decision as Decision, "slack");
+				if (typeof parsed.id !== "string") continue;
+				let decided;
+				if (action.action_id.startsWith("gaidin-answer-") && typeof parsed.answer === "string") {
+					decided = await approvals.answer(parsed.id, parsed.answer, "slack");
+				} else if (DECISIONS.includes(parsed.decision as Decision)) {
+					decided = await approvals.decide(parsed.id, parsed.decision as Decision, "slack");
+				} else continue;
 				// Already decided elsewhere: refresh the message so its buttons go away.
 				if (decided === undefined) {
 					const current = (await approvals.state()).requests[parsed.id];

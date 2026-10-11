@@ -5,6 +5,7 @@
 | `read`, `write`, `edit`, `bash` | in the sandbox | the sandbox directory only, no network | no |
 | `remind`, `list_reminders`, `cancel_reminder` | in the server | its ntfy topic | no |
 | `remember`, `update_memory`, `forget` | in the server | the notes in every system prompt | after outside text in the same run |
+| `ask_owner` | in the server | the owner, in Slack or the web view | it is the question |
 | `schedule_job`, `list_jobs`, `cancel_job` | in the server; each run is a new conversation | what the run's tools reach | every new job |
 | `fetch_url` | in the server | the public internet only | for a host not allowed for good |
 | `workspace_run`, `workspace_read`, `workspace_write`, `workspace_edit` | on a workspace, under bubblewrap | that machine's project roots, and the network | every call |
@@ -24,6 +25,10 @@ Pi Durable's `read`, `write`, `edit` and `bash`, confined to the sandbox directo
 A reminder is a durable background task ([Concepts](concepts.md#durability)). When it fires, it posts to `NTFY_URL` with the title "gaidin" and records a "Reminder" entry in the conversation, which the web view shows and the model doesn't see. A failed push is retried up to five times with backoff, and the entry records whether it was delivered. Without `NTFY_URL`, reminders print to the server's output.
 
 ntfy.sh topics have no password, so use a long random topic name and treat it as a secret. Subscribe to it in the ntfy app on your phone; the topic field takes the name alone, not the URL.
+
+## Questions
+
+`ask_owner` asks the owner something only they can decide and waits for the answer, with up to five `choices` as buttons. The run pauses at the call, for up to `approvals.waitHours` (7 days by default), and picks up where it stopped once the owner answers; the tool result is the answer. The owner can answer with a button, in their own words in the question's Slack thread or the web view's box, or just with their next message in that conversation. The pause survives restarts: the question keeps its id, and the call waits on it again. A job's run can ask too, which is how a 3 a.m. job gets a decision made at breakfast.
 
 ## Memory
 

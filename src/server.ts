@@ -62,7 +62,7 @@ export async function serve(config: Config) {
 	if (config.slack !== undefined) {
 		const { botToken, appToken, channelId: channel, userId: user } = config.slack;
 		const api = slackApi(botToken);
-		const surface = createSlackSurface({ harness, root, post: slackPoster(api), channel, user, explain });
+		const surface = createSlackSurface({ harness, root, post: slackPoster(api), channel, user, explain, approvals });
 		const approvalButtons = createSlackApprovals({ harness, approvals, api, channel, user });
 		void surface.recover();
 		approvalButtons.recover().catch((error) => console.error("[slack] approvals:", error));
@@ -109,6 +109,12 @@ export async function serve(config: Config) {
 		const request = JSON.parse(line) as { type: "ask"; content: string; requestId?: string } | { type: "watch" };
 		const { events, shown } = await follow(socket);
 		if (request.type === "watch") return;
+		if ((await approvals.intercept(root.id, request.content, "cli")) === "answered") {
+			send(socket, { type: "line", text: "(taken as the answer to gaidin's question; the run goes on)" });
+			send(socket, { type: "done", status: "done" });
+			socket.end();
+			return;
+		}
 		const submission = await root.submit({ type: "input", content: stamp(request.content), requestId: request.requestId ?? randomUUID() }, context);
 		// If the client goes away, the run continues; only this wait and its watch end.
 		const settled = await submission.wait(context);

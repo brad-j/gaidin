@@ -16,7 +16,7 @@ type Slot = { callId: string; name: string; output: string };
 type Reminder = { taskId: number; text: string; at: number };
 type Note = { id: number; text: string; by: string; updatedAt: number };
 type Job = { taskId: number; title: string; when: string; mode: string; nextAt?: number; lastAt?: number; lastResult?: string };
-type Approval = { id: string; summary: string; tool: string; expiresAt: number; always?: { kind: string; value: string; label: string } };
+type Approval = { id: string; summary: string; tool: string; expiresAt: number; kind?: string; choices?: string[]; always?: { kind: string; value: string; label: string } };
 type Settings = { model: string; models: string[]; thinkingLevel: string; instructions: string; tools: { name: string; enabled: boolean }[] };
 // The event stream's shapes are pi-durable's AgentEvent; only the fields used here are read.
 type AgentEvent = { type: string; [field: string]: any };
@@ -466,11 +466,43 @@ async function loadJobs() {
 	}
 }
 
+/** A question from ask_owner: a button per choice, and a box for an answer in your own words. */
+function questionCard(request: Approval): HTMLElement {
+	const card = el("section", "approval");
+	card.append(el("div", "meta", `gaidin asks. Waits until ${when.format(request.expiresAt)}.`), el("div", "what", request.summary));
+	const buttons = el("div", "buttons");
+	const send = async (answer: string) => {
+		for (const control of card.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>("button, textarea")) control.disabled = true;
+		try {
+			await post("/api/approvals/answer", { id: request.id, answer });
+		} catch (error) {
+			notice(String(error));
+		}
+		await loadApprovals();
+	};
+	for (const choice of request.choices ?? []) {
+		const button = el("button", undefined, choice);
+		button.addEventListener("click", () => void send(choice));
+		buttons.append(button);
+	}
+	const box = el("textarea");
+	box.rows = 2;
+	box.placeholder = "Or answer in your own words";
+	const answer = el("button", undefined, "Answer");
+	answer.addEventListener("click", () => {
+		if (box.value.trim() !== "") void send(box.value);
+	});
+	buttons.append(box, answer);
+	card.append(buttons);
+	return card;
+}
+
 async function loadApprovals() {
 	try {
 		const pending = await load<Approval[]>("/api/approvals");
 		$("approvals").replaceChildren(
 			...pending.map((request) => {
+				if (request.kind === "question") return questionCard(request);
 				const card = el("section", "approval");
 				card.append(
 					el("div", "meta", `gaidin wants to use ${request.tool}. Waits until ${when.format(request.expiresAt)}.`),

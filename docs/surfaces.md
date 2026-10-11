@@ -18,7 +18,7 @@ On the VM, `setup.sh`'s `gaidin` command runs as the service's user. `gaidin ask
 
 gaidin answers in one channel, for one Slack user, over Socket Mode, so the server needs no inbound port. It answers every top-level message you post in the channel; you don't need to mention it. Replies in a thread go to that thread's [fork](concepts.md#forks). It ignores other people, other channels, bots and edited messages. A thread on a message it never answered gets a note instead of a fork.
 
-Reports from [scheduled jobs](tools.md#scheduled-jobs) are posted as messages of their own, headed with the job's title; a reply in a report's thread continues that run's conversation. Answers are posted as Markdown, which Slack renders. Answers over 12,000 characters go out as several messages. Requests for [approval](security.md#approvals) arrive as a message with buttons, in the thread when the conversation is a thread's fork, and the message changes to show the outcome once you answer from either surface.
+Reports from [scheduled jobs](tools.md#scheduled-jobs) are posted as messages of their own, headed with the job's title; a reply in a report's thread continues that run's conversation. Answers are posted as Markdown, which Slack renders. Answers over 12,000 characters go out as several messages. Questions from [`ask_owner`](tools.md#questions) arrive the same way, with a button per choice; a reply in the question's thread answers it in your own words, and so does your next message in that conversation. Requests for [approval](security.md#approvals) arrive as a message with buttons, in the thread when the conversation is a thread's fork, and the message changes to show the outcome once you answer from either surface.
 
 ### Setting up Slack
 
@@ -39,7 +39,7 @@ The web view shows the root conversation live and lets you act on it:
 
 - your messages and its answers from every surface, with tool calls you can expand to see their arguments and output while they run
 - fired reminders, the cost of this conversation, and today's spend against the daily limit, with a button to allow more when gaidin has stopped
-- a message box, a Stop button, and pending approvals at the top
+- a message box, a Stop button, and pending approvals and questions at the top; a question has a box for answering in your own words
 - open reminders and scheduled jobs, with Cancel, and job reports in the transcript
 - gaidin's memory, with Delete, and a box for adding notes of your own
 - the model, thinking level, standing instructions, and switches for the coding tools, `fetch_url` and the workspace tools

@@ -14,7 +14,7 @@ Pi Durable stores the conversation as entries (your messages, the model's answer
 - A reminder is a background task that sleeps until its time. After a restart it sleeps until the same moment, and one that came due while the server was down fires as soon as it starts.
 - A scheduled job works the same way. A run interrupted by a restart picks up its own conversation again, and its report isn't sent twice except in the moment between sending and recording it.
 - A Slack message is recorded before Slack is told it arrived. One still owed an answer when the server stopped is answered when it starts.
-- A request for approval keeps its id across a restart, so the same tool call waits on the same request instead of asking twice.
+- A request for approval, or a question to the owner, keeps its id across a restart, so the same tool call waits on the same request instead of asking twice. A run can wait days for an answer this way.
 
 Delivery of reminder pushes and Slack posts is at least once: a crash between sending and recording that it was sent sends it again.
 

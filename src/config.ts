@@ -30,6 +30,8 @@ export type Config = {
 	sandbox: "bwrap" | "none";
 	/** Spend limits in dollars; 0 is no limit. */
 	budget: { daily: number; monthly: number };
+	/** How long approvals and questions wait for the owner. */
+	approvals: { waitHours: number };
 	/** SSH keys for workspaces and container logs, and the workspace list. */
 	keysDir: string;
 	homelab?: HomelabConfig;
@@ -38,7 +40,7 @@ export type Config = {
 export type Loaded = { config: Config; errors: string[]; warnings: string[] };
 
 const DEFAULT_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
-const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "slack", "web", "sandbox", "budget", "keys", "extensions"];
+const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "slack", "web", "sandbox", "budget", "approvals", "keys", "extensions"];
 
 /** The settings file to use: `explicit`, GAIDIN_CONFIG, or the first default location that exists. */
 export function findConfigFile(explicit?: string, env: NodeJS.ProcessEnv = process.env, search = true): string | undefined {
@@ -72,6 +74,7 @@ function fromEnv(env: NodeJS.ProcessEnv) {
 		keys: pick("GAIDIN_KEYS"),
 		daily: pick("GAIDIN_BUDGET_DAILY"),
 		monthly: pick("GAIDIN_BUDGET_MONTHLY"),
+		waitHours: pick("GAIDIN_APPROVAL_WAIT_HOURS"),
 		homelabFeeds: pick("GAIDIN_HOMELAB_DATA"),
 		kumaUrl: pick("GAIDIN_KUMA_URL"),
 	};
@@ -191,6 +194,13 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	const budget = { daily: limit("daily", e.daily ?? budgetSection.daily, 5), monthly: limit("monthly", e.monthly ?? budgetSection.monthly, 0) };
 	if (budget.daily === 0 && budget.monthly === 0) warnings.push("No budget: nothing limits what scheduled jobs and runs can spend");
 
+	// Approvals
+	const approvalSection = section("approvals");
+	const waitValue = e.waitHours ?? approvalSection.waitHours ?? 168;
+	const waitHours = Number(waitValue);
+	// Node's timers stop at about 24 days.
+	if (!Number.isFinite(waitHours) || waitHours <= 0 || waitHours > 24 * 24) errors.push(`approvals.waitHours must be between 0 and 576 hours, not ${JSON.stringify(waitValue)}`);
+
 	// Extensions
 	const extensions = section("extensions");
 	for (const key of Object.keys(extensions)) {
@@ -235,6 +245,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 		...(webUser === undefined ? {} : { web: { user: webUser, port } }),
 		sandbox: sandbox as Config["sandbox"],
 		budget,
+		approvals: { waitHours: Number.isFinite(waitHours) && waitHours > 0 && waitHours <= 576 ? waitHours : 168 },
 		keysDir: path(e.keys ?? text("keys", raw.keys) ?? "/var/lib/gaidin/keys"),
 		...(homelab === undefined ? {} : { homelab }),
 	};

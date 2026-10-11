@@ -44,7 +44,7 @@ A URL can carry data out in its path or query, which is why a fetch to a new hos
 | `schedule_job` | every new job | none |
 | `remember`, `update_memory` | when the run has read outside text since the owner's last message | none |
 
-Deny, no answer within 30 minutes, or Stop blocks the call, and the model is told which. The request id comes from a memo on the tool task, so after a restart the same call waits on the same request without asking again. Only the configured Slack user's presses in the configured channel count, and the web view only answers its configured login. Requests, always-allowed hosts and hour grants are stored in a session document and survive restarts.
+A request waits up to `approvals.waitHours` (7 days by default); the run is stored meanwhile and costs nothing. Deny, no answer in time, Stop, or a new message from the owner in that conversation blocks the call, and the model is told which. A new message closes the request as skipped, so the owner never has to answer an old request before saying something else. The request id comes from a memo on the tool task, so after a restart the same call waits on the same request without asking again. Only the configured Slack user's presses in the configured channel count, and the web view only answers its configured login. Requests, always-allowed hosts and hour grants are stored in a session document and survive restarts.
 
 The policy can also see which tools that return outside text (`UNTRUSTED_TOOLS`: `fetch_url`, `container_logs`, `workspace_read`, `workspace_run`) the run has used since the owner's last message; memory writes use that. A tool that changes anything outside the sandbox should go through this policy ([Extending](extending.md#tools-that-reach-outside)).
 

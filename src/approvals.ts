@@ -10,12 +10,13 @@
 import { randomUUID } from "node:crypto";
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
-import type { Message, ToolCall } from "@earendil-works/pi-ai";
-import { type ConversationId, defineDoc, defineExtension, type Harness, hook, type TaskId, ToolTask } from "@earendil-works/pi-durable";
+import { type Message, type ToolCall, Type } from "@earendil-works/pi-ai";
+import { type ConversationId, defineDoc, defineExtension, defineTool, type Harness, hook, type TaskId, ToolTask } from "@earendil-works/pi-durable";
 import { describeSchedule, parseSchedule } from "./jobs.ts";
 
 export type Decision = "once" | "always" | "deny";
-export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
+/** "superseded": the owner sent a new message in the conversation instead of answering. */
+export type ApprovalStatus = "pending" | "approved" | "denied" | "answered" | "expired" | "cancelled" | "superseded";
 
 export type ApprovalRequest = {
 	id: string;
@@ -23,8 +24,14 @@ export type ApprovalRequest = {
 	/** The tool call's task. A request whose task has ended isn't waited on any more. */
 	taskId: number;
 	tool: string;
-	/** One line for the owner: what the call does. */
+	/** One line for the owner: what the call does, or for a question, the question. */
 	summary: string;
+	/** A question from ask_owner rather than a request to allow a call. */
+	kind?: "question";
+	/** Answers offered as buttons. */
+	choices?: string[];
+	/** The owner's answer to a question. */
+	answer?: string;
 	/** The wider grant the second button gives, when one is offered. `label` is the button, `done` the outcome. */
 	always?: { kind: "fetch-host" | "workspace-hour"; value: string; label: string; done: string };
 	createdAt: number;
@@ -124,7 +131,7 @@ export class ApprovalService {
 
 	constructor(harness: Harness, options: { timeoutMs?: number } = {}) {
 		this.#harness = harness;
-		this.#timeoutMs = options.timeoutMs ?? 30 * 60_000;
+		this.#timeoutMs = options.timeoutMs ?? 7 * 24 * 3_600_000;
 	}
 
 	async state(): Promise<ApprovalState> {
@@ -174,7 +181,7 @@ export class ApprovalService {
 	}
 
 	/** Records a request under `id` unless it exists, and returns it as stored. */
-	async open(id: string, at: { conversationId: number; taskId: number }, tool: string, ask: Pick<ApprovalRequest, "summary" | "always">): Promise<ApprovalRequest> {
+	async open(id: string, at: { conversationId: number; taskId: number }, tool: string, ask: Pick<ApprovalRequest, "summary" | "always" | "kind" | "choices">): Promise<ApprovalRequest> {
 		const now = Date.now();
 		const { request, created } = await this.#commit((doc) => {
 			for (const [key, old] of Object.entries(doc.requests)) {
@@ -194,7 +201,7 @@ export class ApprovalService {
 	async decide(id: string, decision: Decision, by: string): Promise<ApprovalRequest | undefined> {
 		const decided = await this.#commit((doc) => {
 			const request = doc.requests[id];
-			if (request === undefined || request.status !== "pending") return undefined;
+			if (request === undefined || request.status !== "pending" || request.kind === "question") return undefined;
 			if (request.expiresAt <= Date.now()) {
 				request.status = "expired";
 				request.decidedAt = Date.now();
@@ -220,8 +227,43 @@ export class ApprovalService {
 		return decided;
 	}
 
-	/** Ends a pending request without an answer: the run was stopped, or the time ran out. */
-	async close(id: string, status: "expired" | "cancelled"): Promise<void> {
+	/** The owner's answer to a question. Returns the request, or nothing if it wasn't a pending question. */
+	async answer(id: string, text: string, by: string): Promise<ApprovalRequest | undefined> {
+		const answer = text.trim();
+		if (answer === "") return undefined;
+		const answered = await this.#commit((doc): ApprovalRequest | undefined => {
+			const request = doc.requests[id];
+			if (request === undefined || request.status !== "pending" || request.kind !== "question") return undefined;
+			request.status = "answered";
+			request.answer = answer;
+			request.decidedAt = Date.now();
+			request.by = by;
+			return plain(request);
+		});
+		if (answered !== undefined) this.#settled(answered);
+		return answered;
+	}
+
+	/**
+	 * The owner's new message in a conversation. If a question is waiting there, the message is its answer
+	 * ("answered"). Otherwise pending approvals there are closed as superseded, so the run stops waiting
+	 * and the message can run ("continue").
+	 */
+	async intercept(conversationId: number, text: string, by: string): Promise<"answered" | "continue"> {
+		const waiting = (await this.pending()).filter((r) => r.conversationId === conversationId);
+		const question = waiting.find((r) => r.kind === "question");
+		if (question !== undefined && (await this.answer(question.id, text, by)) !== undefined) return "answered";
+		for (const request of waiting) await this.close(request.id, "superseded");
+		return "continue";
+	}
+
+	/** The pending question asked in the Slack message `ts`, if any. */
+	async questionAt(ts: string): Promise<ApprovalRequest | undefined> {
+		return (await this.pending()).find((r) => r.kind === "question" && r.slackTs === ts);
+	}
+
+	/** Ends a pending request without an answer: the run was stopped, the time ran out, or the owner moved on. */
+	async close(id: string, status: "expired" | "cancelled" | "superseded"): Promise<void> {
 		const closed = await this.#commit((doc): ApprovalRequest | undefined => {
 			const request = doc.requests[id];
 			if (request === undefined || request.status !== "pending") return undefined;
@@ -302,8 +344,37 @@ export async function untrustedSince(api: unknown, context: Context): Promise<st
 }
 
 export function approvalExtension(service: () => ApprovalService, owner: string, policy: Policy = defaultPolicy) {
+	const askOwner = defineTool({
+		name: "ask_owner",
+		description:
+			`Ask ${owner} a question and wait for the answer, for a decision only they can make. The run pauses until ` +
+			`${owner} answers, for up to days, and continues where it stopped. Give \`choices\` (up to 5) when the answer is one ` +
+			`of a few options; ${owner} can still answer in their own words. Ask one question at a time.`,
+		parameters: Type.Object({
+			question: Type.String(),
+			choices: Type.Optional(Type.Array(Type.String(), { maxItems: 5 })),
+		}),
+		// The request id comes from the tool call's task, so a rerun after a restart waits on the same question.
+		replay: "safe",
+		execute: async (args, api, context) => {
+			const approvals = service();
+			const choices = (args.choices ?? []).map((c) => c.trim()).filter((c) => c !== "").map((c) => c.slice(0, 75));
+			const request = await approvals.open(`question:${api.taskId}`, { conversationId: api.conversationId as number, taskId: api.taskId as number }, "ask_owner", {
+				summary: args.question.trim(),
+				kind: "question",
+				...(choices.length === 0 ? {} : { choices }),
+			});
+			const signals = [context.abortSignal, (api as { signal?: AbortSignal }).signal].filter((s) => s !== undefined);
+			const done = await approvals.wait(request, signals.length === 0 ? undefined : AbortSignal.any(signals));
+			const text = done.status === "answered" ? `${owner} answered: ${done.answer}`
+				: done.status === "expired" ? `${owner} didn't answer in time.`
+				: "No answer: the run was stopped.";
+			return { content: [{ type: "text", text }], isError: done.status !== "answered" };
+		},
+	});
 	return defineExtension({
 		name: "approvals",
+		tools: [askOwner],
 		hooks: [
 			hook(ToolTask, {
 				beforeTool: async (call, api, context: Context) => {
@@ -317,7 +388,10 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 					const signals = [context.abortSignal, (api as { signal?: AbortSignal }).signal].filter((s) => s !== undefined);
 					const done = await approvals.wait(request, AbortSignal.any(signals));
 					if (done.status === "approved") return undefined;
-					const why = done.status === "denied" ? `${owner} said no` : done.status === "expired" ? `${owner} didn't answer in time` : "the run was stopped";
+					const why = done.status === "denied" ? `${owner} said no`
+						: done.status === "expired" ? `${owner} didn't answer in time`
+						: done.status === "superseded" ? `${owner} sent a new message instead of answering`
+						: "the run was stopped";
 					return { block: `Needs ${owner}'s approval to ${ask.summary}, and ${why}.` };
 				},
 			}),

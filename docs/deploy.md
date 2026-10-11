@@ -96,6 +96,7 @@ The settings file is JSON: the first of `--config`, `GAIDIN_CONFIG`, `./gaidin.j
 | `sandbox` | `GAIDIN_SANDBOX` | `bwrap` | `none` runs tools without bubblewrap. |
 | `budget.daily` | `GAIDIN_BUDGET_DAILY` | `5` | Dollars a day; 0 is no daily limit. See [Spend limits](#spend-limits). |
 | `budget.monthly` | `GAIDIN_BUDGET_MONTHLY` | `0` | Dollars a calendar month; 0 is no monthly limit. |
+| `approvals.waitHours` | `GAIDIN_APPROVAL_WAIT_HOURS` | `168` | How long approvals and questions wait, up to 576. |
 | `extensions.homelab` | | off | The [homelab extension](extending.md#the-homelab-extension). |
 
 The secrets are `model.apiKey`, the ntfy URL and token, and the two Slack tokens. Keep the file readable only by you or the service; `gaidin doctor` warns when anyone else can read it.
