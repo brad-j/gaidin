@@ -80,6 +80,13 @@ test("private, LAN, tailnet and loopback addresses are refused, by name, literal
 	await refused(`http://127.0.0.1:${port}/page`, /private or reserved/, { ...options, blocked: blockedRanges() });
 });
 
+test("IPv6 forms that carry an IPv4 address are refused: IPv4-compatible (::/96) and 6to4 (2002::/16)", () => {
+	const blocked = blockedRanges();
+	// ::127.0.0.1 and ::192.168.1.1, and 6to4 for 192.168.1.1 and for a public address, which a relay would carry anywhere.
+	for (const address of ["::7f00:1", "::c0a8:101", "2002:c0a8:101::1", "2002:808:808::1"]) assert.ok(blocked.check(address, "ipv6"), address);
+	assert.ok(!blocked.check("2606:4700:4700::1111", "ipv6"), "a public IPv6 address");
+});
+
 test("a redirect is followed on its host only; one to another host comes back unfollowed, so fetching it is asked about like any other", async (t) => {
 	const { base, options } = await setup(t);
 	const port = new URL(base).port;

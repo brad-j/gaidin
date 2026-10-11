@@ -16,7 +16,7 @@ import { defineExtension, defineTool } from "@earendil-works/pi-durable";
 import { guard } from "./guards.ts";
 import { object, string } from "./parse.ts";
 
-/** Addresses fetch_url won't connect to. */
+/** Addresses fetch_url won't connect to. `allowLoopback`, for tests, opens 127.0.0.0/8; ::1 stays blocked, inside ::/96. */
 export function blockedRanges(options: { allowLoopback?: boolean } = {}): BlockList {
 	const list = new BlockList();
 	const v4 = [
@@ -25,16 +25,15 @@ export function blockedRanges(options: { allowLoopback?: boolean } = {}): BlockL
 		["203.0.113.0", 24], ["224.0.0.0", 4], ["240.0.0.0", 4],
 	] as const;
 	for (const [address, prefix] of v4) list.addSubnet(address, prefix, "ipv4");
+	// ::/96 holds the unspecified address, loopback and the deprecated IPv4-compatible form (::a.b.c.d); 2002::/16 is 6to4,
+	// which embeds an IPv4 address that a relay would carry the connection to.
 	const v6 = [
-		["::", 128], ["64:ff9b::", 96], ["100::", 64], ["2001:db8::", 32],
+		["::", 96], ["64:ff9b::", 96], ["100::", 64], ["2001:db8::", 32], ["2002::", 16],
 		["fc00::", 7], ["fe80::", 10], ["ff00::", 8],
 	] as const;
 	// IPv4-mapped IPv6 addresses (::ffff:a.b.c.d) are checked against the IPv4 ranges by BlockList itself.
 	for (const [address, prefix] of v6) list.addSubnet(address, prefix, "ipv6");
-	if (!options.allowLoopback) {
-		list.addSubnet("127.0.0.0", 8, "ipv4");
-		list.addAddress("::1", "ipv6");
-	}
+	if (!options.allowLoopback) list.addSubnet("127.0.0.0", 8, "ipv4");
 	return list;
 }
 
