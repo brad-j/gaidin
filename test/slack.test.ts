@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -8,7 +10,7 @@ import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi
 import { context, startHost } from "../src/host.ts";
 import type { Job } from "../src/jobs.ts";
 import { createSlackNotifications } from "../src/slack-notifications.ts";
-import { createSlackSurface, type SlackMessage, type SlackPost } from "../src/slack.ts";
+import { createSlackSurface, slackDownload, type SlackMessage, type SlackPost } from "../src/slack.ts";
 
 const CHANNEL = "C1";
 const BRAD = "U1";
@@ -292,4 +294,21 @@ test("a paused job is posted with a resume button, and Brad's press resumes it",
 	// A second press finds it running already.
 	await slack.action(press(BRAD));
 	assert.match(JSON.stringify(calls[2]!.body.blocks), /Not paused any more/);
+});
+
+test("a file is downloaded with the bot token only from Slack's file host", async (t) => {
+	const seen: (string | undefined)[] = [];
+	const server = createServer((req, res) => {
+		seen.push(req.headers.authorization);
+		res.writeHead(200, { "Content-Type": "image/png" });
+		res.end("png");
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	t.after(() => new Promise((resolve) => server.close(resolve)));
+	const download = slackDownload("xoxb-secret");
+	const port = (server.address() as AddressInfo).port;
+	for (const url of [`http://127.0.0.1:${port}/files-pri/T1-F1/shot.png`, "https://files.slack.com.evil.example/shot.png", "http://files.slack.com/shot.png", "not a url"]) {
+		await assert.rejects(download(url), /only from https:\/\/files\.slack\.com/, url);
+	}
+	assert.deepEqual(seen, [], "the token was sent elsewhere");
 });

@@ -300,6 +300,8 @@ export function slackApi(botToken: string): SlackApi {
 
 export function slackDownload(botToken: string): SlackDownload {
 	return async (url) => {
+		// The URL comes from the event; the token goes only where Slack keeps files.
+		if (!URL.canParse(url) || new URL(url).origin !== "https://files.slack.com") throw new Error(`Files are downloaded only from https://files.slack.com, not ${url}`);
 		const response = await fetch(url, { headers: { Authorization: `Bearer ${botToken}` }, signal: AbortSignal.timeout(30_000) });
 		if (!response.ok) throw new Error(`Slack answered ${response.status}`);
 		// Without the files:read scope, Slack answers with its sign-in page.
