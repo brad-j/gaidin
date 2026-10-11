@@ -12,6 +12,7 @@ import { createBudget } from "./budget.ts";
 import { type Config, configFor, secretsOf } from "./config.ts";
 import { createHomelab, type HomelabOptions } from "./extensions/homelab/index.ts";
 import { createFetch, type FetchOptions } from "./fetch.ts";
+import { createHistory } from "./history.ts";
 import { createJobs, type Deliver } from "./jobs.ts";
 import { createMemory } from "./memory.ts";
 import { ntfyNotifier, ntfyReporter } from "./ntfy.ts";
@@ -72,6 +73,7 @@ function persona(owner: string) {
 					`Use schedule_job for work to do later or on a schedule: briefings, regular checks, and watches. ` +
 					`When you tell ${owner} you'll check on something later, schedule it, so it happens. ` +
 					`When you need a decision only ${owner} can make, ask with ask_owner and wait for the answer rather than guessing. ` +
+					`Before saying you don't know something ${owner} may have told you, search past conversations with search_history. ` +
 					`When ${owner} asks for the same kind of thing again and load_extension is available, offer to write a tool for it, and write it only once ${owner} says yes. ` +
 					"The bash tool runs in a sandbox with no network: curl, package installs and git clone fail there. " +
 					"Reach the internet with fetch_url, and web_search when it's available. If a tool fails, say what failed rather than guessing a cause.",
@@ -157,6 +159,8 @@ export async function openHost(options: HostOptions = {}) {
 		owner,
 	});
 	registry.install(workspaces.extension);
+	const history = createHistory(resolve(dir, "history.sqlite"), owner);
+	registry.install(history.extension);
 	// Self-written tools only ever run in a box, so without bubblewrap there are none.
 	const self = bwrap === undefined ? undefined : createSelf({ dataDir: dir, sandbox, bwrap, hide, registry, approvals: () => approvals!, owner, fetch: options.fetch });
 	if (self !== undefined) registry.install(self.extension);
@@ -178,14 +182,15 @@ export async function openHost(options: HostOptions = {}) {
 		},
 		context,
 	);
+	history.attach(harness);
 	approvals = new ApprovalService(harness, { timeoutMs: options.approvalTimeoutMs ?? config.approvals.waitHours * 3_600_000 });
 	const root = await harness.root(context, { agent: { model, cwd: sandbox } });
 	// After the root exists: the guard's first read would otherwise create it without its agent.
 	await budget.attach(harness);
 	harness.resume();
-	// The tools the web view can switch off: the coding tools, fetch_url (gaidin's only way to the internet), the workspace tools
+	// The tools the web view can switch off: the coding tools, fetch_url (gaidin's only way to the internet), the history tools, the workspace tools
 	// and the self-written ones.
-	const builtIn = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...workspaces.tools];
+	const builtIn = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...history.tools, ...workspaces.tools];
 	const switchable = () => [...builtIn, ...(self?.tools() ?? [])];
 	const setDeliver = (next: Deliver) => {
 		deliver = next;

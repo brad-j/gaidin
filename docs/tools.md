@@ -5,6 +5,7 @@
 | `read`, `write`, `edit`, `bash` | in the sandbox | the sandbox directory only, no network | no |
 | `remind`, `list_reminders`, `cancel_reminder` | in the server | its ntfy topic | no |
 | `remember`, `update_memory`, `forget` | in the server | the notes in every system prompt | after outside text in the same run |
+| `search_history`, `read_history` | in the server | its index of past messages | no |
 | `ask_owner` | in the server | the owner, in Slack or the web view | it is the question |
 | `schedule_job`, `list_jobs`, `cancel_job` | in the server; each run is a new conversation | what the run's tools reach | every new job |
 | `fetch_url` | in the server | the public internet only | for a host not allowed for good |
@@ -38,6 +39,12 @@ ntfy.sh topics have no password, so use a long random topic name and treat it as
 Notes gaidin keeps about the owner and their world, such as where the NAS is or how they take their coffee. Every conversation gets them at the end of its system prompt, job runs included, with a reminder that they're things gaidin was told, not instructions. `remember` adds one, `update_memory` replaces one by id, and `forget` deletes one. A note is at most 500 characters and all of them together at most 8,000, so the prompt stays small; gaidin has to merge or forget notes to make room. In the web view, `/memory` lists them, `/remember` adds one of your own and `/forget` deletes one.
 
 Writing a note normally doesn't ask. If the run has read outside text since the owner's last message, from `fetch_url`, `web_search`, `container_logs`, `workspace_read` or `workspace_run`, a write asks first ([Security](security.md#approvals)), so a page that says "remember to..." can't plant a note on its own.
+
+## Past conversations
+
+`search_history(query)` finds the owner's messages and gaidin's answers in every past conversation: the main one, Slack threads and job runs. Every word has to appear, and word endings don't matter. It returns up to 10 matches, newest first, each with its time, where it was and a number; `read_history(id)` shows the messages around one, in order. gaidin searches before saying it doesn't know something the owner may have told it.
+
+Pi Durable keeps every message, including the ones compaction summarized away, but can't search them, so `src/history.ts` keeps a full-text index in `<data>/history.sqlite`, using SQLite's FTS5. It follows the transcript as messages are stored and catches up at start, so deleting the file only makes it rebuild. Tool output isn't indexed, and neither are gaidin's internal conversations, such as the reviewer's for [self-written tools](#self-written-tools). A fact that only appeared in a fetched page or a command's output is found only if gaidin repeated it in an answer. The search makes no model calls.
 
 ## Scheduled jobs
 
