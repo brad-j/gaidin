@@ -10,6 +10,7 @@ import { lookup as dnsLookup } from "node:dns";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { BlockList, isIP, type LookupFunction } from "node:net";
+import { pipeline } from "node:stream";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
@@ -89,6 +90,8 @@ export async function fetchPublic(url: string, options: FetchOptions = {}): Prom
 			})();
 		};
 
+		// Set when the server goes quiet, before or during the body, so either way the read says so.
+		let silent: Error | undefined;
 		const response = await new Promise<IncomingMessage>((resolveResponse, reject) => {
 			const send = current.protocol === "https:" ? httpsRequest : httpRequest;
 			const req = send(current, {
@@ -97,7 +100,7 @@ export async function fetchPublic(url: string, options: FetchOptions = {}): Prom
 				headers: { "User-Agent": "gaidin (personal agent)", Accept: "text/html, text/plain, application/json, */*;q=0.5", "Accept-Encoding": "gzip, deflate, br" },
 				timeout: timeoutMs,
 			}, resolveResponse);
-			req.once("timeout", () => req.destroy(new Error(`No answer from ${current.host} in ${timeoutMs / 1000}s`)));
+			req.once("timeout", () => req.destroy((silent = new Error(`No answer from ${current.host} in ${timeoutMs / 1000}s`))));
 			req.once("error", reject);
 			req.end();
 		});
@@ -114,23 +117,29 @@ export async function fetchPublic(url: string, options: FetchOptions = {}): Prom
 		}
 
 		const encoding = String(response.headers["content-encoding"] ?? "").toLowerCase();
-		const stream = encoding === "gzip" ? response.pipe(createGunzip())
-			: encoding === "deflate" ? response.pipe(createInflate())
-			: encoding === "br" ? response.pipe(createBrotliDecompress())
-			: response;
+		const decompress = encoding === "gzip" ? createGunzip()
+			: encoding === "deflate" ? createInflate()
+			: encoding === "br" ? createBrotliDecompress()
+			: undefined;
+		// pipeline, unlike pipe, passes the response's failure on, so a response that went quiet ends the read.
+		const stream = decompress === undefined ? response : pipeline(response, decompress, () => {});
 		// Counted after decompression, so a small compressed bomb stops at the same size.
 		const chunks: Buffer[] = [];
 		let size = 0;
 		let truncated = false;
-		// SAFETY: the response and the zlib streams give Buffers, since no encoding is set on them.
-		for await (const chunk of stream as AsyncIterable<Buffer>) {
-			chunks.push(chunk);
-			size += chunk.length;
-			if (size >= maxBytes) {
-				truncated = true;
-				response.destroy();
-				break;
+		try {
+			// SAFETY: the response and the zlib streams give Buffers, since no encoding is set on them.
+			for await (const chunk of stream as AsyncIterable<Buffer>) {
+				chunks.push(chunk);
+				size += chunk.length;
+				if (size >= maxBytes) {
+					truncated = true;
+					response.destroy();
+					break;
+				}
 			}
+		} catch (error) {
+			throw silent ?? error;
 		}
 		const body = Buffer.concat(chunks).subarray(0, maxBytes);
 		return { url: current.href, status, contentType: String(response.headers["content-type"] ?? ""), body, truncated };

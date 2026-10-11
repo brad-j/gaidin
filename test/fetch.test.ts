@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
-import { gzipSync } from "node:zlib";
+import { createGzip, gzipSync } from "node:zlib";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import type { Situation } from "../src/guards.ts";
@@ -39,6 +39,17 @@ async function setup(t: TestContext): Promise<{ base: string; options: FetchOpti
 			case "/big":
 				res.writeHead(200, { "Content-Type": "text/plain" });
 				return res.end("x".repeat(50_000));
+			case "/stall":
+				res.writeHead(200, { "Content-Type": "text/plain" });
+				return res.write("the start");
+			case "/stall-gzip": {
+				// Some of a compressed page, then silence.
+				res.writeHead(200, { "Content-Type": "text/plain", "Content-Encoding": "gzip" });
+				const gzip = createGzip();
+				gzip.pipe(res);
+				gzip.write("the start");
+				return gzip.flush();
+			}
 			case "/image":
 				res.writeHead(200, { "Content-Type": "image/png" });
 				return res.end(Buffer.alloc(100));
@@ -99,6 +110,15 @@ test("a redirect is followed on its host only; one to another host comes back un
 	}
 	assert.equal(render(await fetchPublic(`${base}/to-other`, options), 20_000), `${base}/to-other redirects (HTTP 302) to http://other.test:${port}/page?q=1, on another host. Fetch that URL to follow it.`);
 	await assert.rejects(fetchPublic("http://lan.test/admin", options), /lan\.test resolves to 192\.168\.3\.177/);
+});
+
+test("a page that goes silent partway is given up on at the idle timeout, compressed or not, saying so", async (t) => {
+	const { base, options } = await setup(t);
+	for (const path of ["/stall", "/stall-gzip"]) {
+		const started = Date.now();
+		await assert.rejects(fetchPublic(`${base}${path}`, { ...options, timeoutMs: 300 }), /No answer from public\.test:\d+ in 0\.3s/, path);
+		assert.ok(Date.now() - started < 2000, `${path} took ${Date.now() - started}ms`);
+	}
 });
 
 test("pages come back as labelled, readable text", async (t) => {
