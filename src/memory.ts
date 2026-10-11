@@ -22,7 +22,8 @@ export const Memory = defineDoc<{ notes: Note[]; nextId: number }>({
 export const MAX_NOTE = 500;
 export const MAX_TOTAL = 8000;
 
-const tidy = (text: string) => text.trim().replace(/\s+/g, " ");
+/** A note's text as it's stored, and as the owner is asked about it. */
+export const tidy = (text: string) => text.trim().replace(/\s+/g, " ");
 
 /** Why `text` can't be a note among `notes`, in place of note `replacing` when given, or nothing. */
 export function noteProblem(notes: readonly Note[], text: string, replacing?: number): string | undefined {

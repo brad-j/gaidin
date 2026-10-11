@@ -875,7 +875,7 @@ function renderApprovals() {
 			ask.append(el("span", "tool", request.tool), " ", el("span", "what", request.summary));
 			if (request.detail !== undefined) {
 				const detail = el("details", "detail");
-				detail.append(el("summary", undefined, "changes"), el("pre", undefined, request.detail));
+				detail.append(el("summary", undefined, "all of it"), el("pre", undefined, request.detail));
 				ask.append(detail);
 			}
 			const buttons = el("div", "buttons");

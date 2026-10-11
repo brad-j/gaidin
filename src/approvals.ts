@@ -17,6 +17,7 @@ import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context"
 import { type Message, type ToolCall, Type } from "@earendil-works/pi-ai";
 import { type ConversationId, defineDoc, defineEntry, defineExtension, defineTool, type DocumentReader, type Harness, hook, type TaskId, ToolTask, type Tx } from "@earendil-works/pi-durable";
 import { describeSchedule, GATE_FINDINGS, parseSchedule } from "./jobs.ts";
+import { tidy } from "./memory.ts";
 
 export type Decision = "once" | "always" | "deny";
 /** "superseded": the owner sent a new message in the conversation instead of answering. */
@@ -69,8 +70,8 @@ export const ApprovalSettled = defineEntry<Pick<ApprovalRequest, "id" | "tool" |
 
 type ApprovalState = { requests: Record<string, ApprovalRequest>; fetchHosts: string[]; grants?: Grant[] };
 
-/** What a call needs approval for, or nothing. */
-type Ask = Pick<ApprovalRequest, "summary" | "always"> | undefined;
+/** What a call needs approval for, or nothing. `detail` holds what the summary can't, so the owner sees all of what they allow. */
+type Ask = Pick<ApprovalRequest, "summary" | "always" | "detail"> | undefined;
 /**
  * What a call needs approval for, or nothing. `untrusted` lists the tools whose outside text the run has
  * read since the owner's last message; it reads the transcript, so call it only when it matters.
@@ -85,14 +86,23 @@ export const UNTRUSTED_TOOLS = new Set(["fetch_url", "web_search", "container_lo
 
 const WORKSPACE_GRANT_MS = 60 * 60_000;
 const clip = (text: string, max = 1500) => (text.length > max ? `${text.slice(0, max)}… (${text.length} characters)` : text);
+/** The summary, with `full` as the detail when the summary had to cut it. */
+const whole = (summary: string, shown: string, full: string): NonNullable<Ask> => (shown === full ? { summary } : { summary, detail: full });
+
+/** A workspace_edit's changes, each old text and its replacement, as the owner is asked about them. */
+function editsDetail(edits: unknown): string {
+	const lines = (text: unknown, mark: string) => String(text).split("\n").map((line) => `${mark} ${line}`);
+	return (Array.isArray(edits) ? edits : []).map((e: { oldText?: unknown; newText?: unknown }, i) => [`Change ${i + 1}:`, ...lines(e.oldText, "-"), ...lines(e.newText, "+")].join("\n")).join("\n\n");
+}
 
 export const defaultPolicy: Policy = async (call, state, conversationId, untrusted) => {
 	// Notes reach every future run, so writing one right after reading outside text asks first.
 	if (call.name === "remember" || call.name === "update_memory") {
 		const read = await untrusted();
 		if (read.length === 0) return undefined;
-		const text = String(call.arguments.text ?? "");
-		return { summary: `${call.name === "remember" ? "remember" : `change note ${String(call.arguments.id)} to`} "${clip(text, 500)}", after reading outside text (${read.join(", ")})` };
+		// As it will be stored: a note that won't fit is refused before this (memory.ts), so it isn't cut.
+		const text = tidy(String(call.arguments.text ?? ""));
+		return { summary: `${call.name === "remember" ? "remember" : `change note ${String(call.arguments.id)} to`} "${text}", after reading outside text (${read.join(", ")})` };
 	}
 	// Every workspace tool asks, unless the owner allowed that workspace for an hour in this conversation.
 	if (call.name.startsWith("workspace_")) {
@@ -100,11 +110,12 @@ export const defaultPolicy: Policy = async (call, state, conversationId, untrust
 		const now = Date.now();
 		if ((state.grants ?? []).some((g) => g.workspace === workspace && g.conversationId === conversationId && g.until > now)) return undefined;
 		const a = call.arguments;
-		const summary = call.name === "workspace_run" ? `run on ${workspace}${a.cwd ? ` in ${String(a.cwd)}` : ""}: ${clip(String(a.command))}`
-			: call.name === "workspace_write" ? `write ${String(a.path)} on ${workspace} (${String(a.content ?? "").length} characters)`
-			: call.name === "workspace_edit" ? `edit ${String(a.path)} on ${workspace} (${Array.isArray(a.edits) ? a.edits.length : 0} changes)`
-			: `read ${String(a.path)} on ${workspace}`;
-		return { summary, always: { kind: "workspace-hour", value: workspace, label: `Allow ${workspace} for an hour here`, done: `Allowed ${workspace} for an hour` } };
+		const command = String(a.command);
+		const ask = call.name === "workspace_run" ? whole(`run on ${workspace}${a.cwd ? ` in ${String(a.cwd)}` : ""}: ${clip(command)}`, clip(command), command)
+			: call.name === "workspace_write" ? { summary: `write ${String(a.path)} on ${workspace} (${String(a.content ?? "").length} characters)`, detail: String(a.content ?? "") }
+			: call.name === "workspace_edit" ? { summary: `edit ${String(a.path)} on ${workspace} (${Array.isArray(a.edits) ? a.edits.length : 0} changes)`, detail: editsDetail(a.edits) }
+			: { summary: `read ${String(a.path)} on ${workspace}` };
+		return { ...ask, always: { kind: "workspace-hour", value: workspace, label: `Allow ${workspace} for an hour here`, done: `Allowed ${workspace} for an hour` } };
 	}
 	// A job acts later, without the owner there, so every new one asks. A bad schedule is reported by the tool.
 	if (call.name === "schedule_job") {
@@ -117,7 +128,8 @@ export const defaultPolicy: Policy = async (call, state, conversationId, untrust
 			return undefined;
 		}
 		const gated = gate === undefined ? "" : `, gated by ${String(gate.name)}${gate.args === undefined ? "" : ` ${JSON.stringify(gate.args)}`}`;
-		return { summary: `schedule "${String(a.title)}", ${when}${a.mode === "watch" ? " (a watch)" : ""}${gated}: ${clip(String(a.instruction))}` };
+		const instruction = String(a.instruction);
+		return whole(`schedule "${String(a.title)}", ${when}${a.mode === "watch" ? " (a watch)" : ""}${gated}: ${clip(instruction)}`, clip(instruction), instruction);
 	}
 	if (call.name === "fetch_url") {
 		let host: string;
