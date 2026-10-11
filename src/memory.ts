@@ -69,6 +69,20 @@ export async function addNote(tx: Tx, text: string, by: Note["by"]): Promise<Not
 	return { ...note };
 }
 
+/** Replaces a note's text, or throws with why not; undefined when there's no such note. */
+export async function updateNote(tx: Tx, id: number, text: string, by: Note["by"]): Promise<Note | undefined> {
+	const clean = tidy(text);
+	const doc = await tx.doc(Memory);
+	const note = doc.notes.find((n) => n.id === id);
+	if (note === undefined) return undefined;
+	const problem = noteProblem(doc.notes, clean, id);
+	if (problem !== undefined) throw new Error(problem);
+	note.text = clean;
+	note.updatedAt = Date.now();
+	note.by = by;
+	return { ...note };
+}
+
 export async function forgetNote(tx: Tx, id: number): Promise<Note | undefined> {
 	const doc = await tx.doc(Memory);
 	const found = doc.notes.find((n) => n.id === id);
@@ -103,19 +117,8 @@ export function createMemory(owner: string) {
 		description: "Replace the text of a note, by id.",
 		parameters: Type.Object({ id: Type.Number(), text: Type.String() }),
 		execute: async (args, api, context) => {
-			const text = tidy(args.text);
-			const found = await api.commit(async (tx) => {
-				const doc = await tx.doc(Memory);
-				const note = doc.notes.find((n) => n.id === args.id);
-				if (note === undefined) return false;
-				const problem = noteProblem(doc.notes, text, args.id);
-				if (problem !== undefined) throw new Error(problem);
-				note.text = text;
-				note.updatedAt = Date.now();
-				note.by = "gaidin";
-				return true;
-			}, context);
-			return { content: [{ type: "text", text: found ? `Updated [${args.id}]: ${text}` : `No note ${args.id}.` }] };
+			const note = await api.commit((tx) => updateNote(tx, args.id, args.text, "gaidin"), context);
+			return { content: [{ type: "text", text: note ? `Updated [${args.id}]: ${note.text}` : `No note ${args.id}.` }] };
 		},
 	});
 

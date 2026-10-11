@@ -39,6 +39,6 @@ The model, thinking level, standing instructions and which tools are switched on
 - `gaidin.sqlite`: the conversation, tasks and documents, kept forever, compaction included
 - `gaidin.sock`: the socket the CLI talks to
 - `sandbox/`: the only directory the agent's own tools can touch
-- `skills/`: local [skills](tools.md#skills), one directory each, read when the server starts
+- `skills/`: local [skills](tools.md#skills), one directory each, in a Git repository that keeps every change
 
 Back up the SQLite file to back up gaidin. Copy it while the server is stopped, or snapshot the whole machine.

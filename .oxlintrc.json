@@ -22,7 +22,7 @@
 			}
 		},
 		{
-			"files": ["web/app.ts"],
+			"files": ["web/app.ts", "web/dom.ts"],
 			"rules": { "anti-slop/no-runtime-typeof": ["error", { "allowInTypeGuards": true }] }
 		}
 	],

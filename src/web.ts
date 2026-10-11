@@ -16,11 +16,11 @@ import type { BudgetGuard, BudgetStatus } from "./budget.ts";
 import { context } from "./host.ts";
 import type { createHistory } from "./history.ts";
 import { describeSchedule, type Job, Jobs, pauseJob, removeJob, resumeJob } from "./jobs.ts";
-import { addNote, forgetNote, Memory, type Note } from "./memory.ts";
+import { addNote, forgetNote, MAX_NOTE, MAX_TOTAL, Memory, type Note, updateNote } from "./memory.ts";
 import { array, integer, literal, number, object, optional, ParseError, type Parser, parseJson, string } from "./parse.ts";
 import type { Device, Push } from "./push.ts";
 import { type Reminder, Reminders, removeReminder } from "./reminders.ts";
-import { readSkillFile, type Skill } from "./skills.ts";
+import { type createSkills, readSkillFile, type Skill } from "./skills.ts";
 import { stamp } from "./time.ts";
 
 const WEB_DIR = resolve(import.meta.dirname, "../web");
@@ -48,6 +48,9 @@ const byId = object({ id: integer });
 const messageBody = object({ content: string, requestId: optional(string) });
 const snoozeBody = object({ id: integer, minutes: integer });
 const noteBody = object({ text: string });
+const noteChange = object({ id: integer, text: string });
+const skillSave = object({ name: string, file: string, text: string });
+const skillRemove = object({ name: string, file: optional(string) });
 const allowBody = object({ amount: optional(number) });
 const answerBody = object({ id: string, answer: string });
 const decideBody = object({ id: string, decision: literal<Decision>("once", "always", "deny") });
@@ -74,6 +77,7 @@ export type PushInfo = { publicKey: string; devices: Pick<Device, "endpoint" | "
 export type Timeline = Awaited<ReturnType<ReturnType<typeof createHistory>["timeline"]>>;
 /** A skill as the page lists it, without where it is on the server. */
 export type ListedSkill = Omit<Skill, "dir">;
+const listed = ({ name, description, source, files }: Skill): ListedSkill => ({ name, description, source, files });
 
 // The protocol between the page (web/app.ts) and this server: what each route answers, and what each POST takes.
 // The route tables below are checked against these, and the page's requests are typed by them.
@@ -85,7 +89,7 @@ export type Gets = {
 	"/api/jobs": ListedJob[];
 	/** `?entry=&ref=` continues from the cursor the last page gave. */
 	"/api/timeline": Timeline;
-	"/api/memory": Note[];
+	"/api/memory": { notes: Note[]; maxNote: number; maxTotal: number };
 	"/api/budget": BudgetStatus | null;
 	"/api/usage": UsageState;
 	"/api/approvals": ApprovalRequest[];
@@ -103,6 +107,9 @@ export type Posts = {
 	"/api/reminders/snooze": { body: BodyOf<typeof snoozeBody>; answer: { ok: true; at: number } };
 	"/api/reminders/cancel": { body: BodyOf<typeof byId>; answer: Ok };
 	"/api/memory/add": { body: BodyOf<typeof noteBody>; answer: Note };
+	"/api/memory/update": { body: BodyOf<typeof noteChange>; answer: Note };
+	"/api/skills/save": { body: BodyOf<typeof skillSave>; answer: ListedSkill };
+	"/api/skills/remove": { body: BodyOf<typeof skillRemove>; answer: Ok };
 	"/api/memory/forget": { body: BodyOf<typeof byId>; answer: Ok };
 	"/api/budget/allow": { body: BodyOf<typeof allowBody>; answer: BudgetStatus };
 	"/api/jobs/cancel": { body: BodyOf<typeof byId>; answer: Ok };
@@ -141,8 +148,8 @@ export function createWebServer(options: {
 	push?: Push;
 	/** Stops the root conversation's run and tells the model it was withdrawn (host.ts). Default: just stop it. */
 	stop?: () => Promise<boolean>;
-	/** The skills gaidin can open, and the local ones that couldn't be read. */
-	skills?: { skills: readonly Skill[]; problems: readonly string[] };
+	/** The skills gaidin can open, which the owner changes here. */
+	skills?: ReturnType<typeof createSkills>;
 }) {
 	const { harness, root, user, switchable, approvals } = options;
 	const choices = options.models ?? [];
@@ -154,7 +161,7 @@ export function createWebServer(options: {
 	const page = readFileSync(resolve(WEB_DIR, "index.html"));
 	const script = (name: string) => stripTypeScriptTypes(readFileSync(resolve(WEB_DIR, name), "utf8"));
 	// app.ts imports the other modules by their .ts names, which the browser asks for beside /app.js.
-	const modules = ["api.ts", "dom.ts", "markdown.ts", "schedule.ts", "skills.ts", "transcript.ts"];
+	const modules = ["activity.ts", "api.ts", "dom.ts", "markdown.ts", "memory.ts", "page.ts", "schedule.ts", "settings.ts", "skills.ts", "transcript.ts"];
 	const scripts = new Map([["/app.js", script("app.ts")], ...modules.map((name) => [`/${name}`, script(name)] as const)]);
 	const asset = (name: string, type: string) => ({ body: readFileSync(resolve(import.meta.dirname, "..", name)), type });
 	const files = new Map([
@@ -199,6 +206,16 @@ export function createWebServer(options: {
 		}, context);
 	}
 
+	/** The owner's change to a skill, which doesn't ask: they're the one who'd be asked. */
+	async function changeSkill(change: Parameters<ReturnType<typeof createSkills>["apply"]>[0]) {
+		if (options.skills === undefined) throw new HttpError(404, "No skills");
+		try {
+			return await options.skills.apply(change, "owner");
+		} catch (error) {
+			throw new HttpError(400, error instanceof Error ? error.message : String(error));
+		}
+	}
+
 	async function events(response: ServerResponse) {
 		response.writeHead(200, {
 			...SECURITY_HEADERS,
@@ -233,7 +250,7 @@ export function createWebServer(options: {
 			const ref = url.searchParams.get("ref");
 			return (await options.timeline?.(ref === null || !Number.isInteger(entry) ? undefined : { entry, ref })) ?? { items: [] };
 		},
-		"/api/memory": async () => (await harness.snapshot(Memory, context))?.notes ?? [],
+		"/api/memory": async () => ({ notes: [...((await harness.snapshot(Memory, context))?.notes ?? [])], maxNote: MAX_NOTE, maxTotal: MAX_TOTAL }),
 		"/api/budget": async () => (options.budget === undefined ? null : await options.budget.refresh()),
 		"/api/usage": () => harness.usage(context),
 		"/api/approvals": () => approvals.pending(),
@@ -242,13 +259,13 @@ export function createWebServer(options: {
 			return push === undefined ? null : { publicKey: push.publicKey, devices: (await push.devices()).map(({ endpoint, label, addedAt }) => ({ endpoint, label, addedAt })) };
 		},
 		"/api/skills": async () => ({
-			skills: (options.skills?.skills ?? []).map(({ name, description, source, files }) => ({ name, description, source, files })),
-			problems: [...(options.skills?.problems ?? [])],
+			skills: (options.skills?.list() ?? []).map(listed),
+			problems: [...(options.skills?.problems() ?? [])],
 		}),
 		"/api/skills/file": async (url) => {
 			const name = url.searchParams.get("name") ?? "";
 			const file = url.searchParams.get("file") ?? "SKILL.md";
-			const skill = options.skills?.skills.find((s) => s.name === name);
+			const skill = options.skills?.find(name);
 			if (skill === undefined || !skill.files.includes(file)) throw new HttpError(404, `No skill file ${name}/${file}`);
 			return { name, file, text: readSkillFile(skill, file) };
 		},
@@ -293,6 +310,34 @@ export function createWebServer(options: {
 				} catch (error) {
 					throw new HttpError(400, error instanceof Error ? error.message : String(error));
 				}
+			},
+		},
+		"/api/memory/update": {
+			body: noteChange,
+			handle: async ({ id, text }) => {
+				let note: Note | undefined;
+				try {
+					note = await root.commit((tx) => updateNote(tx, id, text, "owner"), context);
+				} catch (error) {
+					throw new HttpError(400, error instanceof Error ? error.message : String(error));
+				}
+				if (note === undefined) throw new HttpError(404, `No note ${id}`);
+				return note;
+			},
+		},
+		"/api/skills/save": {
+			body: skillSave,
+			handle: async (change) => {
+				const skill = await changeSkill(change);
+				if (skill === undefined) throw new HttpError(500, `${change.name} wasn't there after saving it`);
+				return listed(skill);
+			},
+		},
+		"/api/skills/remove": {
+			body: skillRemove,
+			handle: async ({ name, file }) => {
+				await changeSkill({ name, file: file ?? "SKILL.md" });
+				return { ok: true };
 			},
 		},
 		"/api/memory/forget": { body: byId, handle: async ({ id }) => ({ ok: (await root.commit((tx) => forgetNote(tx, id), context)) !== undefined }) },

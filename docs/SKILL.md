@@ -16,8 +16,8 @@ When you answer from it:
 
 ## Files
 
-- [surfaces.md](surfaces.md): talking to gaidin. The command line, Slack (threads, files, buttons), the web view (console, schedule page, skills page, slash commands, keys, installing it as an app) and notifications (Web Push, ntfy).
-- [tools.md](tools.md): what each tool does and its limits. Reminders, questions, memory, past conversations, scheduled jobs and their gates, alerts, `fetch_url`, `web_search`, workspaces, self-written tools, skills, and the homelab extension.
+- [surfaces.md](surfaces.md): talking to gaidin. The command line, Slack (threads, files, buttons), the web view (console, the schedule, memory, skills, activity and settings pages, slash commands, keys, installing it as an app) and notifications (Web Push, ntfy).
+- [tools.md](tools.md): what each tool does and its limits. Reminders, questions, memory, past conversations, scheduled jobs and their gates, alerts, `fetch_url`, `web_search`, workspaces, self-written tools and how to write one, skills and how they're written, and the homelab extension.
 - [security.md](security.md): why gaidin asks before some actions and refuses others. Redaction, the sandbox, network access, approvals and what "outside text" means, workspaces, the web view's protection, and known gaps.
 - [concepts.md](concepts.md): the shape of the system. One process and one root conversation, what survives a restart, Slack threads as forks, time zones, the settings file and the data directory.
 - [deploy.md](deploy.md): installing and running gaidin. The `gaidin` command and `doctor`, running on a VM, the model and its key, adding a workspace, every setting, spend limits, upgrades and checks.

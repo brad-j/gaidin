@@ -39,19 +39,25 @@ Give gaidin its own channel. In a channel shared with another bot, both would an
 
 ## Web view
 
-The web view is a console on the root conversation, live from every surface, with pages beside it. The header switches between them (`#/`, `#/schedule` and `#/skills`, so the back button and a reload keep your place) and names the next reminder or scheduled job run. The console:
+The web view is a console on the root conversation, live from every surface, with pages beside it. The header switches between them (`#/`, `#/schedule`, `#/memory`, `#/skills`, `#/activity` and `#/settings`, so the back button and a reload keep your place) and names the next reminder or scheduled job run. The console:
 
 - The log shows your messages and gaidin's answers, rendered as Markdown, with thinking and tool calls folded to one line each; open one to see its input and output, which streams while it runs. Fired reminders and job reports appear in it too.
 - The dock holds pending approvals and questions above the prompt. Approvals have Allow, the wider grant where there is one, and Deny (Alt+Y, Alt+A, Alt+N for the oldest). Questions have a button per choice, and whatever you type at the prompt next is taken as the answer.
 - The status line shows whether a run is going, with Esc or Ctrl+C to stop it, the model, thinking level and tools, and the cost of the conversation and today's spend against any limit. When the spend guard has stopped gaidin, it shows a button to allow more today. Stopping a run leaves gaidin a note that you withdrew the request, so it doesn't take it up again with your next message; ask again to have it done.
 
-On a phone, the views are tabs across the top, the log gives its whole width to the text, and the prompt is one line that grows as you type. Only the console has the prompt there; approvals and questions stay docked on every page, and the schedule page's new-reminder and new-job buttons go to the console to ask.
+On a phone, the views are tabs across the top, scrolling sideways when they don't fit, the log gives its whole width to the text, and the prompt is one line that grows as you type. Only the console has the prompt there; approvals and questions stay docked on every page, and the schedule page's new-reminder and new-job buttons go to the console to ask.
 
 The schedule page lists open reminders and scheduled jobs, soonest first. Each job shows its schedule, gate, runs and last result, and opens to show its instruction and the last reports it sent. Jobs pause, resume and cancel from there, and reminders cancel; cancelling takes a second press. A paused or failing job turns the page's count in the header amber. New reminders and jobs are asked of gaidin at the prompt, so they go through its approvals; the dock stays on every page, and sending from it goes back to the console.
 
-The skills page lists the [skills](tools.md#skills) gaidin can open, and any local ones it couldn't load and why. A skill opens to its files, rendered as documents; links between them stay on the page, so the built-in gaidin skill reads as this documentation.
+The memory page lists gaidin's [notes](tools.md#memory), newest first, with who wrote each and how much of the 8,000 characters they use. You add, edit and forget notes there without being asked; forgetting takes a second press.
 
-Everything else is a slash command; `/help` lists them. `/next` lists reminders and jobs and `/cancel` cancels one, `/pause` and `/resume` pause and resume a job (`/next` has buttons for all three), `/model`, `/thinking`, `/tools`, `/tool` and `/instructions` change the agent's settings, `/memory`, `/remember` and `/forget` manage gaidin's notes, `/timeline` lists what gaidin did and who allowed it, newest first, `/notifications` signs devices up for [notifications](#notifications), and `/budget` shows the spend. Enter sends, Shift+Enter starts a new line, the up and down arrows recall earlier messages, and Tab completes commands.
+The skills page lists the [skills](tools.md#skills) gaidin can open, and any local ones it couldn't load and why. A skill opens to its files, rendered as documents; links between them stay on the page, so the built-in gaidin skill reads as this documentation. You create local skills there, edit and add their files, and remove a file or a whole skill (with a second press); your changes apply at once. A SKILL.md that doesn't parse, or names another skill, isn't saved, and the page says why.
+
+The activity page shows today's and this month's spend against the limits, with a button to allow more today when the spend guard has stopped gaidin, and what each model and tool has cost since gaidin started. Below that is the timeline: what gaidin did outside its sandbox and who allowed it, newest first, by day, in every conversation, 50 at a time.
+
+The settings page switches the model and thinking level, switches tools on and off, edits the standing instructions, and lists the devices that get [notifications](#notifications), with a button to turn them on for this one, send a test, or remove one. Each change applies from the next request.
+
+Everything else is a slash command; `/help` lists them. `/cancel` cancels a reminder or job and `/pause` and `/resume` pause and resume a job, by the reference Tab completes; `/model`, `/thinking`, `/tool` and `/instructions` change the agent's settings; `/remember` and `/forget` add and delete a note. `/next`, `/memory`, `/timeline`, `/budget`, `/tools` and `/notifications` open the page that shows them. Enter sends, Shift+Enter starts a new line, the up and down arrows recall earlier messages, and Tab completes commands.
 
 It shows no keys or Slack settings, and turning a tool off there is the quickest way to take it away from the model.
 
@@ -82,6 +88,6 @@ A notification counts as sent when one way reached someone; when none did, a rem
 
 ### Web Push
 
-Run `/notifications` in the web view and press "turn on here" to sign that device up; the browser asks whether to allow notifications. On an iPhone or iPad this works only in the app on the Home Screen, which is where the request has to come from. `/notifications` also lists the signed-up devices, removes one, and sends a test.
+Open the web view's settings page and press "turn on here" to sign that device up; the browser asks whether to allow notifications. On an iPhone or iPad this works only in the app on the Home Screen, which is where the request has to come from. The same section lists the signed-up devices, removes one, and sends a test.
 
 A notification shows its text and opens the web view when tapped; it has no buttons. Each is sent to the push service of the device's browser (Apple's, Google's or Mozilla's), which delivers it to the device. It's encrypted to the device (RFC 8291), so the push service sees only its size and timing, and signed with gaidin's own key (VAPID, RFC 8292), so the push service takes notifications for these devices only from gaidin. The key pair is made on first start, in `<data>/push-keys.json`, and `web.url` is the contact address the push services are given. The server has to reach them over HTTPS; `gaidin doctor` checks Apple's and Google's. A device the push service says is gone is dropped.

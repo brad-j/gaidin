@@ -37,7 +37,7 @@ The draft is copied out of the sandbox through the sandbox's own file operations
 
 ## Skills
 
-A [skill](tools.md#skills) is instructions gaidin follows when a request matches it, so it's trusted as much as the system prompt. Skills come only from the app's `docs/` and from `skills/` in the data directory, and no tool can write either: the sandbox can't see them, and there's no tool that writes skills. `read_skill` opens only the files a skill had when the server started, each checked again on every read so that one swapped for a link out of the skill is refused. A skill's text isn't outside text, so reading one doesn't make memory writes ask.
+A [skill](tools.md#skills) is instructions gaidin follows when a request matches it, so it's trusted as much as the system prompt. Skills come only from the app's `docs/` and from `skills/` in the data directory. The sandbox can't see either. The owner changes local skills from the web view; gaidin's only way to change one is `write_skill` or `remove_skill`, which always ask the owner first and show the lines added and removed, whatever the conversation has read. The built-in skill can't be changed by either. A write goes only to a plain file inside the skill's directory: the path is checked part by part, and nothing on the way may be a link. `read_skill` opens only the files a skill had when the list was last read, each checked again on every read so that one swapped for a link out of the skill is refused. A skill's text isn't outside text, so reading one doesn't make memory writes ask.
 
 ## Network access
 

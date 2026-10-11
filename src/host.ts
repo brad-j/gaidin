@@ -162,7 +162,7 @@ export async function openHost(options: HostOptions = {}) {
 	registry.install(reminders.extension);
 	const memory = createMemory(owner);
 	registry.install(memory.extension);
-	const skills = createSkills(resolve(dir, "skills"));
+	const skills = createSkills(resolve(dir, "skills"), owner);
 	registry.install(skills.extension);
 	const homelab = config.homelab === undefined ? undefined : createHomelab(config.homelab, owner, config.keysDir, options.homelab);
 	// Self-written tools are gates too, once they're loaded.
@@ -194,7 +194,7 @@ export async function openHost(options: HostOptions = {}) {
 	// The service needs the Harness, which needs the registry; the hook reads it once calls start.
 	let approvals: ApprovalService | undefined;
 	// Each tool's approval rules, from the module that owns it; read per call, since self-written tools come and go.
-	const guards = [...memory.guards, ...reminders.guards, ...jobs.guards, ...homelabGuards, ...web.guards, ...searchGuards, ...workspaces.guards, ...history.guards];
+	const guards = [...memory.guards, ...reminders.guards, ...jobs.guards, ...homelabGuards, ...web.guards, ...searchGuards, ...workspaces.guards, ...history.guards, ...skills.guards];
 	registry.install(approvalExtension(() => approvals!, owner, () => [...guards, ...(self?.guards() ?? [])]));
 	// Last, so its afterTool sees what every other hook left.
 	registry.install(budget.extension);

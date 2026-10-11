@@ -5,17 +5,15 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { ApprovalRequest } from "../src/approvals.ts";
 import type { Gets, Posts, StreamEvent } from "../src/web.ts";
 import { load, post } from "./api.ts";
-import { $, clock, el, fromNow, money, when } from "./dom.ts";
+import { $, argsSummary, clock, el, fromNow, isFields, isNumber, isText, money, when } from "./dom.ts";
 import { markdown } from "./markdown.ts";
+import { renderActivity } from "./activity.ts";
+import { renderMemory } from "./memory.ts";
 import { renderSchedule, troubled } from "./schedule.ts";
+import { LEVELS, renderSettings, settingsChanged } from "./settings.ts";
 import { renderSkills, skillRoute } from "./skills.ts";
 import { applyEvent, newTranscript } from "./transcript.ts";
 
-type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
-type Fields = { readonly [key: string]: Json };
-const isText = (value: Json | undefined): value is string => typeof value === "string";
-const isNumber = (value: Json | undefined): value is number => typeof value === "number";
-const isFields = (value: Json | undefined): value is Fields => typeof value === "object" && value !== null && !Array.isArray(value);
 
 type Transcript = ReturnType<typeof newTranscript>;
 type Block = NonNullable<Transcript["partial"]>["content"][number];
@@ -48,6 +46,10 @@ function apply(event: StreamEvent) {
 			break;
 		case "run_end":
 			void loadSpend();
+			if (view() === "activity") void renderActivity($("activity"), { budgetChanged: (budget) => {
+				state.budget = budget;
+				schedule();
+			} });
 			void loadReminders();
 			void loadJobs();
 			break;
@@ -117,22 +119,6 @@ function shortStamp(stamp: string): string {
 	return new Date(Number(year), Number(month) - 1, Number(day)).toLocaleString(undefined, { month: "short", day: "numeric" });
 }
 
-function argsSummary(name: string, args: Fields): string {
-	if (name === "bash" && isText(args.command)) return args.command;
-	if (isText(args.path)) return args.path;
-	if (isText(args.url)) return args.url;
-	if (name === "remind") return `${args.text ?? ""} ${args.at ?? (args.inMinutes === undefined ? "" : `in ${args.inMinutes} min`)}`;
-	if (isText(args.title)) return args.title;
-	if (isText(args.text)) return args.text;
-	const json = JSON.stringify(args);
-	return json === "{}" ? "" : json;
-}
-
-/** A timeline item's tool call arguments, which history.ts keeps as JSON. */
-function toolArguments(detail: string): Fields {
-	// SAFETY: history.ts writes a tool call's detail with JSON.stringify of its arguments, an object.
-	return JSON.parse(detail) as Fields;
-}
 
 /** Rendered answers by key, so a re-render while text streams in only re-parses the block that changed. */
 let rendered = new Map<string, { text: string; node: HTMLElement }>();
@@ -444,7 +430,7 @@ function renderHorizon() {
 // The console is the conversation; the others are pages beside it. The dock stays on every view, so
 // approvals are never out of sight, and anything sent from it goes back to the console to be answered.
 
-const VIEWS = ["console", "schedule", "skills"] as const;
+const VIEWS = ["console", "schedule", "memory", "skills", "activity", "settings"] as const;
 type View = (typeof VIEWS)[number];
 
 /** The view an address names by its first part: #/schedule, #/skills/gaidin. */
@@ -469,11 +455,20 @@ function showView() {
 		if (link.dataset.view === shown) link.setAttribute("aria-current", "page");
 		else link.removeAttribute("aria-current");
 	}
+	// On a phone the tabs scroll sideways; keep the current one in sight.
+	document.querySelector<HTMLElement>("#views a[aria-current]")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+	requestAnimationFrame(() => edges());
 	if (shown === "console") {
 		stick = true;
 		schedule();
 	} else if (shown === "schedule") renderHorizon();
-	else void renderSkills($("skills"), skillRoute(location.hash));
+	else if (shown === "memory") void renderMemory($("memory"));
+	else if (shown === "skills") void renderSkills($("skills"), skillRoute(location.hash));
+	else if (shown === "activity") void renderActivity($("activity"), { budgetChanged: (budget) => {
+		state.budget = budget;
+		schedule();
+	} });
+	else void renderSettings($("settings"), { settings: () => current, configure });
 }
 
 // --- requests ---------------------------------------------------------------------------------
@@ -539,6 +534,7 @@ async function loadJobs() {
 async function loadSettings() {
 	try {
 		current = await load("/api/settings");
+		settingsChanged();
 		schedule();
 	} catch (error) {
 		refreshFailed(String(error));
@@ -659,8 +655,6 @@ async function decide(decision: Decision, request = firstApproval()) {
 type Choice = { value: string; hint?: string };
 type Command = { name: string; args?: string; help: string; run: (arg: string) => void | Promise<void>; complete?: () => Choice[] };
 
-const LEVELS = ["off", "low", "medium", "high"] as const;
-
 async function stop(echo?: string) {
 	if (echo) say("cmd", echo);
 	if (!transcript.running) return say("sys", "Nothing is running.");
@@ -689,152 +683,6 @@ async function pause(ref: string, paused: boolean) {
 	say(ok ? "sys" : "err", ok ? `${paused ? "Paused" : "Resumed"} job ${match[1]}.` : `No ${paused ? "running" : "paused"} job ${match[1]}.`);
 }
 
-function showUpcoming() {
-	const items = upcoming();
-	if (items.length === 0) return say("sys", "Nothing coming up. Ask gaidin for a reminder or a scheduled job.");
-	const out = el("div", "out");
-	for (const item of items) {
-		const actions = el("span", "actions");
-		const button = (label: string, run: () => Promise<void>) => {
-			const b = el("button", "plain", label);
-			b.type = "button";
-			b.addEventListener("click", () => void run().catch((error) => notice(String(error))));
-			actions.append(b);
-		};
-		if (item.kind === "job") button(item.paused ? "resume" : "pause", () => pause(item.ref, !item.paused));
-		button("cancel", () => cancel(item.ref));
-		out.append(
-			el("span", "dim", item.ref),
-			el("span", "when", item.at !== undefined ? `${when.format(item.at)} · ${fromNow(item.at)}` : item.paused ? "paused" : "no next run"),
-			el("span", undefined, `${item.text}${item.kind === "job" ? ` (${item.detail})` : ""}`),
-			actions,
-		);
-	}
-	say("sys", out);
-}
-
-async function showTools() {
-	const settings = current ?? (await load("/api/settings"));
-	const out = el("div", "out");
-	for (const tool of settings.tools) {
-		const button = el("button", "plain", tool.enabled ? "turn off" : "turn on");
-		button.type = "button";
-		button.addEventListener("click", () => void runCommand(`/tool ${tool.name} ${tool.enabled ? "off" : "on"}`));
-		out.append(el("span", tool.enabled ? "on" : "off", tool.enabled ? "on" : "off"), el("span", undefined, tool.name), el("span"), button);
-	}
-	say("sys", out);
-}
-
-async function showMemory() {
-	const notes = await load("/api/memory");
-	if (notes.length === 0) return say("sys", "gaidin has no notes yet. /remember adds one, or tell gaidin something worth keeping.");
-	const out = el("div", "out");
-	for (const note of notes) {
-		const button = el("button", "plain", "forget");
-		button.type = "button";
-		button.addEventListener("click", () => void runCommand(`/forget ${note.id}`));
-		out.append(el("span", "dim", String(note.id)), el("span", "when", note.by === "owner" ? "you" : "gaidin"), el("span", undefined, note.text), button);
-	}
-	say("sys", out);
-}
-
-// --- notifications ------------------------------------------------------------------------------
-// Web Push to this device (push.ts on the server, sw.js here): reminders, job reports, and what gaidin is waiting on.
-
-
-/** What kind of device this is, to tell the signed-up ones apart. */
-function deviceLabel(): string {
-	const ua = navigator.userAgent;
-	return /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : "Linux";
-}
-
-async function turnOnHere(publicKey: string) {
-	// Asked before anything else, while the tap still counts: iOS allows the request only in answer to one.
-	if ((await Notification.requestPermission()) !== "granted") return say("err", "Notifications aren't allowed for gaidin here. Allow them in the device's settings, then try again.");
-	const key = Uint8Array.from(atob(publicKey.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
-	const subscription = await (await navigator.serviceWorker.ready).pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
-	const { endpoint, keys } = subscription.toJSON();
-	if (endpoint === undefined || keys?.p256dh === undefined || keys.auth === undefined) return say("err", "The browser didn't give a push address and keys for this device.");
-	await post("/api/push/subscribe", { endpoint, keys: { p256dh: keys.p256dh, auth: keys.auth }, label: deviceLabel() });
-	say("sys", "Notifications are on for this device.");
-	await showNotifications();
-}
-
-async function removeDevice(endpoint: string) {
-	const mine = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
-	await post("/api/push/unsubscribe", { endpoint });
-	if (mine?.endpoint === endpoint) await mine.unsubscribe();
-	say("sys", mine?.endpoint === endpoint ? "Notifications are off for this device." : "That device won't get notifications any more.");
-	await showNotifications();
-}
-
-async function showNotifications() {
-	const info = await load("/api/push");
-	if (info === null) return say("sys", "Notifications need web.url in gaidin's settings.");
-	if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-		return say("sys", /iPhone|iPad/.test(navigator.userAgent)
-			? "On an iPhone or iPad, add gaidin to the Home Screen (Share, then Add to Home Screen) and open it from there to turn notifications on."
-			: "This browser can't get notifications.");
-	}
-	const mine = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
-	const button = (label: string, run: () => Promise<void>) => {
-		const b = el("button", "plain", label);
-		b.type = "button";
-		b.addEventListener("click", () => void run().catch((error) => notice(String(error))));
-		return b;
-	};
-	const out = el("div", "out");
-	for (const device of info.devices) {
-		const here = device.endpoint === mine?.endpoint;
-		out.append(el("span", "dim", here ? "here" : ""), el("span", "when", `since ${when.format(device.addedAt)}`), el("span", undefined, device.label), button("remove", () => removeDevice(device.endpoint)));
-	}
-	const actions = el("div", "actions");
-	if (!info.devices.some((d) => d.endpoint === mine?.endpoint)) actions.append(button("turn on here", () => turnOnHere(info.publicKey)));
-	if (info.devices.length > 0) {
-		actions.append(button("send a test", async () => {
-			const { sent } = await post("/api/push/test", {});
-			say("sys", `Sent to ${sent} device${sent === 1 ? "" : "s"}.`);
-		}));
-	}
-	say("sys", info.devices.length === 0 ? "No device gets notifications yet." : out, actions);
-}
-
-type Cursor = NonNullable<Gets["/api/timeline"]["next"]>;
-
-const GOOD = /^(ok|allowed once|always allowed|answered|reported|pushed)\b/;
-const BAD = /^(denied|blocked|expired|not delivered|push failed)\b/;
-
-/** What gaidin did, 50 at a time, newest first, with who allowed it. */
-async function showTimeline(cursor?: Cursor) {
-	const page = await load("/api/timeline", cursor === undefined ? "" : `?entry=${cursor.entry}&ref=${encodeURIComponent(cursor.ref)}`);
-	if (page.items.length === 0) return say("sys", cursor === undefined ? "Nothing on the timeline yet." : "Nothing older.");
-	const out = el("div", "out timeline");
-	for (const item of page.items) {
-		const label = item.kind === "tool" ? item.name : item.kind === "approval" ? `allow ${item.name}?` : item.kind === "job" ? "job" : "reminder";
-		const what = item.kind === "tool" ? argsSummary(item.name, toolArguments(item.detail)) : item.kind === "job" ? item.name : item.detail;
-		const detail = el("span", undefined, what);
-		if (item.place !== "main") detail.append(el("span", "dim", ` · ${item.place === "thread" ? "thread" : "job run"}`));
-		const outcome = item.outcome || "running";
-		out.append(
-			el("span", "dim", item.at > 0 ? when.format(item.at) : ""),
-			el("span", "when", label),
-			detail,
-			el("span", GOOD.test(outcome) ? "on" : BAD.test(outcome) || item.kind === "tool" && outcome !== "running" ? "off" : "dim", outcome),
-		);
-	}
-	say("sys", out);
-	if (page.next !== undefined) {
-		const next = page.next;
-		const button = el("button", "plain", "older");
-		button.type = "button";
-		button.addEventListener("click", () => {
-			button.disabled = true;
-			void showTimeline(next);
-		}, { once: true });
-		say("sys", button);
-	}
-}
-
 async function allowMore() {
 	try {
 		state.budget = await post("/api/budget/allow", {});
@@ -842,22 +690,6 @@ async function allowMore() {
 	} catch (error) {
 		notice(String(error));
 	}
-}
-
-function showBudget() {
-	const budget = state.budget;
-	if (!budget) return say("sys", "No spend information yet.");
-	const daily = budget.dailyLimit > 0 ? `${money(budget.today)} of ${money(budget.dailyLimit)} today` : `${money(budget.today)} today, no daily limit`;
-	const monthly = budget.monthlyLimit > 0 ? `${money(budget.month)} of ${money(budget.monthlyLimit)} this month` : `${money(budget.month)} this month, no monthly limit`;
-	const body = el("div");
-	body.append(`${daily} · ${monthly}`);
-	if (budget.stopped) {
-		const button = el("button", "danger", "allow more today");
-		button.type = "button";
-		button.addEventListener("click", () => void allowMore());
-		body.append(el("div", "why", budget.reason ?? "Stopped at the limit."), button);
-	}
-	say(budget.stopped ? "err" : "sys", body);
 }
 
 function showHelp() {
@@ -871,11 +703,11 @@ function showHelp() {
 
 const commands: Command[] = [
 	{ name: "help", help: "Commands and keys", run: showHelp },
-	{ name: "next", help: "Upcoming reminders and scheduled jobs", run: showUpcoming },
+	{ name: "next", help: "Upcoming reminders and scheduled jobs (the schedule page)", run: () => go("schedule") },
 	{
 		name: "cancel",
 		args: "<ref>",
-		help: "Cancel a reminder or job by its /next reference",
+		help: "Cancel a reminder or job by its reference (Tab lists them)",
 		complete: () => upcoming().map((i) => ({ value: i.ref, hint: `${i.text}${i.at === undefined ? "" : ` · ${fromNow(i.at)}`}` })),
 		run: (arg) => cancel(arg),
 	},
@@ -918,10 +750,10 @@ const commands: Command[] = [
 			say("sys", `Thinking set to ${level}. Applies from the next request.`);
 		},
 	},
-	{ name: "tools", help: "The tools you can switch off", run: showTools },
-	{ name: "memory", help: "gaidin's notes, which every conversation sees", run: showMemory },
-	{ name: "timeline", help: "What gaidin did and who allowed it, newest first", run: () => showTimeline() },
-	{ name: "notifications", help: "Turn notifications on or off for this device, and see the others", run: showNotifications },
+	{ name: "tools", help: "Switch tools on and off (the settings page)", run: () => go("settings") },
+	{ name: "memory", help: "gaidin's notes, which every conversation sees (the memory page)", run: () => go("memory") },
+	{ name: "timeline", help: "What gaidin did and who allowed it (the activity page)", run: () => go("activity") },
+	{ name: "notifications", help: "Notifications for this device and the others (the settings page)", run: () => go("settings") },
 	{
 		name: "remember",
 		args: "<text>",
@@ -943,7 +775,7 @@ const commands: Command[] = [
 			say(ok ? "sys" : "err", ok ? `Forgot note ${id}.` : `No note ${id}.`);
 		},
 	},
-	{ name: "budget", help: "Spend today and this month, against the limits", run: () => loadSpend().then(showBudget) },
+	{ name: "budget", help: "Spend today and this month, against the limits (the activity page)", run: () => go("activity") },
 	{
 		name: "tool",
 		args: "<name> [on|off]",
@@ -1248,6 +1080,14 @@ $("jump").addEventListener("click", () => {
 	$("jump").hidden = true;
 });
 $("next-up").addEventListener("click", () => go("schedule"));
+// On a phone the tabs scroll sideways; a fade on an edge says there are more that way.
+const tabs = $("views");
+const edges = () => {
+	tabs.classList.toggle("more-left", tabs.scrollLeft > 2);
+	tabs.classList.toggle("more-right", tabs.scrollLeft + tabs.clientWidth < tabs.scrollWidth - 2);
+};
+tabs.addEventListener("scroll", edges, { passive: true });
+window.addEventListener("resize", edges);
 window.addEventListener("hashchange", showView);
 showView();
 

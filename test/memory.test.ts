@@ -197,7 +197,7 @@ test("a note that can't be written isn't put to Brad", async (t) => {
 	assert.match(out[2]!, /No note 99\./);
 });
 
-test("the web view lists, adds and deletes notes", async (t) => {
+test("the web view lists, adds, edits and deletes notes", async (t) => {
 	const host = await start(t, () => []);
 	const server = createWebServer({ harness: host.harness, root: host.root, user: "me", switchable: host.switchable, approvals: host.approvals });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -211,10 +211,16 @@ test("the web view lists, adds and deletes notes", async (t) => {
 	const added = (await (await post("/api/memory/add", { text: "  Birthday   in June. " })).json()) as { id: number; text: string; by: string };
 	assert.deepEqual([added.text, added.by], ["Birthday in June.", "owner"]);
 	assert.equal((await post("/api/memory/add", { text: "" })).status, 400);
-	const listed = (await (await fetch(`${base}/api/memory`, { headers })).json()) as { id: number }[];
-	assert.equal(listed.length, 1);
+	const list = async () => (await (await fetch(`${base}/api/memory`, { headers })).json()) as { notes: { id: number; text: string; by: string }[]; maxNote: number; maxTotal: number };
+	const listed = await list();
+	assert.deepEqual([listed.notes.length, listed.maxNote, listed.maxTotal], [1, MAX_NOTE, MAX_TOTAL]);
+	const edited = (await (await post("/api/memory/update", { id: added.id, text: "Birthday on June 4." })).json()) as { text: string; by: string };
+	assert.deepEqual([edited.text, edited.by], ["Birthday on June 4.", "owner"]);
+	assert.equal((await post("/api/memory/update", { id: added.id, text: "x".repeat(MAX_NOTE + 1) })).status, 400);
+	assert.equal((await post("/api/memory/update", { id: 999, text: "nothing" })).status, 404);
+	assert.deepEqual((await list()).notes.map((n) => n.text), ["Birthday on June 4."]);
 	assert.deepEqual(await (await post("/api/memory/forget", { id: added.id })).json(), { ok: true });
-	assert.deepEqual(await (await fetch(`${base}/api/memory`, { headers })).json(), []);
+	assert.deepEqual((await list()).notes, []);
 });
 
 /** Asks memory's guard for `name` about a call, with `read` the outside text in the conversation and `notes` in memory. */
