@@ -17,6 +17,7 @@ import { type ConversationId, defineDoc, defineEntry, defineExtension, defineToo
 import type { Ask, Guard, Situation } from "./guards.ts";
 import { GATE_FINDINGS } from "./jobs.ts";
 import { ParseError } from "./parse.ts";
+import { searchedUrls } from "./search.ts";
 import { conversationId, taskId } from "./ids.ts";
 
 export type Decision = "once" | "always" | "deny";
@@ -329,12 +330,9 @@ export function signalOf(api: ToolExecutionApi | HookApi, context: Context): Abo
  * read that context.
  */
 export async function outsideTextIn(api: HookApi, context: Context, isOutside: (tool: string) => boolean): Promise<string[]> {
+	const messages = await contextOf(api, context);
 	// Without the context there's no telling what was read, so it counts as outside text.
-	if (!("context" in api) || !(api.context instanceof Function)) return ["a conversation it couldn't check"];
-	// SAFETY: in Pi Durable 1.1.0 the hook's api is the tool task's runtime, whose context(id) gives the conversation's
-	// model context; HookApi's type doesn't declare it, so it's checked for above.
-	const read = api.context as (id: ConversationId, context: Context) => Promise<{ messages: readonly Message[] }>;
-	const { messages } = await read.call(api, api.conversationId, context);
+	if (messages === undefined) return ["a conversation it couldn't check"];
 	const found = new Set<string>();
 	for (const message of messages) {
 		// A job run a gate woke starts with what the gate found.
@@ -342,6 +340,21 @@ export async function outsideTextIn(api: HookApi, context: Context, isOutside: (
 		if (message.role === "toolResult" && isOutside(message.toolName)) found.add(message.toolName);
 	}
 	return [...found];
+}
+
+/** The URLs web_search returned in the conversation's context, from its results' details, or none when the context can't be read. */
+export async function searchedIn(api: HookApi, context: Context): Promise<string[]> {
+	const messages = await contextOf(api, context);
+	return (messages ?? []).flatMap((m) => (m.role === "toolResult" && m.toolName === "web_search" ? searchedUrls(m.details) : []));
+}
+
+/** The conversation's model context, or undefined when the hook's api can't read it. */
+async function contextOf(api: HookApi, context: Context): Promise<readonly Message[] | undefined> {
+	if (!("context" in api) || !(api.context instanceof Function)) return undefined;
+	// SAFETY: in Pi Durable 1.1.0 the hook's api is the tool task's runtime, whose context(id) gives the conversation's
+	// model context; HookApi's type doesn't declare it, so it's checked for above.
+	const read = api.context as (id: ConversationId, context: Context) => Promise<{ messages: readonly Message[] }>;
+	return (await read.call(api, api.conversationId, context)).messages;
 }
 
 /**
@@ -392,6 +405,7 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 						grants,
 						conversationId: api.conversationId,
 						outside: () => outsideTextIn(api, context, (tool) => all.some((g) => g.tool === tool && g.outside)),
+						searched: () => searchedIn(api, context),
 						snapshot: (doc) => api.snapshot(doc, context),
 					});
 					if (ask === undefined) return undefined;

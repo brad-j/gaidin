@@ -226,7 +226,7 @@ test("the web view lists, adds, edits and deletes notes", async (t) => {
 /** Asks memory's guard for `name` about a call, with `read` the outside text in the conversation and `notes` in memory. */
 function ask(name: string, args: Record<string, any>, read: string[], notes: object[] = []) {
 	const guard = createMemory("Brad").guards.find((g) => g.tool === name)!;
-	const situation: Situation = { fetchHosts: [], grants: [], conversationId: 1, outside: async () => read, snapshot: async (doc: object) => (doc === Memory ? { notes, nextId: 9 } : undefined) as never };
+	const situation: Situation = { fetchHosts: [], grants: [], conversationId: 1, outside: async () => read, searched: async () => [], snapshot: async (doc: object) => (doc === Memory ? { notes, nextId: 9 } : undefined) as never };
 	return guard.ask(args, situation);
 }
 

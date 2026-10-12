@@ -43,7 +43,7 @@ A [skill](tools.md#skills) is instructions gaidin follows when a request matches
 
 The sandbox has none. The server reaches the network for `fetch_url`, the homelab tools, the workspaces, Slack, ntfy, the push services and the model provider. `fetch_url` refuses every private, CGNAT, loopback, link-local and reserved address, checked at connect time and after each redirect ([Tools](tools.md#fetch_url)).
 
-A URL can carry data out in its path or query, which is why a fetch to a new host asks first. Redirects are followed only on the same host, so an open redirect on a host you've allowed can't carry a URL on to one you haven't.
+A URL can carry data out in its path or query, which is why a fetch to a new host asks first. A URL `web_search` returned in the same conversation doesn't ask: the backend chose it, and the model couldn't put anything in it. The guard reads those URLs from the search results' details, which only `web_search` writes and the model never sees, not from their text, so a URL a snippet mentions still asks. Links in a fetched page ask too, since a page can list many and tell the model which to pick. Redirects are followed only on the same host, so an open redirect on a host you've allowed can't carry a URL on to one you haven't.
 
 ## Approvals
 
@@ -51,7 +51,7 @@ A URL can carry data out in its path or query, which is why a fetch to a new hos
 
 | Tool | Asks | The second button |
 |---|---|---|
-| `fetch_url` | for a host not allowed for good | always allow that host |
+| `fetch_url` | for a host not allowed for good, unless `web_search` returned the URL in that conversation | always allow that host |
 | `workspace_*` | every call | allow that workspace for an hour, in that conversation only |
 | `schedule_job` | every new job | none |
 | `remember`, `update_memory` | while outside text is in the conversation's context | none |
@@ -90,6 +90,7 @@ The web view trusts the identity header Tailscale Serve adds, and listens only o
 ## Known gaps
 
 - A host you've always allowed for `fetch_url` can still receive data in a URL without asking, and a `web_search` query reaches the search backend without asking.
+- A fetch of a URL `web_search` returned doesn't ask. An injected snippet can steer which result the model fetches, so a few bits of the conversation could leave through that choice.
 - Redaction and log scrubbing match known values and labelled patterns; they won't catch everything.
 - Workspace secret masking goes by file name.
 - Anything gaidin writes into a project can run later as you.

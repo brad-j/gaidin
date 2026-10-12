@@ -11,7 +11,7 @@
 | `ask_owner` | in the server | the owner, in Slack or the web view | it is the question |
 | `schedule_job`, `list_jobs`, `cancel_job` | in the server; each run is a new conversation | what the run's tools reach | every new job; cancelling, while outside text is in the conversation |
 | alert investigations | in the server; each is a job run | read-only tools only | for a host not allowed for good |
-| `fetch_url` | in the server | the public internet only | for a host not allowed for good |
+| `fetch_url` | in the server | the public internet only | for a host not allowed for good, unless `web_search` returned the URL |
 | `web_search` | in the server | the configured search backend | no |
 | `load_extension`, `remove_extension` | in the server | the sandbox's `extensions/`, the owner | every load and removal |
 | tools gaidin wrote | in a box of their own | their fetches, through the server | for a host not allowed for good |
@@ -107,11 +107,11 @@ A GET of a public web page or API, returned as text. HTML is reduced to the page
 - No cookies or auth headers are sent. Up to five redirects on the same host are followed. A redirect to another host isn't: the result says where it points, and fetching that is a new call, which asks for a host not allowed for good. A self-written tool's fetch asks for each new host a redirect leads to, and a gate's fails on one not allowed for good.
 - Downloads stop at 2 MB after decompression. A server that stays quiet for 15 seconds is given up on, and so is a fetch that takes more than a minute in all, redirects included. The text is cut to 20,000 characters unless the model asks for more, up to 200,000.
 
-A fetch to a host you haven't allowed for good waits for your [approval](security.md#approvals).
+A fetch to a host you haven't allowed for good waits for your [approval](security.md#approvals), unless `web_search` returned that exact URL earlier in the same conversation. Only the URL counts, not others on its host; one with a query or path added still asks, and so does a link read in a page or a snippet. A result's URLs stop counting once compaction summarises it away.
 
 ## web_search
 
-Finds pages for `fetch_url` to read: titles, URLs and snippets, best first, up to 10 (default 5). `topic: "news"` searches current events, and `timeRange` keeps results from the last day, week, month or year. Results are labelled as text from the web, and count as outside text for the [memory guard](#memory).
+Finds pages for `fetch_url` to read: titles, URLs and snippets, best first, up to 10 (default 5). `topic: "news"` searches current events, and `timeRange` keeps results from the last day, week, month or year. Results are labelled as text from the web, and count as outside text for the [memory guard](#memory). Each result also records its URLs where the model can't write, so `fetch_url` reads one without asking ([fetch_url](#fetch_url)).
 
 The backend is a setting ([Deploying](deploy.md#settings)). Tavily is the one implemented: a search API with a free tier, called from the server with `search.apiKey`. The query goes only to the backend, so a search doesn't ask first, but whatever the model puts in a query reaches Tavily. Without a backend there's no `web_search`, and gaidin can only fetch URLs it already knows. A self-hosted engine such as SearXNG can be added as another backend; `src/search.ts` has one function per backend.
 

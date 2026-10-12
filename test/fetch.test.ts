@@ -200,8 +200,8 @@ test("htmlToText leaves an entity it doesn't know as it is, even one named like 
 
 test("a fetch asks unless its host is allowed for good, offers to allow the host, and what it returns is outside text", async () => {
 	const [guard] = createFetch().guards;
-	const ask = (url: unknown, fetchHosts: string[] = []) => {
-		const situation: Situation = { fetchHosts, grants: [], conversationId: 1, outside: async () => [], snapshot: async () => undefined };
+	const ask = (url: unknown, fetchHosts: string[] = [], searched: string[] = []) => {
+		const situation: Situation = { fetchHosts, grants: [], conversationId: 1, outside: async () => [], searched: async () => searched, snapshot: async () => undefined };
 		return guard!.ask({ url } as never, situation);
 	};
 	assert.equal(guard!.tool, "fetch_url");
@@ -211,6 +211,12 @@ test("a fetch asks unless its host is allowed for good, offers to allow the host
 		always: { kind: "fetch-host", value: "a.example", label: "Always allow a.example", done: "Always allowed a.example" },
 	});
 	assert.equal(await ask("https://a.example/other", ["a.example"]), undefined);
+	// A URL web_search returned doesn't ask, written the same way or not; another path on its host, or a query added, does.
+	const searched = ["https://a.example/recipes/curry", "not a url"];
+	assert.equal(await ask("https://a.example/recipes/curry", [], searched), undefined);
+	assert.equal(await ask("https://A.example:443/recipes/curry", [], searched), undefined);
+	assert.equal((await ask("https://a.example/recipes/curry?q=notes", [], searched))?.summary, "fetch https://a.example/recipes/curry?q=notes");
+	assert.equal((await ask("https://a.example/recipes/other", [], searched))?.summary, "fetch https://a.example/recipes/other");
 	// The tool reports a bad URL itself.
 	assert.equal(await ask("not a url"), undefined);
 });

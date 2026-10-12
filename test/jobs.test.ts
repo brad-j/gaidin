@@ -391,7 +391,7 @@ test("a job is refused when there's no room, before asking and again after the o
 function ask(name: string, args: Record<string, any>, read: string[] = []) {
 	const guard = createJobs({ deliver: async () => {}, owner: "Brad" }).guards.find((g) => g.tool === name)!;
 	const jobs = { items: [{ taskId: 7, title: "Watch the homelab alerts" }] };
-	const situation: Situation = { fetchHosts: [], grants: [], conversationId: 1, outside: async () => read, snapshot: async (doc: object) => (doc === Jobs ? jobs : undefined) as never };
+	const situation: Situation = { fetchHosts: [], grants: [], conversationId: 1, outside: async () => read, searched: async () => [], snapshot: async (doc: object) => (doc === Jobs ? jobs : undefined) as never };
 	return guard.ask(args, situation);
 }
 

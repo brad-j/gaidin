@@ -3,11 +3,13 @@
 //
 // Queries go only to the configured backend, from the server, so they don't ask the owner. Results
 // are other people's text, so they're labelled as such and count as outside text for the memory guard.
+// Each result's URLs go in its details too, which the model can't write, so fetch_url can read one of
+// them without asking: the backend chose that URL, and the model had no way to put data in it.
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
 import type { SearchConfig } from "./config.ts";
 import { outsideText } from "./guards.ts";
-import { array, number, object, optional, parse, string } from "./parse.ts";
+import { array, type Json, number, object, optional, parse, string } from "./parse.ts";
 
 export type SearchQuery = { query: string; maxResults: number; topic: "general" | "news"; timeRange?: "day" | "week" | "month" | "year" };
 export type SearchResult = { title: string; url: string; snippet: string; published?: string };
@@ -61,6 +63,17 @@ export async function tavilyUsage(apiKey: string, fetchImpl: typeof fetch = fetc
 	return { used: body.account?.plan_usage ?? body.key?.usage ?? 0, limit: body.account?.plan_limit ?? body.key?.limit ?? null };
 }
 
+const searchDetails = object({ urls: array(string) });
+
+/** The URLs a web_search result's details hold, or none when they don't read right. */
+export function searchedUrls(details: Json | undefined): string[] {
+	try {
+		return parse(details, searchDetails, "web_search's details").urls;
+	} catch {
+		return [];
+	}
+}
+
 export function backendFor(config: SearchConfig | undefined): SearchBackend | undefined {
 	if (config === undefined) return undefined;
 	switch (config.provider) {
@@ -98,7 +111,7 @@ export function webSearchTool(backend: SearchBackend, owner: string) {
 				"---",
 				lines.length === 0 ? "(no results)" : lines.join("\n\n"),
 			].join("\n");
-			return { content: [{ type: "text", text }] };
+			return { content: [{ type: "text", text }], details: { urls: results.map((r) => r.url) } };
 		},
 	});
 }

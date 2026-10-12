@@ -51,6 +51,7 @@ test("the agent's web_search returns labelled results", async (t) => {
 	assert.match(result, /Search results for \\"pi durable\\"/);
 	assert.match(result, /not from Brad/);
 	assert.match(result, /1\. Pi Durable\\n   https:\/\/example\.com\/pi/);
+	assert.match(result, /"details":\{"urls":\["https:\/\/example\.com\/pi"\]\}/);
 	assert.ok(searchGuards.some((g) => g.tool === "web_search" && g.outside));
 	assert.ok(h.switchable().some((tool) => tool.name === "web_search"));
 });

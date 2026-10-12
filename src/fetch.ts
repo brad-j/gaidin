@@ -5,7 +5,9 @@
 //
 // What comes back is someone else's text, so it's labelled as such. A URL can still carry data out in
 // its path or query; asking the owner about a new host (`fetchGuard`) is where that gets a check. So a redirect is followed only on the
-// same host: one to another host comes back as `redirect`, and the next fetch of it is checked like any other.
+// same host: one to another host comes back as `redirect`, and the next fetch of it is checked like any other. A URL that
+// web_search returned in the same conversation doesn't ask, since the model didn't write it; a link from a page still does,
+// because a page can offer many links and tell the model which to pick.
 import { lookup as dnsLookup } from "node:dns";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -250,16 +252,19 @@ export function createFetch(options: FetchOptions = {}, owner = "the user") {
 			return { content: [{ type: "text", text: render(fetched, args.maxChars ?? 20_000, owner) }], isError: fetched.status >= 400 };
 		},
 	});
-	// A host the owner hasn't allowed for good asks, offering to allow it. A page is text from outside.
+	// A host the owner hasn't allowed for good asks, offering to allow it, unless web_search returned the exact URL.
+	// A page is text from outside.
 	const fetchGuard = guard("fetch_url", object({ url: string }), {
-		ask: (a, situation) => {
-			let host: string;
+		ask: async (a, situation) => {
+			let url: URL;
 			try {
-				host = new URL(a.url).hostname;
+				url = new URL(a.url);
 			} catch {
 				return undefined; // the tool reports the bad URL itself
 			}
+			const host = url.hostname;
 			if (situation.fetchHosts.includes(host)) return undefined;
+			if ((await situation.searched()).some((found) => URL.parse(found)?.href === url.href)) return undefined;
 			return { summary: `fetch ${a.url}`, always: { kind: "fetch-host", value: host, label: `Always allow ${host}`, done: `Always allowed ${host}` } };
 		},
 		outside: true,

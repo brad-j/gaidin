@@ -111,6 +111,32 @@ test("a denied fetch is blocked, and the model is told why", async (t) => {
 	assert.match((await results(host))[0]!, /blocked: Needs Brad's approval to fetch http:\/\/a\.test:\d+\/, and Brad said no/);
 });
 
+test("a fetch of a URL web_search returned doesn't ask; one only named in a snippet does", async (t) => {
+	const { port, fetch } = await site(t);
+	const found = `http://a.test:${port}/curry`;
+	const named = `http://a.test:${port}/other`;
+	const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("web_search", { query: "curry" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxToolCall("fetch_url", { url: found }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxToolCall("fetch_url", { url: named }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxText("Done.")),
+	]);
+	const m = createModels();
+	m.setProvider(faux.provider);
+	const search = async () => [{ title: "Curry", url: found, snippet: `See also ${named}` }];
+	const host = await startHost({ dataDir: dataDir(t), fetch, search, adapters: { push: { send: async () => true } }, models: m, model: { provider: "faux", modelId: "faux-1" } });
+	t.after(() => host.harness.close(context));
+
+	const run = await host.root.submit({ type: "input", content: "find a curry" }, context);
+	const [request] = await nextPending(host.approvals);
+	assert.equal(request!.summary, `fetch ${named}`);
+	await host.approvals.decide(request!.id, "once", "test");
+	await run.wait(context);
+	assert.equal((await results(host)).filter((r) => /page text/.test(r)).length, 2);
+	assert.equal(Object.keys((await host.approvals.state()).requests).length, 1);
+});
+
 test("no answer in time blocks the call", async (t) => {
 	const { host } = await start(t, [["a.test"]], { approvalTimeoutMs: 300 });
 	await (await host.root.submit({ type: "input", content: "go" }, context)).wait(context);
@@ -224,7 +250,7 @@ test("a call whose arguments its guard can't read is asked about, showing all of
 		...createMemory("Brad").guards,
 		...createWorkspaces({ workspaces: [{ name: "egwene", target: "me@egwene" }], remote: undefined, redactor: redactorFor({}), owner: "Brad" }).guards,
 	];
-	const situation: Situation = { fetchHosts: [], grants: [], conversationId: 1, outside: async () => ["fetch_url"], snapshot: async () => undefined };
+	const situation: Situation = { fetchHosts: [], grants: [], conversationId: 1, outside: async () => ["fetch_url"], searched: async () => [], snapshot: async () => undefined };
 	const ask = (name: string, args: Record<string, any>) => askFor(guards.find((g) => g.tool === name)!, { type: "toolCall", id: "c1", name, arguments: args }, situation);
 	const run = await ask("workspace_run", { workspace: 3, command: "rm -rf ~" });
 	assert.equal(run!.summary, "workspace_run with arguments that don't read right (workspace_run's arguments.workspace should be a string)");
