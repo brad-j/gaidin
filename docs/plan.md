@@ -107,7 +107,7 @@ A Connectors page across agents, beside Browser: each connector with its state (
 1. Done: the client in both protocol generations, connectors with a static token or none, the tools as per-agent extensions with allow, ask and off, pinning, and the guards (item 39). Tests against MCP servers the test runs on loopback, old and new. Until the app's page, `gaidin connector` manages them. Threads and job runs started before a connector was added are offered its tools too, as with self-written tools, and the guard refuses calls from agents not given it.
 2. OAuth: discovery, PKCE, the resource parameter, `iss`, the three ways to register, refresh and step-up, the callback, and the token file. Tests against an authorization server the test runs.
 3. The app's Connectors page and the agents' grants, with e2e tests.
-4. Trying it with real services: the first connectors are to be decided with the owner.
+4. Trying it with real services: the first connectors are to be decided with the owner. Proton has no official MCP server. The community one looked at (amotivv/protonmail-mcp, last changed 2025-03) only sends, runs over stdio, and needs Proton's SMTP submission, which takes a paid plan and a custom-domain address; reading mail would need Proton Mail Bridge's IMAP. Left for later.
 
 Each step ends with `pnpm check` passing and is a commit of its own.
 
