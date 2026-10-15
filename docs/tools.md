@@ -46,8 +46,10 @@ With ntfy, use a long random topic name and treat it as a secret: on ntfy.sh, an
 
 An agent whose roster entry lists other agents can reach them ([Concepts](concepts.md#agents)). Its system prompt names each one with its job.
 
-- `message_agent(agent, text)` asks another agent something and waits for its answer, which comes back as the tool's result. The other agent answers in a new conversation of its own, with its own settings and tools, and doesn't see the asker's conversation. The wait survives restarts like `ask_owner`'s.
-- `hand_off(agent, title, task)` gives another agent work and doesn't wait. The work runs at once as a one-off [job](#scheduled-jobs) of the receiving agent's, and its answer reaches the owner as a report titled with `title` and the sender's name, not the sender.
+- `message_agent(agent, text, files?)` asks another agent something and waits for its answer, which comes back as the tool's result. The other agent answers in a new conversation of its own, with its own settings and tools, and doesn't see the asker's conversation. The wait survives restarts like `ask_owner`'s.
+- `hand_off(agent, title, task, files?)` gives another agent work and doesn't wait. The work runs at once as a one-off [job](#scheduled-jobs) of the receiving agent's, and its answer reaches the owner as a report titled with `title` and the sender's name, not the sender.
+
+`files` lists up to 10 files in the sender's sandbox, up to 20 MB each. The receiver gets copies in its sandbox's `uploads/`, which its commands see read-only, and its message ends with where each one is, as for a file sent from Slack or the app. They're copied when the call runs, so later changes on either side don't reach the other. A path outside the sender's sandbox, a directory or a missing file fails the call, and nothing is sent or handed.
 
 A call to an agent the entry doesn't list, or one that's archived, is refused with the agents it can reach. Either tool asks the owner while outside text is in the conversation, since a page could otherwise pass work to an agent with wider grants. What one agent sends another is outside text to the receiver, and the answer that comes back is outside text to the sender ([Security](security.md#agents)). A chain of messages and hand-offs stops at three, and an agent already in a chain can't be asked again within it.
 

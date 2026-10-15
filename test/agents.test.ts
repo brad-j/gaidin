@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -264,6 +264,53 @@ test("hand_off gives work to another agent as a job, whose report goes to Brad",
 	assert.equal((await host.harness.snapshot(AgentOf, conversationId(report.report.conversationId), context))?.agent, "scout");
 	const run = await host.harness.conversation(conversationId(report.report.conversationId), context);
 	assert.equal((await run!.agent(context)).cwd, (await (await host.agents.home("scout")).agent(context)).cwd);
+});
+
+test("message_agent and hand_off carry files from the sender's sandbox as copies in the receiver's uploads/", async (t) => {
+	// Scout's answer is outside text, so the calls after it ask; these are allowed.
+	const { host, dir, notices, asked } = await start(t, { decide: (r) => (r.tool === "hand_off" || r.tool === "message_agent" ? "once" : "deny") });
+	await host.agents.update("gaidin", { canMessage: ["scout"] });
+	assert.match(await say(host.root, CALL("write", { path: "work/list.txt", content: "mango, papaya" })), /gaidin got/);
+	assert.match(await say(host.root, CALL("write", { path: "other/list.txt", content: "kiwi" })), /gaidin got/);
+
+	const answer = await say(host.root, CALL("message_agent", { agent: "scout", text: "check these", files: ["work/list.txt", "other/list.txt"] }));
+	const saved = /list\.txt is saved as (uploads\/[\w-]+-list\.txt)[^;]*; list\.txt is saved as (uploads\/[\w-]+-list\.txt)/.exec(answer);
+	assert.ok(saved, answer);
+	assert.match(answer, /Files from gaidin/);
+	assert.equal(readFileSync(join(dir, "agents/scout/sandbox", saved[1]!), "utf8"), "mango, papaya");
+	assert.equal(readFileSync(join(dir, "agents/scout/sandbox", saved[2]!), "utf8"), "kiwi", "two files with one name each keep theirs");
+	assert.match(readFileSync(join(dir, "sandbox/work/list.txt"), "utf8"), /mango/, "the sender keeps its own");
+
+	assert.match(await say(host.root, CALL("hand_off", { agent: "scout", title: "Sort it", task: "Sort the list.", files: ["work/list.txt"] })), /Handed to Scout as job \d+, with copies of 1 file/);
+	const report = await until(() => notices.find((n) => n.kind === "report"));
+	if (report.kind !== "report") throw new Error("not a report");
+	const handed = /saved as (uploads\/[\w-]+-list\.txt)/.exec(report.report.text);
+	assert.ok(handed, report.report.text);
+	assert.equal(readFileSync(join(dir, "agents/scout/sandbox", handed[1]!), "utf8"), "mango, papaya");
+
+	// Only files in the sender's own sandbox go, and nothing is handed when one can't.
+	writeFileSync(join(dir, "agents/scout/sandbox/secret.txt"), "scout's own");
+	assert.match(await say(host.root, CALL("hand_off", { agent: "scout", title: "Peek", task: "x", files: ["../agents/scout/sandbox/secret.txt"] })), /outside the sandbox/);
+	assert.match(await say(host.root, CALL("hand_off", { agent: "scout", title: "Dir", task: "x", files: ["work"] })), /it's a directory/);
+	assert.match(await say(host.root, CALL("hand_off", { agent: "scout", title: "Gone", task: "x", files: ["missing.txt"] })), /Can't pass missing\.txt/);
+	const jobs = (await host.harness.snapshot(Jobs, context))?.items ?? [];
+	assert.deepEqual(jobs.filter((j) => j.title !== "Sort it (from gaidin)").map((j) => j.title), []);
+
+	// Too many is refused before anyone is asked.
+	const before = asked.length;
+	const many = Array.from({ length: 11 }, (_, i) => `f${i}.txt`);
+	assert.match(await say(host.root, CALL("message_agent", { agent: "scout", text: "x", files: many })), /up to 10 files/);
+	assert.equal(asked.length, before);
+});
+
+test("an approval to pass files names them", async (t) => {
+	const { host, asked } = await start(t);
+	await host.agents.update("gaidin", { canMessage: ["scout"] });
+	await say(host.root, CALL("write", { path: "a.txt", content: "a" }));
+	// Scout's answer is outside text in gaidin's context, so the next call asks, and is denied.
+	await say(host.root, CALL("message_agent", { agent: "scout", text: "hi" }));
+	assert.match(await say(host.root, CALL("hand_off", { agent: "scout", title: "More", task: "go", files: ["a.txt"] })), /Brad said no/);
+	assert.match(asked.at(-1)!.summary, /hand agent scout "More" with file a\.txt/);
 });
 
 test("messages go only where the roster allows, and a chain stops", () => {

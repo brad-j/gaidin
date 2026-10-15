@@ -165,7 +165,7 @@ export async function openHost(options: HostOptions = {}) {
 
 	const registry = createRegistry();
 	// The agents' prompt comes first. A hand-off is a job, made once the jobs exist below.
-	const agents = createAgents({ owner, handOff: (tx, id, work) => jobs.handOff(tx, id, work), handOffProblem: (read, ctx) => jobs.handOffProblem(read, ctx) });
+	const agents = createAgents({ owner, dataDir: dir, handOff: (tx, id, work) => jobs.handOff(tx, id, work), handOffProblem: (read, ctx) => jobs.handOffProblem(read, ctx) });
 	registry.install(agents.extension);
 	registry.install(CodingTools);
 	registry.install(reminders.extension);

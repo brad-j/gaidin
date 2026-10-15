@@ -40,16 +40,32 @@ export async function withFiles(text: string, files: readonly Attached[], sandbo
 				images.push({ type: "image", data: data.toString("base64"), mimeType });
 				continue;
 			}
-			const path = `uploads/${file.prefix}-${file.name.replace(/[^\w.-]+/g, "_")}`;
-			mkdirSync(join(sandbox, "uploads"), { recursive: true });
-			writeFileSync(join(sandbox, path), data);
+			const path = saveUpload(sandbox, file.prefix, file.name, data);
 			notes.push(`${file.name} is saved as ${path} (${file.type ?? mimeType ?? "unknown type"}, ${Math.ceil(data.length / 1000)} KB)`);
 		} catch (error) {
 			notes.push(`${file.name} couldn't be fetched: ${error instanceof Error ? error.message : error}`);
 		}
 	}
-	const note = notes.length === 0 ? "" : `\n\n[Files from ${from}: ${notes.join("; ")}. Read them with the file tools; for a PDF, run pdftotext FILE - in bash. uploads/ is read-only to commands, so write what you make from them elsewhere.]`;
+	const note = filesNote(from, notes);
 	return images.length === 0 ? `${text}${note}` : [{ type: "text", text: `${text}${note}` }, ...images];
+}
+
+/**
+ * Saves `data` in the sandbox's uploads/, which commands see read-only, as `<prefix>-<name>`, and gives its path there.
+ * Whatever had that name goes first, so a symlink left in its place isn't followed.
+ */
+export function saveUpload(sandbox: string, prefix: string, name: string, data: Uint8Array): string {
+	const path = `uploads/${prefix}-${name.replace(/[^\w.-]+/g, "_")}`;
+	mkdirSync(join(sandbox, "uploads"), { recursive: true });
+	rmSync(join(sandbox, path), { force: true });
+	writeFileSync(join(sandbox, path), data);
+	return path;
+}
+
+/** What a message ends with about the files saved for it, `notes`, from `from`: "Slack", "the app", an agent's name. */
+export function filesNote(from: string, notes: readonly string[]): string {
+	if (notes.length === 0) return "";
+	return `\n\n[Files from ${from}: ${notes.join("; ")}. Read them with the file tools; for a PDF, run pdftotext FILE - in bash. uploads/ is read-only to commands, so write what you make from them elsewhere.]`;
 }
 
 /** A file the app sent, as the message that names it will have it. */

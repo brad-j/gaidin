@@ -10,10 +10,12 @@
 //
 // An agent reaches another only through message_agent, which waits for the answer, and hand_off, which gives the
 // work away as a one-off job whose report goes to the owner. Each goes only to the agents its roster entry lists,
-// counts as outside text to whoever reads it, and a chain of them stops after MAX_HOPS.
+// counts as outside text to whoever reads it, and a chain of them stops after MAX_HOPS. Either can carry files from the
+// sender's sandbox, which the receiver gets as copies in its uploads/, so the work's files go with it and nothing else
+// of the sender's does.
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
@@ -31,16 +33,20 @@ import {
 	section,
 	type Tx,
 } from "@earendil-works/pi-durable";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import { filesNote, MAX_FILE, saveUpload } from "./files.ts";
 import { guard, ifOutsideText, quoted } from "./guards.ts";
 import { assistantText } from "./host.ts";
 import { conversationId as toConversationId } from "./ids.ts";
-import { object, string } from "./parse.ts";
+import { array, object, optional, string } from "./parse.ts";
 import { prepareServerDirs } from "./sandbox.ts";
 import { stamp, timeZone } from "./time.ts";
 
 export const DEFAULT_AGENT = "gaidin";
 /** Messages and hand-offs in a chain from the first sender on. */
 export const MAX_HOPS = 3;
+/** Files one message or hand-off can carry. */
+export const MAX_PASSED_FILES = 10;
 /** Starts a message or hand-off from another agent; approvals.ts treats it as outside text. */
 export const AGENT_MESSAGE = "[from another agent]";
 const ID = /^[a-z][a-z0-9-]{0,30}$/;
@@ -197,6 +203,8 @@ export function messageProblem(roster: Readonly<Roster>, from: AgentEntry, to: s
 
 const name = (roster: Readonly<Roster>, id: string) => entryOf(roster, id).name;
 
+const filesParameter = Type.Optional(Type.Array(Type.String(), { description: `Paths in your sandbox of files to send with it, up to ${MAX_PASSED_FILES}` }));
+
 /** What the receiver reads: the sender, and the text as a request from another agent. */
 function fromAnother(sender: string, owner: string, kind: "asks" | "hands you", text: string): string {
 	return [
@@ -206,17 +214,61 @@ function fromAnother(sender: string, owner: string, kind: "asks" | "hands you", 
 	].join("\n");
 }
 
+/** Why `files` can't be passed at all, or nothing. */
+function filesProblem(files: readonly string[] | undefined): string | undefined {
+	if (files !== undefined && files.length > MAX_PASSED_FILES) return `A message or hand-off can carry up to ${MAX_PASSED_FILES} files; archive them into one first.`;
+	return undefined;
+}
+
+/** ` with files a, b` for an approval's summary, or nothing. */
+const carrying = (files: readonly string[] | undefined) => (files === undefined || files.length === 0 ? "" : ` with ${files.length === 1 ? "file" : "files"} ${files.join(", ")}`);
+
+/**
+ * Copies `paths`, files in the sender's sandbox, into the receiver's sandbox `to` under uploads/, which its commands
+ * see read-only, and gives the note the receiver's message ends with. They're read through the sender's own
+ * environment, `env`, whose file tools resolve every path and refuse one outside its sandbox. Throws, copying nothing,
+ * when one isn't a file there or is too big.
+ */
+async function passFiles(env: ExecutionEnv | undefined, paths: readonly string[], to: string, from: string, prefix: string, context: Context): Promise<string> {
+	if (paths.length === 0) return "";
+	const problem = filesProblem(paths);
+	if (problem !== undefined) throw new Error(problem);
+	if (env === undefined) throw new Error("Files can't be passed from a conversation without a sandbox.");
+	const read: { name: string; data: Uint8Array }[] = [];
+	for (const path of paths) {
+		const info = await env.fileInfo(path, context);
+		if (!info.ok) throw new Error(`Can't pass ${path}: ${info.error.message}`);
+		if (info.value.kind !== "file") throw new Error(`Can't pass ${path}: it's a ${info.value.kind}. Pass files, or archive a directory into one first.`);
+		const data = info.value.size > MAX_FILE ? undefined : await env.readBinaryFile(path, context);
+		if (data !== undefined && !data.ok) throw new Error(`Can't pass ${path}: ${data.error.message}`);
+		// Checked again after reading, since a command could have grown the file in between.
+		if (data === undefined || data.value.length > MAX_FILE) throw new Error(`Can't pass ${path}: it's over ${MAX_FILE / 1_000_000} MB.`);
+		read.push({ name: basename(path), data: data.value });
+	}
+	await prepareServerDirs(to);
+	const taken = new Set<string>();
+	const notes = read.map(({ name, data }, i) => {
+		// Two files with one name, from different directories, each keep theirs.
+		const path = saveUpload(to, taken.has(name) ? `${prefix}-${i + 1}` : prefix, name, data);
+		taken.add(name);
+		return `${name} is saved as ${path} (${Math.ceil(data.length / 1000)} KB)`;
+	});
+	return filesNote(from, notes);
+}
+
 /** What a hand-off adds as a job: the work, for the receiver, and who it's from. */
 export type HandOff = { agent: string; from: string; chain: string[]; title: string; instruction: string };
 
 export function createAgents(options: {
 	owner: string;
+	/** Where the agents' sandboxes are, for the files a message or hand-off carries. */
+	dataDir: string;
 	/** Adds a hand-off as a one-off job for the receiver (jobs.ts). Throws when there's no room. */
 	handOff: (tx: Tx, conversationId: ConversationId, work: HandOff) => Promise<{ taskId: number }>;
 	/** Why a hand-off can't be added now, such as no room for another job, or nothing. */
 	handOffProblem: (read: DocumentReader, context: Context) => Promise<string | undefined>;
 }) {
-	const { owner } = options;
+	const { owner, dataDir } = options;
 
 	const preamble = section(
 		"preamble",
@@ -261,8 +313,9 @@ export function createAgents(options: {
 		name: "message_agent",
 		description:
 			`Ask another of ${owner}'s agents something and wait for its answer, which comes back as this tool's result. ` +
-			"It starts a conversation of its own for the other agent, which works with its own tools and doesn't see this conversation, so say everything it needs.",
-		parameters: Type.Object({ agent: Type.String({ description: "The agent's id" }), text: Type.String() }),
+			"It starts a conversation of its own for the other agent, which works with its own tools and doesn't see this conversation, so say everything it needs. " +
+			"Files in your sandbox that it needs go in files; it gets copies.",
+		parameters: Type.Object({ agent: Type.String({ description: "The agent's id" }), text: Type.String(), files: filesParameter }),
 		// The conversation is found again by the key the call memoized, and submitting again returns the same run.
 		replay: "safe",
 		execute: async (args, api, context) => {
@@ -270,6 +323,8 @@ export function createAgents(options: {
 			if (problem !== undefined) throw new Error(problem);
 			const to = entryOf(roster, args.agent);
 			const key = await api.memo<string>("gaidin.message", randomUUID(), context);
+			// A rerun copies them again under the same names.
+			const note = await passFiles(api.env, args.files ?? [], sandboxOf(dataDir, to.id), from.name, key.slice(0, 8), context);
 			const id = await api.commit(async (tx) => {
 				const doc = await tx.doc(AgentMessages);
 				const known = doc.started[key];
@@ -285,7 +340,7 @@ export function createAgents(options: {
 			}, context);
 			const conversation = await api.conversation(toConversationId(id), context);
 			if (conversation === undefined) throw new Error(`The conversation with ${to.name} is gone`);
-			const submission = await conversation.submit({ type: "input", content: stamp(fromAnother(from.name, owner, "asks", args.text)), requestId: `agent:${key}` }, context);
+			const submission = await conversation.submit({ type: "input", content: stamp(fromAnother(from.name, owner, "asks", args.text) + note), requestId: `agent:${key}` }, context);
 			const settled = await submission.wait(context);
 			if (settled.status !== "done" || settled.type !== "input") throw new Error(`${to.name} didn't answer (${settled.status}${settled.reason ? `: ${settled.reason}` : ""})`);
 			const answer = assistantText(await api.commit((tx) => tx.entry(settled.answer), context)) ?? "(no text in the answer)";
@@ -298,33 +353,37 @@ export function createAgents(options: {
 		name: "hand_off",
 		description:
 			`Give work to another of ${owner}'s agents, without waiting. It does the work on its own, with its own tools, and its answer goes to ${owner} ` +
-			"as a report, not back to you. Say everything it needs: it doesn't see this conversation.",
+			"as a report, not back to you. Say everything it needs: it doesn't see this conversation. Files in your sandbox the work needs go in files; it gets copies.",
 		parameters: Type.Object({
 			agent: Type.String({ description: "The agent's id" }),
 			title: Type.String({ description: `A short name for the work, shown to ${owner} with the report` }),
 			task: Type.String(),
+			files: filesParameter,
 		}),
 		execute: async (args, api, context) => {
 			const { from, roster, chain, problem } = await route(api, api.conversationId, args.agent, context);
 			if (problem !== undefined) throw new Error(problem);
 			const to = entryOf(roster, args.agent);
-			const work: HandOff = { agent: to.id, from: from.id, chain, title: `${args.title} (from ${from.name})`, instruction: fromAnother(from.name, owner, "hands you", args.task) };
+			const files = args.files ?? [];
+			const note = await passFiles(api.env, files, sandboxOf(dataDir, to.id), from.name, randomUUID().slice(0, 8), context);
+			const work: HandOff = { agent: to.id, from: from.id, chain, title: `${args.title} (from ${from.name})`, instruction: fromAnother(from.name, owner, "hands you", args.task) + note };
 			const job = await api.commit((tx) => options.handOff(tx, api.conversationId, work), context);
-			return { content: [{ type: "text", text: `Handed to ${to.name} as job ${job.taskId}. Its report goes to ${owner}.` }] };
+			const copied = files.length === 0 ? "" : `, with copies of ${files.length === 1 ? "1 file" : `${files.length} files`}`;
+			return { content: [{ type: "text", text: `Handed to ${to.name} as job ${job.taskId}${copied}. Its report goes to ${owner}.` }] };
 		},
 	});
 
 	// An agent may reach only those its entry lists, and a chain stops at MAX_HOPS; both are refused, not asked. Either
 	// asks after outside text, so a page can't pass work to an agent with wider grants.
 	const guards = [
-		guard("message_agent", object({ agent: string, text: string }), {
-			refuse: async (a, read, context, where) => (await route(read, where.conversationId, a.agent, context)).problem,
-			ask: (a, situation) => ifOutsideText(situation, () => `ask agent ${a.agent}${quoted(a.text)}`),
+		guard("message_agent", object({ agent: string, text: string, files: optional(array(string)) }), {
+			refuse: async (a, read, context, where) => (await route(read, where.conversationId, a.agent, context)).problem ?? filesProblem(a.files),
+			ask: (a, situation) => ifOutsideText(situation, () => `ask agent ${a.agent}${carrying(a.files)}${quoted(a.text)}`),
 			outside: true,
 		}),
-		guard("hand_off", object({ agent: string, title: string, task: string }), {
-			refuse: async (a, read, context, where) => (await route(read, where.conversationId, a.agent, context)).problem ?? (await options.handOffProblem(read, context)),
-			ask: (a, situation) => ifOutsideText(situation, () => `hand agent ${a.agent} "${a.title}"${quoted(a.task)}`),
+		guard("hand_off", object({ agent: string, title: string, task: string, files: optional(array(string)) }), {
+			refuse: async (a, read, context, where) => (await route(read, where.conversationId, a.agent, context)).problem ?? filesProblem(a.files) ?? (await options.handOffProblem(read, context)),
+			ask: (a, situation) => ifOutsideText(situation, () => `hand agent ${a.agent} "${a.title}"${carrying(a.files)}${quoted(a.task)}`),
 		}),
 	];
 
