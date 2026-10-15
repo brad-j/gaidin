@@ -19,7 +19,8 @@ import { createMemory } from "./memory.ts";
 import { type Adapter, type Adapters, createNotifications, type Notice, type Notifications } from "./notifications.ts";
 import { ntfyAdapter } from "./ntfy.ts";
 import { createPush, loadPushKeys, type Push, pushAdapter } from "./push.ts";
-import { type Redactor, redactionExtension, redactorFor } from "./redact.ts";
+import { growingRedactor, type Redactor, redactionExtension } from "./redact.ts";
+import { createConnectors, extensionOf } from "./connectors/index.ts";
 import { createReminders, reminderOf, Reminders, removeReminder } from "./reminders.ts";
 import { findBwrap, inside, prepareServerDirs, SandboxEnv } from "./sandbox.ts";
 import { backendFor, type SearchBackend, searchGuards, webSearchTool } from "./search.ts";
@@ -127,6 +128,8 @@ export type HostOptions = {
 	sandbox?: "bwrap" | "none";
 	/** Replaces how Web Push reaches the push services; tests use it. */
 	pushFetch?: typeof fetch;
+	/** Replaces how connectors reach their servers; tests use it. */
+	connectorFetch?: typeof fetch;
 	/** Chromium's arguments, and how long profiles stay open and how many may be; tests use it. */
 	chromium?: Pick<ChromiumOptions, "args" | "idleMs" | "maxOpen">;
 };
@@ -159,7 +162,9 @@ export async function openHost(options: HostOptions = {}) {
 	const explain = (reason: string | undefined) => (reason === "no_model" ? budget.blocked() : undefined);
 	const owner = config.owner;
 	const reminders = createReminders((reminder) => tell({ kind: "reminder", reminder }), owner);
-	const redactor = options.redactor ?? redactorFor({ ...secretsOf(config), PUSH_PRIVATE_KEY: pushKeys?.privateKey });
+	// Connectors' tokens join the settings' secrets as they're given.
+	const growing = growingRedactor({ ...secretsOf(config), PUSH_PRIVATE_KEY: pushKeys?.privateKey });
+	const redactor = options.redactor ?? growing.redactor;
 	const mode = options.sandbox ?? config.sandbox;
 	const bwrap = mode === "bwrap" ? findBwrap() : undefined;
 	// Fail closed: without bubblewrap, shell commands would reach everything the server can.
@@ -201,6 +206,8 @@ export async function openHost(options: HostOptions = {}) {
 	// Profiles are outside every sandbox, so no agent's commands can read their cookies.
 	const browser = config.browser === undefined ? undefined : createBrowser({ profiles: config.browser.profiles, dir: resolve(dir, "browser"), dataDir: dir, owner, fetch: options.fetch, chromium: options.chromium, approvals: () => approvals!, read: () => harness });
 	if (browser !== undefined) registry.install(browser.extension);
+	// Their extensions are installed once the Harness is open and their document can be read.
+	const connectors = createConnectors({ dir: resolve(dir, "connectors"), owner, registry, redactor: growing, root: () => root, roster: () => roster, fetch: options.connectorFetch, resolve: options.fetch?.resolve });
 	// Self-written tools only ever run in a box, so without bubblewrap there are none.
 	const self = bwrap === undefined ? undefined : createSelf({ dataDir: dir, sandbox, bwrap, hide, registry, approvals: () => approvals!, owner, fetch: options.fetch });
 	if (self !== undefined) {
@@ -211,7 +218,7 @@ export async function openHost(options: HostOptions = {}) {
 	let approvals: ApprovalService | undefined;
 	// Each tool's approval rules, from the module that owns it; read per call, since self-written tools come and go.
 	const guards = [...agents.guards, ...memory.guards, ...reminders.guards, ...jobs.guards, ...homelabGuards, ...web.guards, ...searchGuards, ...workspaces.guards, ...history.guards, ...skills.guards, ...(browser?.guards ?? [])];
-	registry.install(approvalExtension(() => approvals!, owner, () => [...guards, ...(self?.guards() ?? [])]));
+	registry.install(approvalExtension(() => approvals!, owner, () => [...guards, ...(self?.guards() ?? []), ...connectors.guards()]));
 	// Last, so its afterTool sees what every other hook left.
 	registry.install(budget.extension);
 	registry.install(redactionExtension(redactor));
@@ -243,6 +250,7 @@ export async function openHost(options: HostOptions = {}) {
 	// Requests and questions wait on the owner, so the owner hears of each, and of how it ended.
 	approvals.onChange((request) => tell({ kind: "request", request }));
 	const root = await harness.root(context, { agent: { model, cwd: sandbox } });
+	await connectors.load();
 	const roster = createRoster({
 		harness,
 		root,
@@ -250,6 +258,8 @@ export async function openHost(options: HostOptions = {}) {
 		workspaces: () => workspaces.names,
 		profiles: () => config.browser?.profiles ?? [],
 		slackChannel: config.slack?.channelId,
+		connectors: () => connectors.names(),
+		connectorExtension: extensionOf,
 		selfTools: () => self?.extensions() ?? [],
 		archiving: async (tx, agent) => {
 			for (const job of (await tx.doc(Jobs)).items.filter((j) => jobOf(j, agent))) await pauseJob(tx, job.taskId, "its agent was archived");
@@ -293,10 +303,11 @@ export async function openHost(options: HostOptions = {}) {
 	/** Closes the browser's profiles, then the Harness. */
 	async function close() {
 		await browser?.close();
+		await connectors.close();
 		await harness.close(context);
 	}
 
-	return { harness, root, agents: roster, workspaces: () => workspaces.names, profiles: () => config.browser?.profiles ?? [], takeOver: browser?.takeOver, close, uploads: createUploads(join(dir, "app-uploads")), avatars: createAvatars(join(dir, "avatars")), threads, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation, latest: history.latest }, skills, sandbox, push, start, stop };
+	return { harness, root, agents: roster, workspaces: () => workspaces.names, profiles: () => config.browser?.profiles ?? [], takeOver: browser?.takeOver, connectors, close, uploads: createUploads(join(dir, "app-uploads")), avatars: createAvatars(join(dir, "avatars")), threads, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation, latest: history.latest }, skills, sandbox, push, start, stop };
 }
 
 export type Host = Awaited<ReturnType<typeof openHost>>;

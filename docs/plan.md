@@ -50,15 +50,66 @@
 36. The browser's acting tools: `browser_click`, `browser_type`, `browser_select`, `browser_back` and `browser_upload`. Acting asks while outside text is in the conversation, naming the element as the snapshot showed it, unless the owner let the agent act on that site in that profile without asking (a new second button, kept in the roster entry and removable on the settings page), and happens only if the page is still what was asked about. Typing into a password field is refused, and uploads ask every time. Downloads land in the agent's read-only `downloads/`, and dialogs are dismissed and reported. Refs now come only from whole-page snapshots, since snapshotting one element renumbered the page's refs (protocol 8) ([Tools](tools.md#browser)).
 37. Taking a browser profile over: the app's Browser page lists the profiles and opens one live, a screencast relayed as an event stream of JPEG frames, with the owner's clicks, scrolls and typing sent back as POSTs, on a phone too, and the agents' browser calls on it waiting until the owner is done. `browser_hand_over` asks the owner to take over and waits like `ask_owner`, shown in the dock, pushed and posted in Slack with Take over, Done and Can't (protocol 9) ([Tools](tools.md#taking-a-profile-over)).
 38. Slack's channel per agent: a roster entry names its agent's channel, where a top-level message starts a thread with that agent and the agent's reminders, reports, paused jobs, requests and questions go, under its name (`chat:write.customize`, falling back to the app's name with the agent's in front). Messages in other channels are keyed `<channel>:<ts>` in `SlackState`, the default channel's keeping bare ts, and an agent without a channel posts in the default one, named. `gaidin doctor` says whether the app has the scope ([Surfaces](surfaces.md#slack)).
+39. Connectors, without OAuth: remote MCP servers added with `gaidin connector`, with a bearer token or none, spoken to in the current revision (2026-07-28) or the earlier ones; their tools given per agent, each set to allow, ask or off, their definitions pinned, their results outside text, and their tokens in `<data>/connectors/vault.json` ([Tools](tools.md#connectors)).
 
 ## Next
 
 Candidates:
 
-- Connectors (MCP servers with OAuth, tokens held by the server, granted per agent), then owner-written allow and ask-first rules, in that order. Several named agents, the app and the browser (designed below) are done.
+- Connectors (designed below: MCP servers with OAuth, tokens held by the server, granted per agent), then owner-written allow and ask-first rules, in that order. Several named agents, the app and the browser (designed below) are done.
 - Release polish: a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
 
 Not planned: branching from any message in the web view, since each thread is already a conversation of its own; push-to-talk, since the owner dictates with superwhisper; and projects or image generation in the app.
+
+## Design: connectors
+
+Step 1 is done (item 39). A connector is a remote MCP server the owner adds, such as a mail, calendar, GitHub or notes service's: its tools become tools of the agents the owner grants it to, signed in with OAuth, the tokens held by the server. Where a service has one, a connector beats the browser: a tool call returns compact data rather than a 12,000-token page, there are no CAPTCHAs or redesigns, an OAuth grant can be narrower than a whole signed-in session and is revoked in one place, and an approval names what will happen ("send mail to X") rather than a ref on a page. The browser stays for sites without one.
+
+### What the spec asks for
+
+The current MCP revision, 2026-07-28, changed the protocol a lot: no `initialize` handshake or `Mcp-Session-Id`, every request carrying its protocol version in `_meta`, a `server/discover` call, `subscriptions/listen` in place of the GET stream, and interim `input_required` results in place of server-to-client requests. Most servers in use still speak 2025-06-18 or 2025-11-25, with the handshake and sessions, so the client speaks both: it calls `server/discover`, and on a server that doesn't know it, falls back to `initialize`.
+
+Authorization is OAuth 2.1 with PKCE (S256), the resource parameter (RFC 8707), the server's protected resource metadata (RFC 9728) and its authorization server's metadata (RFC 8414 or OpenID discovery), checking the `iss` in the response (RFC 9207), refresh tokens, and step-up when a call answers `insufficient_scope`. Client registration, in the spec's order: a client id and secret the owner enters for that server, a Client ID Metadata Document (an HTTPS URL that is the client's id and serves its metadata), or Dynamic Client Registration, which 2026-07-28 deprecates but most servers still offer.
+
+### Decided with the owner
+
+- **Our own client, no SDK.** `@modelcontextprotocol/sdk` (1.32.1) brings Express, Hono, CORS, Zod and Ajv for a server gaidin doesn't run. The client side gaidin needs is small: JSON-RPC over POST with a JSON or event-stream answer, `tools/list` and `tools/call`, and the OAuth flow on `fetch` and `node:crypto`, as Web Push was written. It's checked against servers the tests run on loopback, in both protocol generations.
+- **Remote servers only, for now.** A local (stdio) server is someone else's code running on the VM; it would need a box like self-written tools get, and most local servers want the network, which a box doesn't have. Left for later.
+- **Connectors live in the database, edited from the app**, as the roster is: a name (lowercase, like an agent's id), the server's URL, and how it signs in (OAuth, a static bearer token the owner pastes, or nothing). The settings file holds only what's per deployment (below).
+- **Granted per agent**, as workspaces and browser profiles are: an agent's roster entry lists its connectors, and a new agent, the default one included, has none. A connector's tools are offered only to agents given it, and a call from another is refused.
+- **Each tool switched by the owner: allow, ask, or off.** A tool's annotations (`readOnlyHint`, `destructiveHint`) are the server's word and only set the default: read-only tools start at allow, everything else at ask, which asks on every call, showing its arguments. What any tool returns is outside text, so note writes and cancels after it ask, as after a page. Off tools aren't offered, which also keeps a 60-tool server from adding 20,000 tokens of definitions to every request; the app shows each connector's cost in tokens.
+- **A tool's description is pinned.** A server writes the descriptions the model reads, so a changed one could steer it. gaidin keeps a hash of each tool's name, description and schema when the owner sets it; a tool that's new or changed since comes in off, and the app marks it for review. Only the owner turns it on.
+- **Tokens in a file of their own**, `<data>/connectors/vault.json`, mode 600, outside every sandbox and outside `gaidin.sqlite`, so no document, transcript or API answer can carry them. Each is added to the redactor while it's held. The VM's backups hold them, as they hold the browser's cookies.
+- **The client's identity.** A Client ID Metadata Document has to be fetched by each authorization server from the public internet, and gaidin is reached only on the tailnet. Proposed: a setting, `connectors.clientId`, the HTTPS URL of a small JSON file the owner hosts anywhere public (a static site, a gist), which `gaidin connectors metadata` prints and `gaidin doctor` checks. Its redirect URI is gaidin's own callback on the tailnet name, which works because it's the owner's browser that follows it. Without the setting, Dynamic Client Registration, and failing that, a client id the owner enters for that connector.
+- **Addresses.** The connector's URL is the owner's choice, so it may be on the LAN or tailnet, such as an MCP server in the homelab; it must be HTTPS unless it's on loopback or a private address. Every URL gaidin learns from a server (its metadata, its authorization server, a registration or token endpoint) must be HTTPS and public, unless it's on the connector's own host, so a server can't send gaidin's requests into the LAN.
+
+### Shape
+
+- `src/connectors/`: the client (`client.ts`), OAuth (`oauth.ts`), the token file (`tokens.ts`), and one extension per connector, named `connector-<name>`, whose tools are `<name>_<tool>`, cut to Anthropic's 64 characters. The extensions are installed when a connector is added and reinstalled when its tools change, and selected only in the homes of agents given it, as the browser's is.
+- A connector's tool list is read when it's connected, again when the server says it changed (`listChanged`, through `subscriptions/listen` or the older notification), and on the owner's refresh, and kept in a document, so a restart offers the same tools without asking the server first.
+- A call: the arguments as the model gave them, checked against the tool's schema by Pi Durable; a 60-second timeout the connector can raise; text and image content passed on, structured content as JSON, everything else described; the text cut to 20,000 characters, saying so. Tool calls aren't replay-safe, so one a restart cut off is reported as interrupted.
+- A `401` refreshes the token once and tries again; a refused refresh, or `insufficient_scope`, marks the connector as needing the owner, tells the owner as a request in the dock and Slack ("Mail needs signing in again"), and the call fails saying so. `input_required` results (a server asking the user something mid-call) aren't answered yet: the call fails, naming what the server asked.
+- The OAuth flow starts from the app: the owner presses Connect, gaidin makes the PKCE pair, `state` and the expected issuer, keeps them for 10 minutes, and sends the browser to the authorization server; the callback, `/api/connectors/callback`, behind the Tailscale login like every route, checks `state` and `iss`, redeems the code, and goes back to the connector's page. Nothing in it passes through a model.
+
+### The app
+
+A Connectors page across agents, beside Browser: each connector with its state (connected, needs signing in, unreachable), its tools with allow, ask or off and its token cost, new or changed tools marked, and Connect, Disconnect, Refresh and Remove. Adding one takes a name and a URL, and a token or client id when the server needs one. An agent's settings page gets its connectors beside its workspaces and browser profiles. The protocol version goes up.
+
+### Known gaps
+
+- What an allowed tool does happens without asking. Allow is the owner's call per tool, and read-only defaults are the server's word.
+- A tool's result can steer the agent; it counts as outside text, as a page does, but on an allowed write tool that's no check at all.
+- Pinning catches a changed description, not a server that behaves differently behind the same one.
+- A connector's token can do whatever its grant allows, from the VM, until it's revoked at the service.
+
+### Order of work
+
+1. Done: the client in both protocol generations, connectors with a static token or none, the tools as per-agent extensions with allow, ask and off, pinning, and the guards (item 39). Tests against MCP servers the test runs on loopback, old and new. Until the app's page, `gaidin connector` manages them. Threads and job runs started before a connector was added are offered its tools too, as with self-written tools, and the guard refuses calls from agents not given it.
+2. OAuth: discovery, PKCE, the resource parameter, `iss`, the three ways to register, refresh and step-up, the callback, and the token file. Tests against an authorization server the test runs.
+3. The app's Connectors page and the agents' grants, with e2e tests.
+4. Trying it with real services: the first connectors are to be decided with the owner.
+
+Each step ends with `pnpm check` passing and is a commit of its own.
 
 ## Design: several agents
 

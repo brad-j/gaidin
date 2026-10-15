@@ -23,6 +23,7 @@ Every [agent](concepts.md#agents) has these tools, and each works on that agent'
 | `load_extension`, `remove_extension` | in the server | the sandbox's `extensions/`, the owner | every load and removal |
 | tools gaidin wrote | in a box of their own | their fetches, through the server | for a host not allowed for good |
 | `workspace_run`, `workspace_read`, `workspace_write`, `workspace_edit` | on a workspace, under bubblewrap | that machine's project roots, and the network | every call |
+| a connector's tools, `<connector>_<tool>` | on the connector's server | what that service's grant allows | as you set each tool: allow, ask (every call) or off; refused for a connector the agent wasn't given |
 | `homelab_status` | in the server | the homelab's monitoring feeds | no |
 | `container_logs` | in the server, over SSH | Docker logs on two hosts | no |
 
@@ -166,6 +167,33 @@ Signing in is yours to do: the model never types a password. The app's Browser p
 You have it until you press Done, leave the page for 15 seconds (switching apps on a phone and back is fine), or give it no input for 10 minutes. Done also finishes any hand-over of that profile. Afterwards the refs of every snapshot from before are dropped, so an agent looks again before acting; downloads you start there aren't kept.
 
 A hand-over shows in the app's dock with Take over, Done and Can't, is pushed to your devices, opening the profile's page when tapped, and is posted in Slack with the same buttons, Take over linking to the app when `web.url` is set. A new message from you in that conversation skips it, as it skips an approval.
+
+## Connectors
+
+A connector is a remote MCP server you add, such as a mail, calendar or notes service's: its tools become tools of the agents you give it to. It's for services that offer one; the [browser](#browser) is for sites that don't.
+
+You add one from the command line for now, with its name and its server's URL, and its bearer token on standard input if it needs one (OAuth comes next, [Plan](plan.md#design-connectors)):
+
+```sh
+gaidin connector add mail https://mcp.example.com/mcp --token    # paste the token, then Enter
+gaidin connector show mail                                       # its tools and how each is set
+gaidin connector tool mail send_mail ask                         # allow, ask or off
+gaidin agent set scout --connectors mail                         # which agents get its tools
+```
+
+`connector refresh` reads its tools again, `connector token` changes or removes its token, and `connector remove` removes it, its token and every agent's grant. A connector's URL is https, or http to loopback or a private address, such as a server in your homelab.
+
+Each tool is named `<connector>_<tool>` for the model and set to one of:
+
+- allow: runs without asking. Tools the server marks read-only start here.
+- ask: asks you on every call, showing its arguments. Every other tool starts here.
+- off: not offered, so it costs nothing in each request either. `gaidin connector list` says about how many tokens a connector's tools add to each request.
+
+A tool's description is the server's own text, which the model reads, so gaidin pins it: a hash of its name, description, schema and the server's hints, as you last set it. When the server adds a tool, or changes one, the tool is off until you set it again, which accepts it as it is then; `connector show` marks it new or changed. The tools of a connector you've just added take their defaults, since adding it is when you look at them. A server can mark a tool's schema in a way gaidin can't honor (an `x-mcp-header` in the wrong place); such a tool is listed as unusable and never offered.
+
+What a tool returns is outside text, labelled as from that connector, cut to 20,000 characters, with its images kept. A call waits up to 60 seconds. A server that asks for more input in the middle of a call isn't answered yet; the call fails naming what it asked. When the server refuses the token, the connector is marked as needing you, and its tools say so until you give it one that works.
+
+The token is kept in `<data>/connectors/vault.json`, readable only by the server, never in the database or a transcript, and redacted from tool output. gaidin speaks both the current MCP revision, 2026-07-28, and the earlier ones (2025-03-26 to 2025-11-25) that most servers still use, finding out which with the first request.
 
 ## Workspaces
 

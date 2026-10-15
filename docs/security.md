@@ -45,7 +45,7 @@ A [skill](tools.md#skills) is instructions gaidin follows when a request matches
 
 - Each agent's coding tools are confined to its own sandbox, with a lock of its own. Under bubblewrap a command sees only that directory, so no agent's shell can read another's files; the default agent's sandbox doesn't contain the others'. The file tools resolve every path and refuse one outside the agent's sandbox.
 - Work notes, reminders, jobs and past conversations are filtered by the calling conversation's agent, which the server records when it creates the conversation and the model can't name or change.
-- Hosts allowed for good, workspaces, browser profiles and self-written tools are granted per agent. "Always allow" grants the host to the agent that asked. A workspace, browser profile or self-written tool an agent wasn't given is refused before anyone is asked.
+- Hosts allowed for good, workspaces, browser profiles, connectors and self-written tools are granted per agent. "Always allow" grants the host to the agent that asked. A workspace, browser profile, connector or self-written tool an agent wasn't given is refused before anyone is asked.
 - `message_agent` and `hand_off` reach only the agents the sender's roster entry lists; anything else is refused. The receiver's conversation starts with a marker the approvals hook treats as outside text, so its note writes and cancels ask, and the answer that comes back is outside text to the sender. Either call asks while outside text is in the sender's context, so a page can't pass work to an agent allowed more than the one that read it, and the request names any files it carries. Files are read through the sender's file tools, so only its own sandbox's can go, and land read-only in the receiver's `uploads/`; nothing else of either sandbox is shared. A chain stops at three.
 
 What they share: the shared notes, which reach every agent's prompt; a browser profile's sign-ins, among the agents given it; the skills; the spend limits; and the server's own access, such as Slack and the push services. Approval requests name the agent they come from.
@@ -67,6 +67,7 @@ A URL can carry data out in its path or query, which is why a fetch to a new hos
 | `browser_click`, `browser_type`, `browser_select` | while outside text is in the conversation's context, unless the agent acts on that site in that profile without asking; typing into a password field is refused | act on that site without asking, for that agent and profile |
 | `browser_upload` | every call, naming the files | none |
 | `browser_hand_over` | it is the request: Done or Can't | none |
+| a connector's tool | every call when you set it to ask; never when it's allow; refused when it's off, new or changed since you set it, or for an agent not given the connector | none |
 | `workspace_*` | every call | allow that workspace for an hour, in that conversation only |
 | `schedule_job` | every new job | none |
 | `remember`, `update_memory` | while outside text is in the conversation's context | none |
@@ -81,7 +82,7 @@ Before the guard is asked, the hook checks whether the call can succeed at all, 
 
 Each request's outcome (allowed once or always, denied, answered, no answer in time, stopped, skipped) and where it was given is also written into its conversation as an entry the model doesn't see. The app's `/timeline` lists these outcomes with the tool calls, job reports and reminders around them, from the transcript index ([Tools](tools.md#past-conversations)), so the record outlives the request, which is dropped a week after it's decided. The timeline leaves out the sandbox's coding tools and the tools that only read gaidin's own state.
 
-A guard can also see which tools that return outside text (those whose guards say `outside`: `fetch_url`, `web_search`, the browser's tools, `container_logs`, `workspace_read`, `workspace_run`, every self-written tool, `search_history` and `read_history`, whose past answers can repeat any of those, and `message_agent`, whose answer is another agent's) have results in the conversation's context, whether another agent started the conversation, and, in a job run a [gate](tools.md#gates) woke, what the gate found; the memory, cancel and messaging tools use that. A built-in tool counts even when it's switched off or not set up, since its past results can still be in the context. It's the whole context, not just the current run: text the model has read can steer it for as long as it's there, whatever the owner says in between. If the context can't be read, that counts as outside text too. A tool that changes anything outside the sandbox should have a guard ([Extending](extending.md#tools-that-reach-outside)).
+A guard can also see which tools that return outside text (those whose guards say `outside`: `fetch_url`, `web_search`, the browser's tools, every connector's tools, `container_logs`, `workspace_read`, `workspace_run`, every self-written tool, `search_history` and `read_history`, whose past answers can repeat any of those, and `message_agent`, whose answer is another agent's) have results in the conversation's context, whether another agent started the conversation, and, in a job run a [gate](tools.md#gates) woke, what the gate found; the memory, cancel and messaging tools use that. A built-in tool counts even when it's switched off or not set up, since its past results can still be in the context. It's the whole context, not just the current run: text the model has read can steer it for as long as it's there, whatever the owner says in between. If the context can't be read, that counts as outside text too. A tool that changes anything outside the sandbox should have a guard ([Extending](extending.md#tools-that-reach-outside)).
 
 ## Workspaces
 
@@ -108,6 +109,17 @@ A browser profile holds live sign-ins, so the browser is checked in these layers
 - The model never types a password: `browser_type` refuses a field whose type or autocomplete says password, before anyone is asked and again before typing. A page that needs signing in is yours to sign in to, by taking the profile over in the app.
 - Taking over goes through the app's own checks: the Tailscale login; for the live view, which takes the profile over as it opens, a refusal of any request a browser marks as made by another site (`Sec-Fetch-Site`); and for your input and navigation, a JSON POST from the app's origin. Your input goes to the page and isn't stored or shown to a model. While you hold a profile its pages go anywhere public, since they're yours, and every agent's call on it waits; when you let go, the refs from before are dropped and the pages are held to no host until an agent's call sets them again, so nothing you opened lets an agent act there without asking.
 - An upload sends files from the agent's own sandbox only, read through its file tools, and asks every time, naming them. A download lands in the agent's `downloads/`, which its commands see read-only, so none can swap it for a symlink that carries the server's write elsewhere.
+
+## Connectors
+
+A [connector](tools.md#connectors) is a remote service's MCP server, so what its tools do happens at that service with whatever its token allows:
+
+- Its tools go only to agents whose roster entry lists it, and its extension is selected only in their homes; a call from any other agent is refused.
+- You set each tool to allow, ask or off. The server's read-only hint only sets the default, and only for a tool you haven't set.
+- The tools' descriptions are the server's text, which reaches the model, so each is pinned by a hash of its definition; one that's new or changed since you set it is off until you set it again.
+- What a tool returns is outside text, so note writes and cancels after it ask.
+- Its token is kept in `<data>/connectors/vault.json` (mode 600, in a directory only the server can enter), outside every sandbox and the database, and redacted from tool output. The VM's backups hold it.
+- The connector's own URL is your choice, so it may be on the LAN; anything else gaidin is told to fetch by a server will be held to public addresses when OAuth comes.
 
 ## Container logs
 
@@ -142,6 +154,10 @@ The app trusts the identity header Tailscale Serve adds, and listens only on loo
 - A page can send what it shows, or what's in its own storage, to its own servers, and its scripts and images go to any public host; only its own navigations are checked. A page on a host you've allowed for good can steer what the agent reads there.
 - The browser's address check resolves a name itself, before Chromium does, so a second DNS answer could still point Chromium at a private address. WebSockets aren't routed and aren't checked.
 - A page that exploited Chromium would run as gaidin's user, outside bubblewrap, with Chromium's own sandbox the only layer between it and gaidin's data.
+- A connector tool set to allow does what it does without asking, and a server's read-only hint is only its word. A tool's result can steer the agent, and on an allowed tool that writes, nothing checks what it's steered to do.
+- Pinning catches a changed description, not a server that behaves differently behind the same one.
+- A connector's token can do whatever the service's grant allows, from the VM, until you revoke it at the service.
+- An agent's existing threads and job runs keep the tool selection they started with, so a connector added later is offered there too, to every agent; the guard refuses its calls from agents not given it.
 - An agent that may message another can ask it for anything that agent's tools do without asking, such as fetching from a host allowed for that agent alone, as long as no outside text is in the asker's context.
 
 ## Rules

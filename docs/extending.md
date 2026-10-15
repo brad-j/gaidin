@@ -15,6 +15,7 @@
 | `history.ts` | `search_history` and `read_history`, over its own index of past messages |
 | `skills.ts` | the skills list in the system prompt and `read_skill`; `docs/` is the built-in skill, and a test checks that `docs/SKILL.md` lists every file in it |
 | `self/` | `load_extension`, `remove_extension`, and one extension `self-<name>` per tool set gaidin wrote |
+| `connectors/` | one extension `connector-<name>` per MCP server the owner added: the client (`client.ts`), the tokens (`vault.ts`), and the tools and their guards |
 | `extensions/homelab/` | the homelab extension, when configured |
 | `approvals.ts` | the approval hook and `ask_owner`; each tool's rules are its guard (`guards.ts`) |
 | `redact.ts` | the redaction hook, installed last so it sees every result |

@@ -51,6 +51,23 @@ export const json: Parser<Json> = (value, at) => {
 /** A string as it is, and any other JSON value as JSON text. */
 export const text: Parser<string> = (value, at) => (typeof value === "string" ? value : JSON.stringify(json(value, at)));
 
+/** `value` as `parser` reads it, or nothing when it doesn't, for a field that's only used when it's right. */
+export function attempt<T>(value: Input, parser: Parser<T>): T | undefined {
+	try {
+		return parser(value, "");
+	} catch (error) {
+		if (error instanceof ParseError) return undefined;
+		throw error;
+	}
+}
+
+/** A string, integer or boolean as a header or a label carries it: as text. */
+export const scalar: Parser<string> = (value, at) => {
+	if (typeof value === "string") return value;
+	if ((typeof value === "number" && Number.isSafeInteger(value)) || typeof value === "boolean") return String(value);
+	throw fail(at, "a string, integer or boolean");
+};
+
 /** Any JSON object, as it is. */
 export const jsonObject: Parser<{ readonly [key: string]: Json }> = (value, at) => {
 	if (!isObject(value)) throw fail(at, "an object");

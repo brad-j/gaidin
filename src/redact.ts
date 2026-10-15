@@ -43,6 +43,37 @@ export function redactorFor(values: Record<string, string | undefined>): Redacto
 	return createRedactor(secrets);
 }
 
+/**
+ * A redactor whose secrets can change while it's in use, such as a connector's token (connectors/), with `base` among
+ * them for good. What it redacts follows each change at once.
+ */
+export function growingRedactor(base: Record<string, string | undefined>) {
+	const fixed = new Map<string, string>();
+	const added = new Map<string, string>();
+	let current = redactorFor(base);
+	for (const [name, value] of Object.entries(base)) if (value) fixed.set(name, value);
+	const rebuild = () => {
+		current = redactorFor({ ...Object.fromEntries(fixed), ...Object.fromEntries(added) });
+	};
+	const redactor: Redactor = {
+		redact: (text) => current.redact(text),
+		get longest() {
+			return current.longest;
+		},
+	};
+	return {
+		redactor,
+		/** Redacts `value` as `name` from now on, in place of what `name` was. */
+		set(name: string, value: string | undefined) {
+			if (value === undefined || value === "") added.delete(name);
+			else added.set(name, value);
+			rebuild();
+		},
+	};
+}
+
+export type GrowingRedactor = ReturnType<typeof growingRedactor>;
+
 /** `secrets` maps each value to the name it's replaced with. */
 export function createRedactor(secrets: ReadonlyMap<string, string>): Redactor {
 	// Longest first, so a URL is replaced whole before the topic inside it.

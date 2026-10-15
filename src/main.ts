@@ -2,7 +2,7 @@
 // The gaidin command.
 import { parseArgs } from "node:util";
 import type { AgentChange } from "./agents.ts";
-import { agents, ask, watch } from "./cli.ts";
+import { agents, ask, connectors, watch } from "./cli.ts";
 import { loadConfig, maskedConfig } from "./config.ts";
 import { printChecks, runChecks } from "./doctor.ts";
 import { serve } from "./server.ts";
@@ -18,7 +18,18 @@ const USAGE = `usage: gaidin [--config FILE] COMMAND
                             add an agent
   agent set ID [--name NAME] [--job TEXT] [--channel SLACK_ID]
                [--can-message ID,ID] [--workspaces NAME,NAME] [--profiles NAME,NAME]
+               [--connectors NAME,NAME]
                             change an agent; an empty list clears it
+  connector list            list the connectors (MCP servers)
+  connector show NAME       a connector's tools and how each is set
+  connector add NAME URL [--token]
+                            add a remote MCP server; --token reads its bearer token from stdin
+  connector token NAME [--token]
+                            change its token, read from stdin, or take it away without --token
+  connector tool NAME TOOL allow|ask|off
+                            set a tool, which also accepts its definition as it is now
+  connector refresh NAME    read its tools again
+  connector remove NAME     remove it, its token and every agent's grant of it
   doctor [--push]           check the settings and everything the server needs
   config                    print the settings in use, secrets shortened
 
@@ -36,6 +47,8 @@ const { values, positionals } = parseArgs({
 		"can-message": { type: "string" },
 		workspaces: { type: "string" },
 		profiles: { type: "string" },
+		connectors: { type: "string" },
+		token: { type: "boolean" },
 		push: { type: "boolean" },
 		help: { type: "boolean", short: "h" },
 	},
@@ -85,7 +98,44 @@ switch (command) {
 		if (workspaces !== undefined) change.workspaces = workspaces;
 		const profiles = list(values.profiles);
 		if (profiles !== undefined) change.profiles = profiles;
+		const granted = list(values.connectors);
+		if (granted !== undefined) change.connectors = granted;
 		process.exit(await agents(loaded.config, { type: "agent", action: "set", id: id!, change }));
+	}
+	case "connector": {
+		const [action = "list", name, third, fourth] = rest;
+		const usage = "usage: gaidin connector list | show NAME | add NAME URL [--token] | token NAME [--token] | tool NAME TOOL allow|ask|off | refresh NAME | remove NAME";
+		// The token comes on stdin, so it's in no shell history or process list.
+		const token = async () => {
+			if (values.token !== true) return undefined;
+			if (process.stdin.isTTY) process.stderr.write("Token, then Enter: ");
+			let text = "";
+			for await (const chunk of process.stdin) {
+				text += String(chunk);
+				if (process.stdin.isTTY && text.includes("\n")) break;
+			}
+			return text.trim();
+		};
+		if (action === "list") process.exit(await connectors(loaded.config, { type: "connector", action: "list" }));
+		if (name === undefined) fail([usage]);
+		if (action === "show" || action === "refresh" || action === "remove") process.exit(await connectors(loaded.config, { type: "connector", action, name: name! }));
+		if (action === "add") {
+			if (third === undefined) fail([usage]);
+			const add: Parameters<typeof connectors>[1] = { type: "connector", action: "add", name: name!, url: third! };
+			const given = await token();
+			if (given !== undefined) add.token = given;
+			process.exit(await connectors(loaded.config, add));
+		}
+		if (action === "token") {
+			const change: Parameters<typeof connectors>[1] = { type: "connector", action: "token", name: name! };
+			const given = await token();
+			if (given !== undefined) change.token = given;
+			process.exit(await connectors(loaded.config, change));
+		}
+		if (action === "tool" && third !== undefined && (fourth === "allow" || fourth === "ask" || fourth === "off")) {
+			process.exit(await connectors(loaded.config, { type: "connector", action: "tool", name: name!, tool: third, setting: fourth }));
+		}
+		fail([usage]);
 	}
 	case "doctor":
 		process.exit(printChecks(await runChecks(loaded, { push: values.push === true })));

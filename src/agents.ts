@@ -69,6 +69,8 @@ export type AgentEntry = {
 	profiles?: string[];
 	/** By profile, the hosts it clicks and types on without asking. */
 	actHosts?: Record<string, string[]>;
+	/** The connectors whose tools it may use (src/connectors/). Absent: none, the default agent's included. */
+	connectors?: string[];
 	/** The agents it may message and hand work to, by id. */
 	canMessage: string[];
 	/** Self-written extensions switched on for it besides the ones it loaded. */
@@ -176,12 +178,19 @@ export async function hideTools(tx: Tx, roster: Readonly<Roster>, names: readonl
 /** The extension of the browser's tools (src/browser/). */
 export const BROWSER_EXTENSION = "browser";
 
-/** Selects the browser's extension in `agent`'s home conversation when it has a profile, and leaves it out when it has none. */
-async function offerBrowser(tx: Tx, agent: AgentEntry): Promise<void> {
+/** An extension that only some agents are offered, such as the browser's or a connector's, and which ones. */
+export type Granted = { extension: string; on: (agent: AgentEntry) => boolean };
+
+/**
+ * Selects each of `granted` in `agent`'s home conversation when it's on for the agent, and leaves it out when it isn't.
+ * Extensions in `gone` were removed, so they're taken off the list too.
+ */
+async function offerExtensions(tx: Tx, agent: AgentEntry, granted: readonly Granted[], gone: readonly string[] = []): Promise<void> {
 	const doc = await tx.doc(AgentDoc, toConversationId(agent.home));
 	if (Array.isArray(doc.extensions)) return; // a list of extensions selects only those already
-	const removed = (doc.extensions?.remove ?? []).filter((name) => name !== BROWSER_EXTENSION);
-	if ((agent.profiles ?? []).length === 0) removed.push(BROWSER_EXTENSION);
+	const managed = new Set([...granted.map((g) => g.extension), ...gone]);
+	const removed = (doc.extensions?.remove ?? []).filter((name) => !managed.has(name));
+	for (const g of granted) if (!g.on(agent)) removed.push(g.extension);
 	const add = doc.extensions?.add;
 	if (removed.length === 0 && add === undefined) {
 		delete doc.extensions;
@@ -416,7 +425,7 @@ export function createAgents(options: {
 
 /** What the owner can change about an agent. */
 /** `avatar: ""` takes the picture away. */
-export type AgentChange = Partial<Pick<AgentEntry, "name" | "job" | "channel" | "canMessage" | "workspaces" | "profiles" | "actHosts" | "hosts" | "extensions" | "avatar">>;
+export type AgentChange = Partial<Pick<AgentEntry, "name" | "job" | "channel" | "canMessage" | "workspaces" | "profiles" | "actHosts" | "connectors" | "hosts" | "extensions" | "avatar">>;
 
 /** The roster as the server manages it: the default agent's entry, adding and changing agents, and their home conversations. */
 export function createRoster(options: {
@@ -427,6 +436,10 @@ export function createRoster(options: {
 	workspaces: () => readonly string[];
 	/** Browser profile names, which an agent may be given. Default: none. */
 	profiles?: () => readonly string[];
+	/** Connector names, which an agent may be given. Default: none. */
+	connectors?: () => readonly string[];
+	/** The extension of each connector, by its name. */
+	connectorExtension?: (name: string) => string;
 	/** The settings' Slack channel, the default agent's, which no other agent can have. */
 	slackChannel?: string;
 	/** The self-written tools, by extension name, which a new agent starts without. */
@@ -436,19 +449,43 @@ export function createRoster(options: {
 }) {
 	const { harness, root, dataDir } = options;
 	const profiles = options.profiles ?? (() => []);
+	const connectors = options.connectors ?? (() => []);
 	const read = async () => rosterOf(harness, background);
+	/** The extensions only some agents are offered, as things are now. */
+	const granted = (): Granted[] => [
+		...(profiles().length > 0 ? [{ extension: BROWSER_EXTENSION, on: (a: AgentEntry) => (a.profiles ?? []).length > 0 }] : []),
+		...connectors().map((name) => ({ extension: options.connectorExtension?.(name) ?? name, on: (a: AgentEntry) => a.connectors?.includes(name) === true })),
+	];
 
 	/**
 	 * Writes the default agent's entry if the roster has none, as on the first start with agents, and leaves the browser's
-	 * tools out of the homes of agents without a profile, which matters once the settings give it profiles.
+	 * and connectors' tools out of the homes of agents not given them.
 	 */
 	async function start(): Promise<void> {
 		await root.commit(async (tx) => {
 			const doc = await tx.doc(Agents);
 			if (!doc.agents.some((a) => a.id === DEFAULT_AGENT)) doc.agents.unshift({ ...defaultEntry(), home: root.id, createdAt: Date.now() });
-			if (profiles().length > 0) for (const agent of doc.agents) await offerBrowser(tx, agent);
+			for (const agent of doc.agents) await offerExtensions(tx, agent, granted());
 		}, background);
 		for (const agent of (await read()).agents) await sandbox(agent.id);
+	}
+
+	/**
+	 * Offers each agent the granted extensions it's given, again, as when a connector is added; `gone` are ones removed.
+	 * A connector removed is taken out of every agent's entry.
+	 */
+	async function reoffer(gone: { extension: string; connector?: string }[] = []): Promise<void> {
+		await root.commit(async (tx) => {
+			const doc = await tx.doc(Agents);
+			for (const agent of doc.agents) {
+				for (const { connector } of gone) {
+					if (connector === undefined || agent.connectors === undefined) continue;
+					agent.connectors = agent.connectors.filter((c) => c !== connector);
+					if (agent.connectors.length === 0) delete agent.connectors;
+				}
+				await offerExtensions(tx, agent, granted(), gone.map((g) => g.extension));
+			}
+		}, background);
 	}
 
 	/** The agent's sandbox, made if it isn't there. */
@@ -469,6 +506,7 @@ export function createRoster(options: {
 		const known = options.workspaces();
 		for (const workspace of change.workspaces ?? []) if (!known.includes(workspace)) throw new Error(`There's no workspace ${workspace}.`);
 		for (const profile of change.profiles ?? []) if (!profiles().includes(profile)) throw new Error(`There's no browser profile ${profile}.`);
+		for (const connector of change.connectors ?? []) if (!connectors().includes(connector)) throw new Error(`There's no connector ${connector}.`);
 		const channel = change.channel;
 		if (channel !== undefined && channel !== "") {
 			if (id === DEFAULT_AGENT) throw new Error("The default agent's Slack channel is slack.channelId in the settings file.");
@@ -501,8 +539,9 @@ export function createRoster(options: {
 				if (base.thinkingLevel !== undefined) settings.thinkingLevel = base.thinkingLevel;
 				const removed = Array.isArray(base.tools) ? [] : (base.tools?.remove ?? []);
 				if (removed.length + hidden.length > 0) settings.tools = { remove: [...new Set([...removed, ...hidden])] };
-				// No profiles yet, so no browser.
-				if (profiles().length > 0) settings.extensions = { remove: [BROWSER_EXTENSION] };
+				// No profiles or connectors yet, so none of their tools.
+				const withheld = granted().map((g) => g.extension);
+				if (withheld.length > 0) settings.extensions = { remove: withheld };
 				(await tx.doc(AgentOf, home)).agent = id;
 				made = { id, name: fields.name.trim(), job: fields.job.trim(), home, hosts: [], workspaces: [], canMessage: [], extensions: [], createdAt: Date.now() };
 				doc.agents.push(JSON.parse(JSON.stringify(made)));
@@ -541,7 +580,12 @@ export function createRoster(options: {
 			if (change.profiles !== undefined) {
 				if (change.profiles.length === 0) delete agent.profiles;
 				else agent.profiles = [...new Set(change.profiles)];
-				await offerBrowser(tx, agent);
+				await offerExtensions(tx, agent, granted());
+			}
+			if (change.connectors !== undefined) {
+				if (change.connectors.length === 0) delete agent.connectors;
+				else agent.connectors = [...new Set(change.connectors)];
+				await offerExtensions(tx, agent, granted());
 			}
 			if (change.actHosts !== undefined) {
 				const kept: Record<string, string[]> = {};
@@ -583,7 +627,7 @@ export function createRoster(options: {
 		return conversation;
 	}
 
-	return { start, list: async () => (await read()).agents.map((a) => ({ ...a })), add, update, archive, home, sandbox };
+	return { start, reoffer, list: async () => (await read()).agents.map((a) => ({ ...a })), add, update, archive, home, sandbox };
 }
 
 export type RosterService = ReturnType<typeof createRoster>;

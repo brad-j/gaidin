@@ -21,6 +21,11 @@ export function watch(config: Config, agent?: string): Promise<number> {
 	return talk(config, request, false);
 }
 
+/** Lists, adds, changes or removes a connector. */
+export function connectors(config: Config, request: Extract<ClientMessage, { type: "connector" }>): Promise<number> {
+	return talk(config, request, true);
+}
+
 /** Lists, adds or changes an agent. */
 export function agents(config: Config, request: Extract<ClientMessage, { type: "agent" }>): Promise<number> {
 	return talk(config, request, true);
