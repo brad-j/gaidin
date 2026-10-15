@@ -1,6 +1,6 @@
 # gaidin
 
-A personal agent for one person, built on [Pi Durable](https://earendil.com/posts/pi-durable/). You talk to it from Slack, a web page or the command line, and all three share one conversation stored in SQLite. A run, a reminder or a question waiting for your approval survives a crash or a restart and carries on where it stopped.
+A personal agent for one person, built on [Pi Durable](https://earendil.com/posts/pi-durable/). You talk to it from the command line or a web page, which share one conversation stored in SQLite, or from Slack, where each thread is a conversation of its own. A run, a reminder or a question waiting for your approval survives a crash or a restart and carries on where it stopped.
 
 In the Wheel of Time, a Warder (gaidin) is bonded to one Aes Sedai and always on watch.
 
@@ -14,7 +14,7 @@ It can:
 - work on projects on your other machines (workspaces), asking before each action
 - check on a homelab and read its container logs (an extension written for the original deployment)
 
-Slack threads branch the conversation: a reply in a thread sees the channel up to that point and nothing after.
+Each message you post in the Slack channel starts a thread, answered there, with gaidin's settings and memory but not the main conversation's history.
 
 ## Quick start
 
@@ -34,7 +34,7 @@ pnpm check                                   # type check, lint and tests
 
 ## Documentation
 
-- [Concepts](docs/concepts.md): the durable conversation, forks, and what survives a restart
+- [Concepts](docs/concepts.md): the durable conversation, Slack threads, and what survives a restart
 - [Surfaces](docs/surfaces.md): the CLI, Slack and the web view, and how to set them up
 - [Tools](docs/tools.md): every tool, what it can reach, and what asks first
 - [Security](docs/security.md): the sandbox, redaction, approvals, and the known gaps

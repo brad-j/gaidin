@@ -1,6 +1,6 @@
 // Notifications in Slack (notifications.ts): reminders with snooze buttons, job reports, a paused job with a
 // Resume button, budget warnings, and requests for approval and questions with their buttons, all in the
-// gaidin channel. A request is asked in the thread when its conversation is a thread's fork, and its message
+// gaidin channel. A request is asked in the thread when its conversation is a thread's, and its message
 // shows the outcome once it's decided anywhere; a reply in a report's thread continues that run's
 // conversation. Presses on these buttons come back through `action`; index.ts hands it only the owner's, in
 // the channel. Messages the owner writes are conversation.ts's.
@@ -134,7 +134,7 @@ export function createSlackNotifications(options: {
 	const { harness, root, approvals, api, channel } = options;
 	const post = slackPoster(api);
 
-	/** The thread a conversation lives in, if it's a thread's fork. */
+	/** The thread a conversation lives in, if it's a thread's. */
 	async function threadOf(conversationId: number): Promise<string | undefined> {
 		const threads = (await harness.snapshot(SlackState, context))?.threads ?? {};
 		return Object.entries(threads).find(([, id]) => id === conversationId)?.[0];

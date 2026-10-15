@@ -37,6 +37,7 @@
 23. Skills: guides gaidin opens when a request calls for one, listed in every system prompt and read with `read_skill`. The documentation is the built-in `gaidin` skill, so gaidin can answer questions about itself; local skills live in the data directory, and the web view has a page for them ([Tools](tools.md#skills)).
 24. The web view controls the rest: a memory page to add, edit and forget notes; a settings page for the model, thinking, tools, standing instructions and notification devices; an activity page with spend against the limits, cost by model and the timeline; and writing skills, by the owner on the skills page and by gaidin with `write_skill` and `remove_skill`, which always ask, each change a commit ([Surfaces](surfaces.md#web-view), [Tools](tools.md#skills)).
 25. A history page for Slack threads and job runs; compaction from about 60,000 tokens, so requests stay under the 100,000-token price tier ([Concepts](concepts.md#compaction)); and Esc stops a run only from the console.
+26. Slack threads as separate conversations: each top-level message starts one with the root's settings and is answered in its thread, so the channel no longer shares the root conversation with the CLI and web view ([Concepts](concepts.md#slack-threads)).
 
 ## Next
 
@@ -44,4 +45,4 @@ Candidates:
 
 - Release polish: a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
 
-Not planned: branching from any message in the web view, since Slack threads already branch, and push-to-talk, since the owner dictates with superwhisper.
+Not planned: branching from any message in the web view, since each Slack thread is already a conversation of its own, and push-to-talk, since the owner dictates with superwhisper.

@@ -4,7 +4,7 @@
 
 `gaidin serve` (`src/server.ts`) is the only process that opens the SQLite file. It runs the agent and serves every surface: the Unix socket the CLI uses, Slack over Socket Mode, and the web view. Pi Durable allows one process per storage, so nothing else may open the file while the server runs.
 
-Everything you say from any surface goes to the root conversation, so the CLI, the Slack channel and the web view all see the same history. A message sent from Slack shows up live in the web view and in `gaidin watch`.
+Everything you say from the CLI or the web view goes to the root conversation, so both see the same history, live in `gaidin watch` too. Slack is the exception: each thread there is a [conversation of its own](#slack-threads).
 
 ## Durability
 
@@ -24,9 +24,11 @@ Every message carries a request id, and submitting the same id again returns the
 
 Every request sends the conversation so far, so a long conversation makes every step slower and dearer, and Anthropic charges five times as much for every token of a request with over 100,000 tokens of input. Pi Durable's compaction summarises older messages and sends the summary in their place; the messages themselves stay in storage and in the [history index](tools.md#past-conversations). It times compaction from the model's context window, 1M tokens for Haiku and Sonnet 5.5, so `src/host.ts` gives it a smaller one: a summary starts in the background once a conversation reaches about 60,000 tokens and keeps the last 20,000 or so as they are, and a request waits for one above 85,000. A conversation that was already past that, as the main one can be after an upgrade, is summarised before its next answer. The log shows a "summary" line where it happened, which opens to what the model reads instead.
 
-## Forks
+## Slack threads
 
-A reply in a Slack thread forks the root conversation at the answer the thread hangs off. The fork starts with the root's history up to that answer and continues on its own: the thread sees nothing said in the channel afterwards, and the channel never sees the thread. Later replies in the same thread continue the same fork. A fork starts with the agent settings the root had at that point.
+Each top-level message in the Slack channel starts a new conversation, answered in the message's thread; later replies in the thread continue it. It starts with the root conversation's agent settings (model, thinking, tools and standing instructions) as they are at that moment, and none of its history, so a thread costs only its own messages. Memory, reminders and jobs are shared, and `search_history` finds what was said elsewhere. A change to the settings in the web view applies to the root and to threads started after it.
+
+A reply in the thread of something gaidin posted on its own, such as a job's report, forks that run's conversation at the report: the thread sees the run up to there and continues on its own. Answers posted in the channel before threads were separate work the same way, forking the root conversation at that answer.
 
 ## Time
 

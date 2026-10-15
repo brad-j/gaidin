@@ -1,6 +1,6 @@
 // The history page: Slack threads and job runs, the most recently active first, each opening to its transcript,
 // read-only, drawn as the console draws the main conversation. #/history lists them; #/history/<id> opens one.
-// A thread starts from an answer in the main conversation, which is shown above its own messages.
+// A thread forked from an answer in the main conversation shows that answer above its own messages; a thread started in Slack has none.
 import type { Gets } from "../src/web.ts";
 import { load } from "./api.ts";
 import { ago, el, when } from "./dom.ts";

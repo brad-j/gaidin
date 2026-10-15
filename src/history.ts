@@ -13,7 +13,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
-import { AssistantEntry, type ConversationId, defineExtension, defineTool, type EntryRecord, type Harness, ToolResultEntry, type Tx, UserEntry } from "@earendil-works/pi-durable";
+import { AssistantEntry, type ConversationId, defineExtension, defineTool, type EntryRecord, type Harness, ROOT_CONVERSATION_ID, ToolResultEntry, type Tx, UserEntry } from "@earendil-works/pi-durable";
 import { ApprovalSettled } from "./approvals.ts";
 import { outsideText } from "./guards.ts";
 import { JobReported } from "./jobs.ts";
@@ -99,7 +99,7 @@ function messageOf(entry: EntryRecord): Omit<Row, "conversation" | "place"> | un
 async function placeOf(tx: Tx, id: ConversationId): Promise<Place | undefined> {
 	const conversation = await tx.conversation(id);
 	if (conversation === undefined) return undefined;
-	if (conversation.owner === undefined) return conversation.parent === undefined ? "main" : "thread";
+	if (conversation.owner === undefined) return id === ROOT_CONVERSATION_ID ? "main" : "thread";
 	return (await tx.task(conversation.owner.taskId))?.kind === "gaidin.job" ? "job" : undefined;
 }
 

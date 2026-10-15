@@ -1,13 +1,15 @@
-// The owner's messages in Slack. One channel is the root conversation, the same one the CLI talks to. A
-// thread on any message in it is a fork of the root at that message's answer; later replies in the thread
-// continue the fork. index.ts hands this only the owner's messages in that channel.
+// The owner's messages in Slack. Each top-level message in the channel starts a conversation of its own, with
+// the root conversation's settings but none of its history, and is answered in its thread; later replies in the
+// thread continue it. A thread on something gaidin posted on its own, such as a job's report, or on an answer from
+// before threads were separate, forks that conversation at that answer. index.ts hands this only the owner's
+// messages in that channel.
 //
 // Files sent with a message are downloaded when it goes to the model. Images go to the model with the text;
 // other files, such as PDFs, are saved in the sandbox's uploads/ directory and the message says where.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import { type Conversation, defineDoc, type EntryId, type Harness, type UserInput } from "@earendil-works/pi-durable";
+import { AgentDoc, type Conversation, defineDoc, type EntryId, type Harness, type UserInput } from "@earendil-works/pi-durable";
 import type { ApprovalService } from "../approvals.ts";
 import { assistantText, context } from "../host.ts";
 import { stamp } from "../time.ts";
@@ -31,11 +33,11 @@ function imageType(data: Buffer): string | undefined {
 
 /** Slack bookkeeping, keyed by message ts. Durable, so a restart still posts answers it owes. */
 export const SlackState = defineDoc<{
-	/** The owner's top-level messages and gaidin's answers to them → the answer entry a thread on them forks at. */
+	/** Messages gaidin posted on its own, and top-level messages from before threads were separate and their answers → the answer entry a thread on them forks at. */
 	answers: Record<string, number>;
 	/** For answers outside the root conversation, such as a scheduled job's report: the conversation they're in. */
 	answerConversations?: Record<string, number>;
-	/** Thread parent ts → the fork for that thread. */
+	/** Thread parent ts → the conversation for that thread. */
 	threads: Record<string, number>;
 	/** Accepted messages whose answer isn't posted yet. */
 	pending: Record<string, Pending>;
@@ -105,6 +107,8 @@ export function createSlackConversation(options: {
 		// A redelivered event: already answered, or already on its way.
 		if (ts in state.answers || state.consumed?.[ts] !== undefined) return false;
 		if (ts in state.pending) return true;
+		// A top-level message whose thread exists and owes nothing has been answered.
+		if (threadTs === undefined && ts in state.threads) return false;
 		const approvals = options.approvals;
 		const consume = () => root.commit(async (tx) => {
 			const doc = await tx.doc(SlackState);
@@ -121,36 +125,52 @@ export function createSlackConversation(options: {
 				return false;
 			}
 		}
-		let conversationId: number = root.id;
-		if (threadTs !== undefined) {
-			const existing = state.threads[threadTs];
+		// The time is fixed here, so a resubmission after a restart sends the same text.
+		const content = stamp(text);
+		if (threadTs === undefined) {
+			// Nothing can be waiting in a new conversation, so the message is pending from the commit that creates it.
+			await harness.createConversation({
+				ownership: { kind: "ownerless" },
+				init: async (tx, id) => {
+					// The root's model, thinking, tools and instructions as they are now; later changes there don't reach it.
+					const settings = JSON.parse(JSON.stringify(await tx.doc(AgentDoc, root.id)));
+					Object.assign(await tx.doc(AgentDoc, id), settings);
+					const pending: Pending = { conversationId: id, content, threadTs: ts };
+					if (files.length > 0) pending.files = files;
+					const doc = await tx.doc(SlackState);
+					doc.threads[ts] = id;
+					doc.pending[ts] = pending;
+				},
+			}, context);
+			return true;
+		}
+		let conversationId: number;
+		const existing = state.threads[threadTs];
+		if (existing !== undefined) {
+			conversationId = existing;
+		} else {
 			const at = state.answers[threadTs];
-			if (existing !== undefined) {
-				conversationId = existing;
-			} else if (at === undefined) {
+			if (at === undefined) {
 				await postWithRetry(threadTs, "I can only pick up threads on messages I've answered in this channel.");
 				return false;
-			} else {
-				const from = state.answerConversations?.[threadTs];
-				const parent = from === undefined ? root : await harness.conversation(toConversationId(from), context);
-				if (parent === undefined) throw new Error(`conversation ${from} is gone`);
-				const fork = await parent.fork(entryId(at), {
-					ownership: { kind: "ownerless" },
-					init: async (tx, id) => {
-						(await tx.doc(SlackState)).threads[threadTs] = id;
-					},
-				}, context);
-				conversationId = fork.id;
 			}
+			const from = state.answerConversations?.[threadTs];
+			const parent = from === undefined ? root : await harness.conversation(toConversationId(from), context);
+			if (parent === undefined) throw new Error(`conversation ${from} is gone`);
+			const fork = await parent.fork(entryId(at), {
+				ownership: { kind: "ownerless" },
+				init: async (tx, id) => {
+					(await tx.doc(SlackState)).threads[threadTs] = id;
+				},
+			}, context);
+			conversationId = fork.id;
 		}
 		// A question waiting in this conversation takes the message as its answer; a waiting approval is skipped.
 		if (approvals !== undefined && (await approvals.intercept(conversationId, text, "slack")) === "answered") {
 			await consume();
 			return false;
 		}
-		// The time is fixed here, so a resubmission after a restart sends the same text.
-		const pending: Pending = { conversationId, content: stamp(text) };
-		if (threadTs !== undefined) pending.threadTs = threadTs;
+		const pending: Pending = { conversationId, content, threadTs };
 		if (files.length > 0) pending.files = files;
 		await root.commit(async (tx) => {
 			(await tx.doc(SlackState)).pending[ts] = pending;
@@ -185,6 +205,7 @@ export function createSlackConversation(options: {
 			await root.commit(async (tx) => {
 				const state = await tx.doc(SlackState);
 				delete state.pending[ts];
+				// Only a message accepted before threads were separate is answered in the channel.
 				if (answer !== undefined && pending.threadTs === undefined) {
 					for (const key of [ts, ...posted]) state.answers[key] = answer;
 				}

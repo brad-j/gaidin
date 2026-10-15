@@ -11,7 +11,8 @@ import { context, openHost, startHost } from "../src/host.ts";
 import { type Job, Jobs } from "../src/jobs.ts";
 import { Reminders } from "../src/reminders.ts";
 import { slackDownload } from "../src/slack/api.ts";
-import { recordPosted } from "../src/slack/index.ts";
+import { conversationId } from "../src/ids.ts";
+import { recordPosted, SlackState } from "../src/slack/index.ts";
 import { BRAD, CHANNEL, fakeSlack, message, press } from "./fake-slack.ts";
 
 function tempDir(t: TestContext): string {
@@ -44,34 +45,40 @@ async function until(check: () => boolean, timeoutMs = 10_000) {
 	}
 }
 
-test("the channel is the root conversation and a thread forks it at the answer it hangs off", async (t) => {
+test("each top-level message starts its own conversation, answered in its thread", async (t) => {
 	const host = await startHost({ dataDir: tempDir(t), ...echoModels() });
 	t.after(() => host.harness.close(context));
 	const { posts, receive } = fakeSlack(host);
+	await host.root.configure({ thinkingLevel: "high" }, context);
+	const said = await (await host.root.submit({ type: "input", content: "main" }, context)).wait(context);
 
 	await receive(message("1.0", "a"));
 	await until(() => posts().length === 1);
 	await receive(message("2.0", "b"));
 	await until(() => posts().length === 2);
-	assert.deepEqual(posts().map((p) => [p.text, p.threadTs]), [["a", undefined], ["a / b", undefined]]);
+	// Neither sees the main conversation or the other.
+	assert.deepEqual(posts().map((p) => [p.text, p.threadTs]), [["a", "1.0"], ["b", "2.0"]]);
 
-	// A thread on gaidin's first answer sees the channel up to that answer, not "b".
-	await receive(message("3.0", "c", { thread_ts: "bot.1" }));
+	await receive(message("3.0", "c", { thread_ts: "1.0" }));
 	await until(() => posts().length === 3);
-	assert.deepEqual([posts()[2]!.text, posts()[2]!.threadTs], ["a / c", "bot.1"]);
-	await receive(message("4.0", "d", { thread_ts: "bot.1" }));
+	assert.deepEqual([posts()[2]!.text, posts()[2]!.threadTs], ["a / c", "1.0"]);
+
+	// A thread's conversation has the main conversation's settings, and the main conversation saw none of it.
+	const threads = (await host.harness.snapshot(SlackState, context))!.threads;
+	const thread = await host.harness.conversation(conversationId(threads["1.0"]!), context);
+	assert.equal((await thread!.agent(context)).thinkingLevel, "high");
+	const listed = (await host.history.conversations()).items.find((c) => c.id === thread!.id);
+	assert.deepEqual([listed?.place, listed?.title, listed?.forkedAt], ["thread", "a", undefined]);
+	const next = await (await host.root.submit({ type: "input", content: "main again" }, context)).wait(context);
+	if (next.status !== "done" || next.type !== "input") throw new Error("the run didn't finish");
+	assert.match(JSON.stringify(await host.root.commit((tx) => tx.entry(next.answer), context)), /main \/ main again/);
+
+	// A thread on an answer posted in the channel before threads were separate still forks the main conversation there.
+	if (said.status !== "done" || said.type !== "input") throw new Error("the run didn't finish");
+	await recordPosted(host.root, ["old.1"], said.answer, host.root.id as number);
+	await receive(message("4.0", "d", { thread_ts: "old.1" }));
 	await until(() => posts().length === 4);
-	assert.deepEqual([posts()[3]!.text, posts()[3]!.threadTs], ["a / c / d", "bot.1"]);
-
-	// A thread on Brad's own message forks at the same point, but it's a separate thread.
-	await receive(message("5.0", "e", { thread_ts: "1.0" }));
-	await until(() => posts().length === 5);
-	assert.deepEqual([posts()[4]!.text, posts()[4]!.threadTs], ["a / e", "1.0"]);
-
-	// The channel didn't see any of the thread.
-	await receive(message("6.0", "f"));
-	await until(() => posts().length === 6);
-	assert.deepEqual([posts()[5]!.text, posts()[5]!.threadTs], ["a / b / f", undefined]);
+	assert.deepEqual([posts()[3]!.text, posts()[3]!.threadTs], ["main / d", "old.1"]);
 });
 
 test("a redelivered event is answered once", async (t) => {
