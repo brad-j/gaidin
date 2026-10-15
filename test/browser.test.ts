@@ -13,7 +13,7 @@ import type { ApprovalRequest } from "../src/approvals.ts";
 import { BrowserState, capSnapshot, partOf } from "../src/browser/index.ts";
 import { sandboxOf } from "../src/agents.ts";
 import { Chromium } from "../src/browser/chromium.ts";
-import { keyOf, type LiveEvent } from "../src/browser/takeover.ts";
+import { compact, keyOf, type LiveEvent } from "../src/browser/takeover.ts";
 import { createWebServer } from "../src/web.ts";
 import { blocksFor } from "../src/slack/notifications.ts";
 import type { AddressInfo as Address } from "node:net";
@@ -430,6 +430,16 @@ test("the owner's keys are the ones the view may press", () => {
 	assert.equal(keyOf("Control+Control+a"), undefined);
 	assert.equal(keyOf("Hyper+a"), undefined);
 	assert.equal(keyOf("+"), undefined);
+});
+
+test("the owner's input is played in as few steps as have the same effect", () => {
+	const wheel = (dy: number, x = 10) => ({ type: "wheel" as const, x, y: 10, dx: 0, dy });
+	const move = (x: number) => ({ type: "move" as const, x, y: 10 });
+	assert.deepEqual(compact([wheel(8), wheel(8), wheel(-4, 20)]), [{ ...wheel(12, 20) }]);
+	assert.deepEqual(compact([move(1), move(2), move(3)]), [move(3)]);
+	assert.deepEqual(compact([move(1), wheel(8), move(2), { type: "click", x: 5, y: 5 }, move(4)]), [wheel(8), { type: "click", x: 5, y: 5 }, move(4)]);
+	// Text and keys between them keep the order.
+	assert.deepEqual(compact([wheel(8), { type: "text", text: "a" }, wheel(8)]), [wheel(8), { type: "text", text: "a" }, wheel(8)]);
 });
 
 test("a hand-over in Slack links to the profile's page, with Done and Can't, and says how it ended", () => {

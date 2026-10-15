@@ -49,6 +49,24 @@ export function keyOf(key: string): string | undefined {
 	return [...parts, last === "Space" ? " " : last].join("+");
 }
 
+/**
+ * `events` with the same effect in fewer steps: scrolls in a row add up, moves in a row keep the last, and a move just
+ * before anything that moves the pointer itself goes. Each step costs the page a frame or two, and a trackpad sends
+ * dozens of scrolls a second, so played one by one they'd fall seconds behind.
+ */
+export function compact(events: readonly LiveInput[]): LiveInput[] {
+	const out: LiveInput[] = [];
+	for (const event of events) {
+		const last = out.at(-1);
+		if (last?.type === "move" && ["move", "wheel", "click", "down", "up"].includes(event.type)) out.pop();
+		const previous = out.at(-1);
+		if (event.type === "wheel" && previous?.type === "wheel") {
+			out[out.length - 1] = { ...event, dx: (previous.dx ?? 0) + (event.dx ?? 0), dy: (previous.dy ?? 0) + (event.dy ?? 0) };
+		} else out.push(event);
+	}
+	return out;
+}
+
 type Held = {
 	profile: Profile;
 	release: () => void;
@@ -163,10 +181,10 @@ export function createTakeOver(options: {
 		return held;
 	}
 
-	/** The owner's input, in order, to the profile's current tab. */
+	/** The owner's input, in order, to the profile's current tab, compacted. */
 	async function input(name: string, events: readonly LiveInput[]): Promise<void> {
 		const page = heldOf(name).profile.page;
-		for (const event of events) {
+		for (const event of compact(events)) {
 			const { x = 0, y = 0, button = "left" } = event;
 			switch (event.type) {
 				case "click":
