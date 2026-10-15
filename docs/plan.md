@@ -43,6 +43,105 @@
 
 Candidates:
 
+- Several named agents, designed below and waiting for review. Then connectors (MCP servers with OAuth, tokens held by the server, granted per agent), a persistent browser with a take-over view, and owner-written allow and ask-first rules, in that order.
 - Release polish: a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
 
 Not planned: branching from any message in the web view, since each Slack thread is already a conversation of its own, and push-to-talk, since the owner dictates with superwhisper.
+
+## Design: several agents
+
+Proposed, not built. A roster of named agents, each with its own job, standing instructions, model, tools, work notes, sandbox, allowed hosts and workspaces. Agents message each other and hand work on; one can coordinate the rest. Unlike Grok Bot, whose bots share one machine, agents are kept apart: one can't read another's sandbox, notes, jobs or past conversations, or use its grants.
+
+Decided with the owner:
+
+- Slack has a channel per agent, all on the one Slack app.
+- Memory has shared notes about the owner, which every agent sees, and work notes per agent. An agent's write to a shared note always asks.
+- The current gaidin becomes the default agent and keeps everything it has.
+- The roster lives in the database and is edited from the web view, not the settings file.
+
+It needs nothing new from Pi Durable 1.1.0: prompt sections and the sandbox factory are told which conversation they serve, and `conversationCreated` runs whenever a conversation is created or forked.
+
+### Data model
+
+An agent is a home conversation plus a roster entry. The home conversation's `AgentDoc` holds the model, thinking level, tool switches and standing instructions, as the root's does today, so the settings code works unchanged once it's pointed at the right conversation. The roster entry holds the rest.
+
+| Document | Scope | Holds |
+|---|---|---|
+| `gaidin.agents` (new) | session | the roster: per agent an id (a lowercase name like a workspace's, fixed), a display name, a one-line job other agents and the owner see, its home conversation, its Slack channel, the hosts it may fetch from without asking, the workspaces it may use, the agents it may message, and whether it's archived |
+| `gaidin.agent-of` (new) | conversation, latest only, copied on fork | which agent a conversation belongs to |
+| `gaidin.work-notes` (new) | session family keyed by agent id | that agent's work notes, up to 4,000 characters |
+| `gaidin.memory` | session, unchanged | the shared notes, up to 8,000 characters |
+| `gaidin.jobs`, `gaidin.reminders` | session | each item gains `agent` |
+| `gaidin.approvals` | session | each request gains `agent`; `fetchHosts` stays the default agent's, and other agents' always-allowed hosts are in their roster entries |
+
+A conversation without `gaidin.agent-of`, and an item without `agent`, belongs to the default agent, so nothing stored today needs rewriting. Forks (threads on a report, a job's run) carry the binding with them; a new conversation gets one in the commit that creates it.
+
+New agents' sandboxes are `<data>/agents/<id>/sandbox`, outside the default agent's `<data>/sandbox`, which stays where it is. The sandbox factory picks the root from the conversation's binding, and each root has its own lock. Slack uploads go into the receiving agent's sandbox.
+
+### What each agent sees and can do
+
+- Its system prompt opens with its name and job ("You are Scout, one of Brad's agents. Your job: ...") and lists the other agents it may message, with their jobs. The default agent's preamble stays as it is.
+- Notes: the shared notes, then its own work notes. `remember` writes a work note unless asked for a shared one. Note ids in the prompt and tools read `s12` (shared) or `w4` (work); the stored numbers don't change. Writing, changing or forgetting a shared note always asks, from any agent. That includes the default agent, which today writes a note without asking when nothing from outside is in the conversation. Work notes ask as notes do today, after outside text.
+- Reminders and jobs: it lists, cancels and is told about only its own. A job runs as the agent that made it, with that agent's tools, sandbox and grants. The limit of 20 jobs stays a total across agents.
+- `search_history` and `read_history` find only its own conversations. The history index gains an agent column and is rebuilt from the transcript at start, as it already can be.
+- Fetches: hosts the owner always allowed for that agent, plus search results in the same conversation as today. "Always allow" adds the host for that agent only.
+- Workspaces: only those in its roster entry, refused otherwise; every call still asks. The default agent has all of them.
+- Tools: the settings page switches built-in tools per agent, as today. A self-written tool is on only for the agent that loaded it until the owner switches it on for another; the approvals hook refuses a call from an agent it isn't on for, so a tool that appears before the agent's tool list is updated still can't run there. Its fetches use the calling agent's allowed hosts.
+- Skills are shared. `write_skill` and `remove_skill` still always ask.
+- Spend limits stay a total across agents. The activity page shows cost per agent.
+
+### Messaging and handing off
+
+Two tools, available to an agent only when its roster entry lets it message someone:
+
+- `message_agent(agent, text)` asks another agent something and waits for the answer, as `ask_owner` waits for the owner. A durable task starts a new conversation for the receiver, bound to it and with its home settings, submits the text, and returns the answer as the tool's result. It survives restarts, and the request id comes from the call's task, so a rerun doesn't send twice.
+- `hand_off(agent, task)` gives work to another agent and doesn't wait. The receiver's conversation is started the same way, and its answer reaches the owner as a report in the receiver's channel. The sender gets back the agent's name and a reference it can mention.
+
+Rules:
+
+- An agent can message only the agents its roster entry lists; a call to any other is refused, not asked. A coordinator is an agent whose list holds every agent, with instructions to match; nothing else sets it apart. The default agent starts with an empty list.
+- A message from another agent is outside text to the receiver, since the sender may have been steered. Its conversation starts with a marker that the approvals hook treats like a gate's findings, so the receiver's note writes and cancels ask. The answer that comes back is outside text to the sender (the tools' guards say `outside`).
+- Either tool asks the owner while outside text is in the sender's context. Without that, a page the sender read could pass work to an agent with wider grants, such as one allowed to fetch from a host this one isn't.
+- A chain stops at 3 hops, and an agent can't message one already in the chain.
+- These conversations appear on the history page labeled with both agents ("Scout, from gaidin").
+
+### Approvals
+
+Requests carry the agent and show its name: "Scout asks to fetch ..." in Slack and the web view's dock. Guards get the agent in their situation, so hosts, workspace grants and refusals are that agent's. The hour-long workspace grant stays per conversation. `ask_owner` questions name the agent the same way.
+
+### Slack
+
+- The roster entry holds the agent's channel. The settings' `slack.channelId` stays the default agent's channel, so nothing in the settings file changes.
+- A top-level message in an agent's channel starts a thread conversation bound to that agent, with its home settings. Messages from the owner in any roster channel count; other channels, users and bots are ignored, as now.
+- Reminders, reports, paused jobs, approval requests and questions go to the owning agent's channel, in the thread when they come from one.
+- `SlackState` stays one document. Slack's message ts is unique only within a channel, so other channels' keys are `<channel>:<ts>`; the default channel keeps bare ts, so existing entries still match. A pending message records its channel.
+- Each agent posts under its own name, with `chat:write.customize` added to `deploy/slack-manifest.yaml`. An app made before then needs the scope added under OAuth & Permissions and the app reinstalled; until it is, posts fail with `missing_scope` and go out again under the app's name with the agent's name in front, and `gaidin doctor` says so. The default agent posts as gaidin, as now.
+- Setting up an agent's channel: create it, `/invite @gaidin`, and put its ID in the agent's roster entry. An agent with no channel is reached from the web view and CLI.
+
+### Web view
+
+- The header gets an agent switcher. The default agent keeps today's routes (`#/`, `#/settings`, ...); another agent's pages are under `#/a/<id>/`. The console, settings, memory, schedule and history pages show the chosen agent. Activity and the timeline show every agent, with a column for which.
+- The dock shows every pending request, each labeled with its agent, whichever agent is shown.
+- A new agents page (`#/agents`) lists the roster and creates and archives agents. The settings page gains the roster entry's fields: name, job, channel, hosts (with remove), workspaces and who it may message.
+- The memory page shows shared notes and the agent's work notes in two sections.
+- The protocol takes `?agent=<id>` on GETs and `/events`, and an optional `agent` in POST bodies, defaulting to the default agent. New routes: `/api/agents`, `/api/agents/save`, `/api/agents/archive`.
+- Archiving pauses the agent's jobs, cancels its reminders and keeps its conversations and sandbox; it can be restored. The default agent can't be archived. Deleting an agent's files is left to the owner.
+
+### CLI
+
+`gaidin ask --agent <id>` and `gaidin watch --agent <id>`, with the socket message gaining an optional `agent`; without one, the default agent, as today. Until the web view's agents page exists, `gaidin agent list`, `gaidin agent add <id> --name <name> --job <text>` and `gaidin agent set <id> --channel <id>` edit the roster over the socket, so Slack can be tried first.
+
+### Migration
+
+On first start the server writes a roster with the default agent: id `gaidin`, the root as its home, no channel of its own (the settings' channel applies), and every workspace. `gaidin.sqlite` is otherwise untouched: the new documents start empty and missing `agent` fields mean the default agent. The existing notes become the shared notes. `history.sqlite` is rebuilt with the agent column. The settings file doesn't change.
+
+Going back to an older build ignores the new documents and fields, but would run other agents' jobs and reminders as gaidin, so cancel them first.
+
+### Order of work
+
+1. Commit item 26 (Slack threads as conversations), which is in progress.
+2. Core: the roster, bindings, prompts, sandboxes, memory split, per-agent approvals, jobs and reminders, history, messaging and hand-off, and the CLI. Tests with the faux provider cover isolation: one agent's tools can't reach another's sandbox, notes, jobs, history or hosts.
+3. Slack: a channel per agent.
+4. Web view: the switcher, the agents page and the per-agent pages, checked in a browser with the Playwright e2e tests.
+
+Each step ends with `pnpm check` passing and is a commit of its own.
