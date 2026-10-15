@@ -4,18 +4,23 @@
 // before threads were separate, forks that conversation at that answer. index.ts hands this only the owner's
 // messages in that channel.
 //
+// A message the owner sends from the app to a conversation with a Slack thread is posted in that thread too, marked
+// as from the app, and then its answer, so the thread reads whole in Slack.
+//
 // Files sent with a message are downloaded when it goes to the model, and go with it as files.ts has them: images to
 // the model with the text, other files, such as PDFs, to the sandbox's uploads/ directory, with the message saying where.
-import { type Conversation, defineDoc, type EntryId, type Harness, type UserInput } from "@earendil-works/pi-durable";
+import { type Conversation, defineDoc, type EntryId, type Harness, type Submission, type UserInput } from "@earendil-works/pi-durable";
 import type { ApprovalService } from "../approvals.ts";
 import { MAX_IMAGE, withFiles as attach } from "../files.ts";
 import { assistantText, context } from "../host.ts";
 import type { Threads } from "../threads.ts";
 import { stamp } from "../time.ts";
-import { conversationId as toConversationId, entryId } from "../ids.ts";
+import { conversationId as toConversationId, entryId, submissionId } from "../ids.ts";
 import type { SlackDownload, SlackFile, SlackMessage, SlackPost } from "./api.ts";
 
 type Pending = { conversationId: number; content: string; threadTs?: string; files?: SlackFile[] };
+/** A message from the app, for the Slack thread of its conversation: posted (once `posted`), then its answer. */
+type Mirrored = { conversationId: number; threadTs: string; text: string; posted?: boolean };
 
 /** Slack bookkeeping, keyed by message ts. Durable, so a restart still posts answers it owes. */
 export const SlackState = defineDoc<{
@@ -29,6 +34,8 @@ export const SlackState = defineDoc<{
 	pending: Record<string, Pending>;
 	/** Messages taken as the answer to a question, so a redelivery isn't taken again. */
 	consumed?: Record<string, number>;
+	/** Messages from the app whose post in Slack, or whose answer there, isn't done, by their submission's id. */
+	mirrored?: Record<string, Mirrored>;
 }>({
 	kind: "gaidin.slack",
 	version: 1,
@@ -69,6 +76,7 @@ export function createSlackConversation(options: {
 }) {
 	const { harness, root, threads, post, channel, retryDelayMs = 1000 } = options;
 	const delivering = new Set<string>();
+	const relaying = new Set<string>();
 	// Accepting is serialized, so two quick replies in a new thread make one fork.
 	let accepting: Promise<unknown> = Promise.resolve();
 
@@ -175,15 +183,7 @@ export function createSlackConversation(options: {
 			// The request id makes this idempotent: after a restart it finds the run already admitted.
 			const content = pending.files === undefined ? pending.content : await withFiles(pending.content, pending.files, ts);
 			const submission = await conversation.submit({ type: "input", content, requestId: `slack:${ts}` }, context);
-			const settled = await submission.wait(context);
-			let answer: EntryId | undefined;
-			let text: string;
-			if (settled.status === "done" && settled.type === "input") {
-				answer = settled.answer;
-				text = assistantText(await conversation.commit((tx) => tx.entry(settled.answer), context)) ?? "(no text in the answer)";
-			} else {
-				text = options.explain?.(settled.reason) ?? `! ${settled.status}${settled.reason ? `: ${settled.reason}` : ""}`;
-			}
+			const { answer, text } = await answerTo(conversation, submission);
 			// At least once: a crash between posting and the commit below posts it again.
 			const posted = await postWithRetry(pending.threadTs, text);
 			await root.commit(async (tx) => {
@@ -199,6 +199,64 @@ export function createSlackConversation(options: {
 			console.error(`[slack] couldn't answer ${ts}:`, error instanceof Error ? error.message : error);
 		} finally {
 			delivering.delete(ts);
+		}
+	}
+
+	/** What a message's run answered, as Slack shows it: the answer's text, or why there's none. */
+	async function answerTo(conversation: Conversation, submission: Submission): Promise<{ answer?: EntryId; text: string }> {
+		const settled = await submission.wait(context);
+		if (settled.status === "done" && settled.type === "input") {
+			const text = assistantText(await conversation.commit((tx) => tx.entry(settled.answer), context)) ?? "(no text in the answer)";
+			return { answer: settled.answer, text };
+		}
+		return { text: options.explain?.(settled.reason) ?? `! ${settled.status}${settled.reason ? `: ${settled.reason}` : ""}` };
+	}
+
+	/**
+	 * Posts a message the owner sent from the app in its conversation's Slack thread, if it has one, then its answer.
+	 * It's recorded first, so a restart still posts both. Resolves once it's recorded, to whether there was a thread.
+	 */
+	async function mirror(sent: { conversationId: number; submission: number; text: string; files?: readonly string[] }): Promise<boolean> {
+		const state = await read();
+		const threadTs = Object.keys(state.threads).find((ts) => state.threads[ts] === sent.conversationId);
+		if (threadTs === undefined) return false;
+		const files = sent.files === undefined || sent.files.length === 0 ? "" : `\n_with ${sent.files.join(", ")}_`;
+		const text = `*From the app:* ${sent.text}${files}`;
+		await root.commit(async (tx) => {
+			const doc = await tx.doc(SlackState);
+			doc.mirrored ??= {};
+			doc.mirrored[String(sent.submission)] ??= { conversationId: sent.conversationId, threadTs, text };
+		}, context);
+		void relay(String(sent.submission));
+		return true;
+	}
+
+	async function relay(key: string): Promise<void> {
+		if (relaying.has(key)) return;
+		relaying.add(key);
+		try {
+			const mirrored = (await read()).mirrored?.[key];
+			if (mirrored === undefined) return;
+			// At least once, as for answers: a crash between posting and recording it posts it again.
+			if (mirrored.posted !== true) {
+				await postWithRetry(mirrored.threadTs, mirrored.text);
+				await root.commit(async (tx) => {
+					const entry = (await tx.doc(SlackState)).mirrored?.[key];
+					if (entry !== undefined) entry.posted = true;
+				}, context);
+			}
+			const conversation = await harness.conversation(toConversationId(mirrored.conversationId), context);
+			const submission = await harness.submission(submissionId(Number(key)), context);
+			const { text } = conversation === undefined || submission === undefined ? { text: "! The message from the app is gone, so there's no answer to post." } : await answerTo(conversation, submission);
+			await postWithRetry(mirrored.threadTs, text);
+			await root.commit(async (tx) => {
+				delete (await tx.doc(SlackState)).mirrored?.[key];
+			}, context);
+		} catch (error) {
+			// It stays recorded and is retried at the next start.
+			console.error(`[slack] couldn't post the app's message ${key}:`, error instanceof Error ? error.message : error);
+		} finally {
+			relaying.delete(key);
 		}
 	}
 
@@ -229,11 +287,12 @@ export function createSlackConversation(options: {
 		}
 	}
 
-	/** Answers messages accepted before the last stop. */
+	/** Answers messages accepted before the last stop, and posts what's owed for the app's. */
 	async function recover(): Promise<void> {
-		await Promise.all(Object.keys((await read()).pending).map((ts) => deliver(ts)));
+		const state = await read();
+		await Promise.all([...Object.keys(state.pending).map((ts) => deliver(ts)), ...Object.keys(state.mirrored ?? {}).map((key) => relay(key))]);
 	}
 
-	return { receive, recover };
+	return { receive, recover, mirror };
 }
 

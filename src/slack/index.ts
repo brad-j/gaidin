@@ -54,6 +54,8 @@ export function createSlack(settings: SlackConfig, host: Host, ports: { api?: Sl
 	return {
 		/** The way notifications reach the owner in Slack; the host's start takes it. */
 		adapter: notifications.adapter,
+		/** Posts a message sent from the app in its conversation's Slack thread, if it has one, and then its answer. */
+		mirror: conversation.mirror,
 		/** Answers messages and asks requests left from before a restart, and connects. */
 		start() {
 			void conversation.recover();

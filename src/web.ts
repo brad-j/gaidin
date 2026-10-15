@@ -223,6 +223,11 @@ export function createWebServer(options: {
 	user: string;
 	/** The directory of moiraine's build, served at /app/. */
 	app?: string;
+	/**
+	 * Posts a message sent from the app in its conversation's Slack thread, if it has one, and then its answer (slack/).
+	 * Resolves once that's recorded. `submission` is the message's.
+	 */
+	mirror?: (sent: { conversationId: number; submission: number; text: string; files?: readonly string[] }) => Promise<boolean>;
 	/** Files the app sends ahead of the messages that name them. Without it, /api/files refuses them. */
 	uploads?: Uploads;
 	/** Tools the page can switch off, as of now. The reminder and homelab tools stay on. */
@@ -450,7 +455,11 @@ export function createWebServer(options: {
 				// A message with files isn't an answer to a question; it goes to the model, which closes the question.
 				if (files.length === 0 && (await approvals.intercept(conversation.id, content, "web")) === "answered") return { ok: true, answered: true, conversation: conversation.id };
 				if (files.length > 0) await approvals.supersede(conversation.id);
-				await conversation.submit({ type: "input", content: await input(content, files, conversation), requestId }, context);
+				const submission = await conversation.submit({ type: "input", content: await input(content, files, conversation), requestId }, context);
+				// The message is in; a Slack thread that doesn't hear of it is told at the next start, or not at all.
+				await options
+					.mirror?.({ conversationId: conversation.id, submission: submission.id, text: content, files: files.length === 0 ? undefined : files.map((id) => options.uploads?.attached(id).name ?? "a file") })
+					.catch((error) => console.error("[web] couldn't record the message for Slack:", error));
 				return { ok: true, conversation: conversation.id };
 			},
 		},

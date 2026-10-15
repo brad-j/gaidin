@@ -35,6 +35,8 @@ Files can come with a message. Images, such as screenshots, go to the model with
 
 Reports from [scheduled jobs](tools.md#scheduled-jobs) are posted as messages of their own, headed with the job's title; a reply in a report's thread continues that run's conversation. Answers are posted as Markdown, which Slack renders. Answers over 12,000 characters go out as several messages. Questions from [`ask_owner`](tools.md#questions) and requests for [approval](security.md#approvals) arrive as a message with buttons, a button per choice for a question, in the thread when they come from one and in the channel otherwise. Your next message in that thread answers a question in your own words, as does a reply in the thread of a question posted in the channel. A new top-level message starts a new thread, so it doesn't answer a question from the main conversation (the CLI and web view) or skip its waiting approval. The message changes to show the outcome once you answer from either surface.
 
+A Slack thread can go on from the app too. What you send there is posted in the thread, headed *From the app:* and naming any files, followed by the answer, so the thread reads whole in Slack. It's recorded before it's posted, as Slack's own messages are, so one cut off by a restart is posted by the next start, along with its answer.
+
 ### Setting up Slack
 
 1. At api.slack.com/apps, choose Create New App > From a manifest, pick your workspace, and paste `deploy/slack-manifest.yaml` (choose YAML). It turns on Socket Mode and interactivity and asks for the scopes gaidin needs. An app made before `files:read` was added needs that scope added under OAuth & Permissions and the app reinstalled, or files in messages come back as Slack's sign-in page and are noted as unreadable.

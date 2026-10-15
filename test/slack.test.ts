@@ -13,6 +13,7 @@ import { Reminders } from "../src/reminders.ts";
 import { slackDownload } from "../src/slack/api.ts";
 import { conversationId } from "../src/ids.ts";
 import { recordPosted, SlackState } from "../src/slack/index.ts";
+import { createWebServer } from "../src/web.ts";
 import { BRAD, CHANNEL, fakeSlack, message, press } from "./fake-slack.ts";
 
 function tempDir(t: TestContext): string {
@@ -145,6 +146,69 @@ test("an answer that wasn't posted before a restart is posted by the next proces
 	await after.receive(message("2.0", "b", { thread_ts: "1.0" }));
 	await until(() => posts().length === 2);
 	assert.equal(posts()[1]!.text, "a / b");
+});
+
+test("a message from the app to a Slack thread's conversation is posted there, marked, and then its answer", async (t) => {
+	const host = await startHost({ dataDir: tempDir(t), ...echoModels() });
+	t.after(() => host.harness.close(context));
+	const { slack, posts, receive } = fakeSlack(host);
+	const web = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: "brad@example.com", switchable: host.switchable, approvals: host.approvals, mirror: slack.mirror });
+	await new Promise<void>((resolve) => web.listen(0, "127.0.0.1", resolve));
+	t.after(() => {
+		web.closeAllConnections();
+		web.close();
+	});
+	const send = (body: unknown) =>
+		fetch(`http://127.0.0.1:${(web.address() as AddressInfo).port}/api/message`, {
+			method: "POST",
+			headers: { "Tailscale-User-Login": "brad@example.com", "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+
+	await receive(message("1.0", "a"));
+	await until(() => posts().length === 1);
+	const thread = (await host.harness.snapshot(SlackState, context))!.threads["1.0"]!;
+	assert.equal((await send({ content: "b", conversation: thread, requestId: "r1" })).status, 200);
+	await until(() => posts().length === 3);
+	assert.deepEqual(posts().slice(1).map((p) => [p.text, p.threadTs]), [["*From the app:* b", "1.0"], ["a / b", "1.0"]]);
+	assert.deepEqual((await host.harness.snapshot(SlackState, context))!.mirrored, {});
+
+	// A conversation with no Slack thread, such as the home conversation, posts nothing.
+	assert.equal((await send({ content: "c", requestId: "r2" })).status, 200);
+	await (await host.root.submit({ type: "input", content: "after" }, context)).wait(context);
+	await new Promise((r) => setTimeout(r, 100));
+	assert.equal(posts().length, 3);
+});
+
+test("a message from the app that wasn't posted in Slack before a restart is posted by the next process, then its answer", async (t) => {
+	const dir = tempDir(t);
+	const first = await startHost({ dataDir: dir, ...echoModels() });
+	let stuck = false;
+	// Slack never answers, as if the process died mid-post.
+	const before = fakeSlack(first, {
+		api: () => {
+			stuck = true;
+			return new Promise(() => {});
+		},
+	});
+	await before.receive(message("1.0", "a"));
+	await until(() => stuck);
+	const threadId = (await first.harness.snapshot(SlackState, context))!.threads["1.0"]!;
+	const thread = (await first.harness.conversation(conversationId(threadId), context))!;
+	const submission = await thread.submit({ type: "input", content: "[Fri 2026-10-16 09:00 GMT-4] b", requestId: "web:r1" }, context);
+	assert.equal(await before.slack.mirror({ conversationId: threadId, submission: submission.id, text: "b" }), true);
+	await submission.wait(context);
+	await first.harness.close(context);
+
+	const second = await startHost({ dataDir: dir, ...echoModels() });
+	t.after(() => second.harness.close(context));
+	const { posts } = fakeSlack(second);
+	await until(() => posts().length === 3);
+	const texts = posts().map((p) => p.text);
+	// The app's message comes before its answer; Slack's own answer to "a" may come at any point.
+	assert.ok(texts.includes("a"), texts.join(" | "));
+	assert.ok(texts.indexOf("*From the app:* b") < texts.indexOf("a / b"), texts.join(" | "));
+	assert.ok(posts().every((p) => p.threadTs === "1.0"));
 });
 
 test("a thread on a job's report forks the run's conversation, not the root", async (t) => {

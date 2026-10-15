@@ -43,6 +43,7 @@
 29. The app's skeleton: moiraine, served by gaidin at `/app/` beside the web view from the directory `web.app` names, with each agent's home conversation and threads in a sidebar, any of them continued there, a new thread started from it, and the dock showing every agent's requests ([Surfaces](surfaces.md#the-app)).
 30. The app's pages: each agent's schedule, memory (shared and work notes), skills and settings (its roster entry, model, tools, instructions, hosts, workspaces, who it may message, and notification devices), and across agents an agents page that makes, archives and restores them and an activity page with spend and the timeline, which names each item's agent. `/api/workspaces` lists the workspaces, and the roster routes read and save the default agent's hosts, which the approvals keep (protocol 2).
 31. Attachments from the app: files sent ahead to `/api/files` and named by the message, images to the model and other files to the agent's sandbox, through `src/files.ts`, which Slack's files go through too; the app shrinks a large image first (protocol 3).
+32. Slack mirroring: a message sent from the app to a conversation with a Slack thread is posted there, headed *From the app:*, and then its answer, recorded before it's posted so a restart still posts both ([Surfaces](surfaces.md#slack)).
 
 ## Next
 
@@ -203,7 +204,7 @@ moiraine's deploy script builds on the owner's machine and copies the build over
 2. Done: moiraine's skeleton, served by gaidin at `/app/` beside the web view: the sidebar, a conversation, the dock and the prompt, with the console's Playwright e2e tests copied over and run against the app (item 29). New thread is `/<agent>/new`. The web view's tests stay in gaidin until the switch.
 3. Done: the pages, with the per-agent changes (item 30). With no conversation open, a page asks for the approvals every 5 seconds rather than following an event stream. The web view's `#/<page>` addresses and `#/history/<id>` open the matching page or thread.
 4. Done: attachments (item 31). Other files go to the sandbox of the agent whose conversation it is, where Slack's still go to the default agent's until its channel per agent.
-5. Slack mirroring. It needs Slack's channel per agent (agents step 3) only for agents other than the default.
+5. Done: Slack mirroring (item 32). Every Slack thread is the default agent's until Slack's channel per agent (agents step 3), which will give other agents' threads the same.
 6. The switch: the app moves to `/`, `sw.js` moves to moiraine, `web/` is removed, and Surfaces describes the app.
 
 Each step ends with `pnpm check` passing in each repository it touches and is a commit of its own there.
