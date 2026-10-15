@@ -88,6 +88,7 @@ const web = createWebServer({
 	harness: host.harness,
 	root: host.root,
 	agents: host.agents,
+	workspaces: host.workspaces,
 	threads: host.threads,
 	user,
 	app,

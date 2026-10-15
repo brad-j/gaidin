@@ -126,6 +126,13 @@ export class ApprovalService {
 		return hostsOf(entryOf(await rosterOf(this.#harness, background), agent), (await this.state()).fetchHosts);
 	}
 
+	/** Sets the hosts the default agent fetches from without asking. The other agents' are in their roster entries. */
+	async setFetchHosts(hosts: readonly string[]): Promise<void> {
+		await this.#commit((doc) => {
+			doc.fetchHosts = [...new Set(hosts)];
+		});
+	}
+
 	/** Requests still waiting for the owner. Ones whose call was stopped, or whose time ran out while the server was down, are closed. */
 	async pending(): Promise<ApprovalRequest[]> {
 		const waiting: ApprovalRequest[] = [];

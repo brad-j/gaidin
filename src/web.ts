@@ -71,7 +71,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 1;
+export const PROTOCOL = 2;
 
 /** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
 export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
@@ -139,6 +139,8 @@ export type Gets = {
 	"/api/version": { protocol: number };
 	/** Every agent, archived ones included, the default agent first. */
 	"/api/agents": AgentEntry[];
+	/** The workspaces an agent can be given, by name. */
+	"/api/workspaces": { names: string[] };
 	/** `?agent=` for each of these: that agent's, the default agent's without it. */
 	"/api/settings": Settings;
 	"/api/reminders": Reminder[];
@@ -205,6 +207,8 @@ export function createWebServer(options: {
 	root: Conversation;
 	/** The roster, whose home conversations the requests without a conversation go to. */
 	agents: RosterService;
+	/** The workspaces' names, which an agent's entry gives it. Default: none. */
+	workspaces?: () => readonly string[];
 	threads: Threads;
 	user: string;
 	/** The directory of moiraine's build, served at /app/. */
@@ -254,6 +258,14 @@ export function createWebServer(options: {
 
 	/** The agent a GET names, or the default agent. */
 	const agentIn = (url: URL) => url.searchParams.get("agent") ?? DEFAULT_AGENT;
+
+	/**
+	 * An entry as the app shows it: the default agent's hosts are the approvals document's, which its roster entry
+	 * doesn't hold.
+	 */
+	async function shown(entry: AgentEntry): Promise<AgentEntry> {
+		return entry.id === DEFAULT_AGENT ? { ...entry, hosts: [...(await approvals.hostsFor(DEFAULT_AGENT))] } : entry;
+	}
 
 	/** An agent's home conversation, the default agent's unless one is named. */
 	const home = (agent?: string) => refused(() => agents.home(agent), 404);
@@ -343,7 +355,8 @@ export function createWebServer(options: {
 
 	const gets: GetRoutes = {
 		"/api/version": async () => ({ protocol: PROTOCOL }),
-		"/api/agents": () => agents.list(),
+		"/api/agents": async () => Promise.all((await agents.list()).map(shown)),
+		"/api/workspaces": async () => ({ names: [...(options.workspaces?.() ?? [])] }),
 		"/api/settings": (url) => settings(agentIn(url)),
 		"/api/reminders": async (url) => {
 			const items = (await harness.snapshot(Reminders, context))?.items ?? [];
@@ -435,16 +448,20 @@ export function createWebServer(options: {
 		},
 		"/api/agents/save": {
 			body: agentSave,
-			handle: ({ id, name, job, ...change }) =>
+			handle: ({ id, name, job, hosts, ...change }) =>
 				refused(async () => {
 					if (!(await agents.list()).some((a) => a.id === id)) {
 						if (name === undefined) throw new HttpError(400, "A new agent needs a name.");
 						await agents.add({ id, name, job: job ?? "" });
 					}
-					return agents.update(id, { name, job, ...change });
+					const entryChange: Parameters<typeof agents.update>[1] = { name, job, ...change };
+					// The default agent's hosts are kept with the approvals, where its fetches are checked against them.
+					if (id === DEFAULT_AGENT && hosts !== undefined) await approvals.setFetchHosts(hosts);
+					else entryChange.hosts = hosts;
+					return shown(await agents.update(id, entryChange));
 				}),
 		},
-		"/api/agents/archive": { body: agentArchive, handle: ({ id, archived }) => refused(() => agents.archive(id, archived)) },
+		"/api/agents/archive": { body: agentArchive, handle: ({ id, archived }) => refused(async () => shown(await agents.archive(id, archived))) },
 		"/api/reminders/snooze": {
 			body: snoozeBody,
 			// A reminder push's button, pressed on the owner's phone.

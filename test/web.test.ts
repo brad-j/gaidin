@@ -168,6 +168,25 @@ test("a message sent from the page is answered, and the answer comes down the ev
 	assert.match(JSON.stringify(user?.entry?.model), /\] hi"/);
 });
 
+test("the default agent's hosts are the approvals' fetch hosts, read and saved through the roster routes", async (t) => {
+	const { host, call, post } = await start(t);
+	type Entry = { id: string; hosts: string[] };
+	const saved = await post("/api/agents/save", { id: "gaidin", hosts: ["example.com", "example.org"] });
+	assert.equal(saved.status, 200);
+	assert.deepEqual(((await saved.json()) as Entry).hosts, ["example.com", "example.org"]);
+	assert.deepEqual(await host.approvals.hostsFor("gaidin"), ["example.com", "example.org"]);
+	await post("/api/agents/save", { id: "gaidin", hosts: ["example.org"] });
+	const listed = (await (await call("/api/agents")).json()) as Entry[];
+	assert.deepEqual(listed.find((a) => a.id === "gaidin")?.hosts, ["example.org"]);
+
+	// Another agent's are its own, in its entry.
+	await post("/api/agents/save", { id: "scout", name: "Scout", job: "" });
+	await post("/api/agents/save", { id: "scout", hosts: ["scout.example"] });
+	assert.deepEqual(await host.approvals.hostsFor("scout"), ["scout.example"]);
+	assert.deepEqual(await host.approvals.hostsFor("gaidin"), ["example.org"]);
+	assert.deepEqual(await (await call("/api/workspaces")).json(), { names: [] });
+});
+
 test("settings change the agent, and switched-off tools leave the request", async (t) => {
 	const { host, call, post } = await start(t);
 	const before = (await (await call("/api/settings")).json()) as Settings;
