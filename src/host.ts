@@ -28,7 +28,7 @@ import { createSkills } from "./skills.ts";
 import { createThreads } from "./threads.ts";
 import { setTimeZone } from "./time.ts";
 import { createWorkspaces, readWorkspaces, type Remote, sshRemote, type Workspace } from "./workspaces.ts";
-import { createUploads } from "./files.ts";
+import { createAvatars, createUploads } from "./files.ts";
 
 export const context = BACKGROUND_CONTEXT;
 
@@ -281,7 +281,7 @@ export async function openHost(options: HostOptions = {}) {
 	// and the self-written ones.
 	const builtIn = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...history.tools, ...workspaces.tools];
 	const switchable = () => [...builtIn, ...(self?.tools() ?? [])];
-	return { harness, root, agents: roster, workspaces: () => workspaces.names, uploads: createUploads(join(dir, "app-uploads")), threads, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation }, skills, sandbox, push, start, stop };
+	return { harness, root, agents: roster, workspaces: () => workspaces.names, uploads: createUploads(join(dir, "app-uploads")), avatars: createAvatars(join(dir, "avatars")), threads, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation }, skills, sandbox, push, start, stop };
 }
 
 export type Host = Awaited<ReturnType<typeof openHost>>;

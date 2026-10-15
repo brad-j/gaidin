@@ -22,7 +22,7 @@ async function start(t: TestContext, app?: string) {
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const host = await startHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, adapters: { push: { send: async () => true } } });
-	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: BRAD, app, uploads: host.uploads, switchable: host.switchable, approvals: host.approvals, snooze: host.reminders.snooze });
+	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: BRAD, app, uploads: host.uploads, avatars: host.avatars, switchable: host.switchable, approvals: host.approvals, snooze: host.reminders.snooze });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(async () => {
 		server.closeAllConnections();
@@ -227,6 +227,45 @@ test("files sent from the app: an image goes to the model, another file to the a
 	assert.deepEqual(readdirSync(scoutUploads).map((f) => f.replace(/^[0-9a-f]{8}-/, "")), ["notes.txt"]);
 	assert.equal((await post("/api/message", { content: "again", files: ["00000000-0000-0000-0000-000000000000"] })).status, 400);
 	assert.equal((await post("/api/message", { content: "  " })).status, 400);
+});
+
+test("an agent's picture is set from a file sent to /api/files, served from its own address, replaced, and taken away", async (t) => {
+	const { call, post } = await start(t);
+	const upload = async (name: string, data: Uint8Array<ArrayBuffer>) =>
+		((await (await call("/api/files", { method: "POST", body: data, headers: { "X-Gaidin-File": name, "Content-Type": "application/octet-stream" } })).json()) as { id: string }).id;
+	const png = (n: number) => Uint8Array.from([...Buffer.from("89504e470d0a1a0a", "hex"), n]);
+	type Entry = { id: string; avatar?: string };
+	const save = async (body: Record<string, unknown>) => {
+		const response = await post("/api/agents/save", body);
+		return { status: response.status, entry: response.ok ? ((await response.json()) as Entry) : undefined, text: response.ok ? "" : await response.text() };
+	};
+	await save({ id: "scout", name: "Scout", job: "" });
+	await save({ id: "scout-2", name: "Scout Two", job: "" });
+
+	const first = await save({ id: "scout", avatar: await upload("a.png", png(1)) });
+	assert.match(first.entry?.avatar ?? "", /^scout-[0-9a-f]{12}\.png$/);
+	const other = await save({ id: "scout-2", avatar: await upload("b.png", png(2)) });
+	const picture = await call(`/api/agents/avatar?id=scout&v=${first.entry!.avatar}`);
+	assert.equal(picture.status, 200);
+	assert.equal(picture.headers.get("content-type"), "image/png");
+	assert.match(picture.headers.get("cache-control")!, /immutable/);
+	assert.deepEqual([...new Uint8Array(await picture.arrayBuffer())].at(-1), 1);
+
+	// A new one has a new name, and the old one's file goes; Scout Two's, whose id starts the same, stays.
+	const second = await save({ id: "scout", avatar: await upload("c.png", png(3)) });
+	assert.notEqual(second.entry?.avatar, first.entry?.avatar);
+	assert.deepEqual([...new Uint8Array(await (await call("/api/agents/avatar?id=scout")).arrayBuffer())].at(-1), 3);
+	assert.equal((await call("/api/agents/avatar?id=scout-2")).status, 200);
+	assert.ok(other.entry?.avatar !== undefined);
+
+	const text = await save({ id: "scout", avatar: await upload("notes.txt", new TextEncoder().encode("not a picture")) });
+	assert.equal(text.status, 400);
+	assert.match(text.text, /PNG, JPEG or WebP/);
+
+	const cleared = await save({ id: "scout", avatar: "" });
+	assert.equal(cleared.entry?.avatar, undefined);
+	assert.equal((await call("/api/agents/avatar?id=scout")).status, 404);
+	assert.equal((await call("/api/agents/avatar?id=nobody")).status, 404);
 });
 
 test("settings change the agent, and switched-off tools leave the request", async (t) => {

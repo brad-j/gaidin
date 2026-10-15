@@ -63,6 +63,8 @@ export type AgentEntry = {
 	canMessage: string[];
 	/** Self-written extensions switched on for it besides the ones it loaded. */
 	extensions: string[];
+	/** Its picture's file in <data>/avatars (files.ts), named for its bytes, so a new one has a new name. */
+	avatar?: string;
 	createdAt: number;
 	archived?: number;
 };
@@ -330,7 +332,8 @@ export function createAgents(options: {
 }
 
 /** What the owner can change about an agent. */
-export type AgentChange = Partial<Pick<AgentEntry, "name" | "job" | "channel" | "canMessage" | "workspaces" | "hosts" | "extensions">>;
+/** `avatar: ""` takes the picture away. */
+export type AgentChange = Partial<Pick<AgentEntry, "name" | "job" | "channel" | "canMessage" | "workspaces" | "hosts" | "extensions" | "avatar">>;
 
 /** The roster as the server manages it: the default agent's entry, adding and changing agents, and their home conversations. */
 export function createRoster(options: {
@@ -417,6 +420,10 @@ export function createRoster(options: {
 			if (change.channel !== undefined) {
 				if (change.channel === "") delete agent.channel;
 				else agent.channel = change.channel;
+			}
+			if (change.avatar !== undefined) {
+				if (change.avatar === "") delete agent.avatar;
+				else agent.avatar = change.avatar;
 			}
 			if (change.canMessage !== undefined) agent.canMessage = [...new Set(change.canMessage)];
 			if (change.hosts !== undefined) agent.hosts = [...new Set(change.hosts)];

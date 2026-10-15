@@ -134,7 +134,7 @@ export async function serve(config: Config) {
 
 	const web = config.web === undefined
 		? undefined
-		: createWebServer({ harness, root, agents: host.agents, workspaces: host.workspaces, uploads: host.uploads, mirror: slack?.mirror, threads: host.threads, user: config.web.user, app: config.web.app, switchable, approvals, models: config.model.choices, budget, timeline, history, skills, stop, snooze: reminders.snooze, push });
+		: createWebServer({ harness, root, agents: host.agents, workspaces: host.workspaces, uploads: host.uploads, avatars: host.avatars, mirror: slack?.mirror, threads: host.threads, user: config.web.user, app: config.web.app, switchable, approvals, models: config.model.choices, budget, timeline, history, skills, stop, snooze: reminders.snooze, push });
 	if (web !== undefined) {
 		const port = config.web!.port;
 		// Loopback only: tailscale serve is the way in, and it vouches for who's asking.

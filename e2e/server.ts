@@ -97,6 +97,7 @@ const web = createWebServer({
 	agents: host.agents,
 	workspaces: host.workspaces,
 	uploads: host.uploads,
+	avatars: host.avatars,
 	threads: host.threads,
 	user,
 	app,

@@ -1,7 +1,7 @@
 // Files sent with the owner's messages, from Slack or the app. An image small enough goes to the model with the text;
 // other files, such as PDFs, are saved in the agent's sandbox under uploads/, and the message says where. The app
 // sends a message's files ahead of it to /api/files, which keeps them here until the message names them.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -87,3 +87,44 @@ export function createUploads(dir: string) {
 }
 
 export type Uploads = ReturnType<typeof createUploads>;
+
+/** An agent's picture can be this big; the app shows it small. */
+export const MAX_AVATAR = 2_000_000;
+const AVATAR_TYPES = new Map([["image/png", "png"], ["image/jpeg", "jpg"], ["image/webp", "webp"]]);
+const AVATAR = /^[a-z][a-z0-9-]*-[0-9a-f]{12}\.(png|jpg|webp)$/;
+
+/** The agents' pictures, in `dir`, each named for its agent and its bytes. */
+export function createAvatars(dir: string) {
+	return {
+		/** Keeps `data` as `agent`'s picture, and gives its file's name. Throws when it isn't a PNG, JPEG or WebP, or is too big. */
+		keep(agent: string, data: Buffer): string {
+			const type = imageType(data);
+			const extension = type === undefined ? undefined : AVATAR_TYPES.get(type);
+			if (extension === undefined) throw new Error("A picture has to be a PNG, JPEG or WebP image.");
+			if (data.length > MAX_AVATAR) throw new Error(`A picture can be up to ${MAX_AVATAR / 1_000_000} MB.`);
+			mkdirSync(dir, { recursive: true });
+			const name = `${agent}-${createHash("sha256").update(data).digest("hex").slice(0, 12)}.${extension}`;
+			writeFileSync(join(dir, name), data);
+			return name;
+		},
+
+		/** The picture named `name`, and its type, or nothing when there's no such file. */
+		read(name: string): { data: Buffer; type: string } | undefined {
+			const match = AVATAR.exec(name);
+			const file = join(dir, name);
+			if (match === null || !existsSync(file)) return undefined;
+			const type = [...AVATAR_TYPES].find(([, extension]) => extension === match[1])![0];
+			return { data: readFileSync(file), type };
+		},
+
+		/** Forgets `agent`'s pictures but `keep`, the one it has now. */
+		prune(agent: string, keep?: string) {
+			if (!existsSync(dir)) return;
+			// An agent's id is lowercase letters, digits and -, so this matches its pictures and not another's, such as scout-2's for scout.
+			const mine = new RegExp(`^${agent}-[0-9a-f]{12}\\.(png|jpg|webp)$`);
+			for (const name of readdirSync(dir)) if (mine.test(name) && name !== keep) rmSync(join(dir, name), { force: true });
+		},
+	};
+}
+
+export type Avatars = ReturnType<typeof createAvatars>;

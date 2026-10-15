@@ -16,7 +16,7 @@ import type { ApprovalRequest, ApprovalService, Decision } from "./approvals.ts"
 import type { BudgetGuard, BudgetStatus } from "./budget.ts";
 import { context } from "./host.ts";
 import type { ConversationSummary, createHistory } from "./history.ts";
-import { type Attached, MAX_FILE, type Uploaded, type Uploads, withFiles } from "./files.ts";
+import { type Attached, type Avatars, MAX_FILE, type Uploaded, type Uploads, withFiles } from "./files.ts";
 import { conversationId } from "./ids.ts";
 import { describeSchedule, type Job, jobOf, Jobs, pauseJob, removeJob, resumeJob } from "./jobs.ts";
 import { addNote, forgetNote, MAX_NOTE, MAX_TOTAL, MAX_WORK, type Note, notesOn, SHARED, type Shelf, updateNote } from "./memory.ts";
@@ -66,7 +66,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 4;
+export const PROTOCOL = 5;
 
 /** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
 export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
@@ -94,6 +94,8 @@ const agentSave = object({
 	workspaces: optional(array(string)),
 	hosts: optional(array(string)),
 	extensions: optional(array(string)),
+	/** A file sent to /api/files, to be its picture, or "" to take its picture away. */
+	avatar: optional(string),
 });
 const agentArchive = object({ id: string, archived: boolean });
 const skillSave = object({ name: string, file: string, text: string });
@@ -167,6 +169,11 @@ export type { Uploaded };
  * first, as a JSON body does, and the Origin is checked as for every POST.
  */
 export const FILE_HEADER = "X-Gaidin-File";
+/**
+ * GET with `?id=` an agent's id: its picture (AgentEntry.avatar), cached for good, since a new one has a new name; add
+ * `&v=` the name, so the address changes with it. 404 when it has none.
+ */
+export const AVATAR_PATH = "/api/agents/avatar";
 /** What each POST route takes, as its parser reads it, and what it answers. */
 export type Posts = {
 	/**
@@ -224,6 +231,8 @@ export function createWebServer(options: {
 	mirror?: (sent: { conversationId: number; submission: number; text: string; files?: readonly string[] }) => Promise<boolean>;
 	/** Files the app sends ahead of the messages that name them. Without it, /api/files refuses them. */
 	uploads?: Uploads;
+	/** The agents' pictures. Without it, an agent can't be given one. */
+	avatars?: Avatars;
 	/** Tools the page can switch off, as of now. The reminder and homelab tools stay on. */
 	switchable: () => readonly ToolRegistration[];
 	approvals: ApprovalService;
@@ -284,6 +293,23 @@ export function createWebServer(options: {
 		const attached: Attached[] = await refused(async () => files.map((id) => uploads.attached(id)));
 		const sandbox = await agents.sandbox(await agentIdOf(harness, conversation.id, context));
 		return withFiles(stamp(text), attached, sandbox, "the app");
+	}
+
+	/** An agent's new picture's name, from the file sent to /api/files as `upload`; "" takes it away. */
+	async function picture(agent: string, upload: string): Promise<string> {
+		if (upload === "") return "";
+		if (options.avatars === undefined || options.uploads === undefined) throw new HttpError(400, "This server doesn't keep pictures.");
+		const { avatars, uploads } = options;
+		return refused(async () => avatars.keep(agent, await uploads.attached(upload).load()));
+	}
+
+	/** An agent's picture. */
+	async function avatar(url: URL, response: ServerResponse) {
+		const entry = (await agents.list()).find((a) => a.id === url.searchParams.get("id"));
+		const found = entry?.avatar === undefined ? undefined : options.avatars?.read(entry.avatar);
+		if (found === undefined) throw new HttpError(404, "No picture");
+		response.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": found.type, "Cache-Control": "private, max-age=31536000, immutable" });
+		response.end(found.data);
 	}
 
 	/** The shelf a note change means: the agent's work notes, or the shared notes. The agent has to exist. */
@@ -463,17 +489,20 @@ export function createWebServer(options: {
 		},
 		"/api/agents/save": {
 			body: agentSave,
-			handle: ({ id, name, job, hosts, ...change }) =>
+			handle: ({ id, name, job, hosts, avatar, ...change }) =>
 				refused(async () => {
 					if (!(await agents.list()).some((a) => a.id === id)) {
 						if (name === undefined) throw new HttpError(400, "A new agent needs a name.");
 						await agents.add({ id, name, job: job ?? "" });
 					}
 					const entryChange: Parameters<typeof agents.update>[1] = { name, job, ...change };
+					if (avatar !== undefined) entryChange.avatar = await picture(id, avatar);
 					// The default agent's hosts are kept with the approvals, where its fetches are checked against them.
 					if (id === DEFAULT_AGENT && hosts !== undefined) await approvals.setFetchHosts(hosts);
 					else entryChange.hosts = hosts;
-					return shown(await agents.update(id, entryChange));
+					const entry = await agents.update(id, entryChange);
+					if (avatar !== undefined) options.avatars?.prune(id, entry.avatar);
+					return shown(entry);
 				}),
 		},
 		"/api/agents/archive": { body: agentArchive, handle: ({ id, archived }) => refused(async () => shown(await agents.archive(id, archived))) },
@@ -582,6 +611,7 @@ export function createWebServer(options: {
 		const path = url.pathname;
 		if (request.method === "GET") {
 			if (path === "/events") return events(url, response);
+			if (path === AVATAR_PATH) return avatar(url, response);
 			if (isGet(path)) return json(response, await gets[path](url));
 			if (path === OLD_APP_PATH || path.startsWith(`${OLD_APP_PATH}/`)) return redirect(response, `${path.slice(OLD_APP_PATH.length) || "/"}${url.search}`);
 			if (!path.startsWith("/api/")) {
