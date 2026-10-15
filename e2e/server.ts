@@ -27,7 +27,8 @@ const sitePort = (site.address() as AddressInfo).port;
 type Context = { messages: readonly { role: string; content?: unknown }[] };
 
 /**
- * "fetch" fetches site.test, "ask" asks a question, "remind" sets a reminder due now, "dentist" one due in two hours,
+ * A message with images is answered with how many it sees, and one with a saved file with where it's saved.
+ * Otherwise "fetch" fetches site.test, "ask" asks a question, "remind" sets a reminder due now, "dentist" one due in two hours,
  * "briefing" schedules a weekday job, "soon" a one-off job three seconds away, and "markdown" gets a long answer; then it says what came back, in short for a fetch.
  */
 function step(ctx: Context) {
@@ -37,7 +38,13 @@ function step(ctx: Context) {
 		const answer = result.includes("page text") ? "The page says: page text." : result.includes("said no") ? "Brad said no." : `Came back: ${result.slice(0, 300)}`;
 		return fauxAssistantMessage(fauxText(answer));
 	}
+	if (Array.isArray(last?.content) && last.content.some((part: { type?: string }) => part.type === "image")) {
+		const images = last.content.filter((part: { type?: string }) => part.type === "image").length;
+		return fauxAssistantMessage(fauxText(`I can see ${images} image${images === 1 ? "" : "s"}.`));
+	}
 	const said = JSON.stringify(last?.content ?? "");
+	const saved = /saved as (uploads\/[^ ]+)/.exec(said);
+	if (saved !== null) return fauxAssistantMessage(fauxText(`It's saved as ${saved[1]}.`));
 	const call = (name: string, args: Record<string, string | number | string[]>) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: "toolUse" });
 	if (said.includes("fetch")) return call("fetch_url", { url: `http://site.test:${sitePort}/` });
 	if (said.includes("ask")) return call("ask_owner", { question: "Keep the old branch?", choices: ["Yes", "No"] });
@@ -89,6 +96,7 @@ const web = createWebServer({
 	root: host.root,
 	agents: host.agents,
 	workspaces: host.workspaces,
+	uploads: host.uploads,
 	threads: host.threads,
 	user,
 	app,

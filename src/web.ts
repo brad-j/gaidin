@@ -21,6 +21,7 @@ import type { ApprovalRequest, ApprovalService, Decision } from "./approvals.ts"
 import type { BudgetGuard, BudgetStatus } from "./budget.ts";
 import { context } from "./host.ts";
 import type { ConversationSummary, createHistory } from "./history.ts";
+import { type Attached, MAX_FILE, type Uploaded, type Uploads, withFiles } from "./files.ts";
 import { conversationId } from "./ids.ts";
 import { describeSchedule, type Job, jobOf, Jobs, pauseJob, removeJob, resumeJob } from "./jobs.ts";
 import { addNote, forgetNote, MAX_NOTE, MAX_TOTAL, MAX_WORK, type Note, notesOn, SHARED, type Shelf, updateNote } from "./memory.ts";
@@ -71,7 +72,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 2;
+export const PROTOCOL = 3;
 
 /** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
 export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
@@ -80,9 +81,10 @@ export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_change
 // agent and its home conversation.
 const nothing = object({});
 const byId = object({ id: integer });
-const messageBody = object({ content: string, requestId: optional(string), agent: optional(string), conversation: optional(integer) });
+/** `files`: what /api/files answered for each file sent with the message. */
+const messageBody = object({ content: string, requestId: optional(string), agent: optional(string), conversation: optional(integer), files: optional(array(string)) });
 const abortBody = object({ agent: optional(string), conversation: optional(integer) });
-const threadBody = object({ content: string, requestId: optional(string), agent: optional(string) });
+const threadBody = object({ content: string, requestId: optional(string), agent: optional(string), files: optional(array(string)) });
 const snoozeBody = object({ id: integer, minutes: integer });
 /** `work`: the agent's work notes; otherwise the shared notes. */
 const noteBody = object({ text: string, agent: optional(string), work: optional(boolean) });
@@ -163,6 +165,14 @@ export type Gets = {
 };
 
 type Ok = { ok: boolean };
+
+export type { Uploaded };
+/**
+ * POST /api/files takes a file's bytes, up to 20 MB, as the body, its name URI-encoded in X-Gaidin-File and its type
+ * in Content-Type, and answers with this. A message names its files by their ids. The header makes a browser ask
+ * first, as a JSON body does, and the Origin is checked as for every POST.
+ */
+export const FILE_HEADER = "X-Gaidin-File";
 /** What each POST route takes, as its parser reads it, and what it answers. */
 export type Posts = {
 	/**
@@ -213,6 +223,8 @@ export function createWebServer(options: {
 	user: string;
 	/** The directory of moiraine's build, served at /app/. */
 	app?: string;
+	/** Files the app sends ahead of the messages that name them. Without it, /api/files refuses them. */
+	uploads?: Uploads;
 	/** Tools the page can switch off, as of now. The reminder and homelab tools stay on. */
 	switchable: () => readonly ToolRegistration[];
 	approvals: ApprovalService;
@@ -276,6 +288,19 @@ export function createWebServer(options: {
 		if (conversation === undefined) throw new HttpError(404, `There's no conversation ${id}.`);
 		if (agent !== undefined && (await agentIdOf(harness, conversation.id, context)) !== agent) throw new HttpError(400, `Conversation ${id} isn't ${agent}'s.`);
 		return conversation;
+	}
+
+	/**
+	 * What a message from the app goes to the model as: its text, stamped with the time, and the files it names, saved
+	 * in the sandbox of the agent whose conversation it is.
+	 */
+	async function input(text: string, files: readonly string[] | undefined, conversation: Conversation) {
+		if (files === undefined || files.length === 0) return stamp(text);
+		if (options.uploads === undefined) throw new HttpError(400, "This server doesn't take files.");
+		const uploads = options.uploads;
+		const attached: Attached[] = await refused(async () => files.map((id) => uploads.attached(id)));
+		const sandbox = await agents.sandbox(await agentIdOf(harness, conversation.id, context));
+		return withFiles(stamp(text), attached, sandbox, "the app");
 	}
 
 	/** The shelf a note change means: the agent's work notes, or the shared notes. The agent has to exist. */
@@ -417,12 +442,15 @@ export function createWebServer(options: {
 			body: messageBody,
 			handle: async (message) => {
 				const content = message.content.trim();
-				if (content === "") throw new HttpError(400, "Empty message");
+				const files = message.files ?? [];
+				if (content === "" && files.length === 0) throw new HttpError(400, "Empty message");
 				const requestId = `web:${message.requestId ?? randomUUID()}`;
 				const named = message.conversation === undefined ? undefined : await conversationAt(message.conversation, message.agent);
 				const conversation = named === undefined ? await home(message.agent) : await refused(() => threads.target(named.id, { origin: "app", key: requestId }));
-				if ((await approvals.intercept(conversation.id, content, "web")) === "answered") return { ok: true, answered: true, conversation: conversation.id };
-				await conversation.submit({ type: "input", content: stamp(content), requestId }, context);
+				// A message with files isn't an answer to a question; it goes to the model, which closes the question.
+				if (files.length === 0 && (await approvals.intercept(conversation.id, content, "web")) === "answered") return { ok: true, answered: true, conversation: conversation.id };
+				if (files.length > 0) await approvals.supersede(conversation.id);
+				await conversation.submit({ type: "input", content: await input(content, files, conversation), requestId }, context);
 				return { ok: true, conversation: conversation.id };
 			},
 		},
@@ -439,10 +467,10 @@ export function createWebServer(options: {
 			body: threadBody,
 			handle: async (message) => {
 				const content = message.content.trim();
-				if (content === "") throw new HttpError(400, "Empty message");
+				if (content === "" && (message.files ?? []).length === 0) throw new HttpError(400, "Empty message");
 				const requestId = `web:${message.requestId ?? randomUUID()}`;
 				const conversation = await refused(() => threads.start({ agent: message.agent, origin: "app", key: requestId }), 404);
-				await conversation.submit({ type: "input", content: stamp(content), requestId }, context);
+				await conversation.submit({ type: "input", content: await input(content, message.files, conversation), requestId }, context);
 				return { conversation: conversation.id };
 			},
 		},
@@ -575,8 +603,25 @@ export function createWebServer(options: {
 			if (path === "/events") return events(url, response);
 			if (isGet(path)) return json(response, await gets[path](url));
 		}
+		if (request.method === "POST" && path === "/api/files") return json(response, await upload(request));
 		if (request.method !== "POST" || !isPost(path)) throw new HttpError(404, "Not found");
 		return json(response, await handlePost(path, await readBody(request)));
+	}
+
+	/** A file the app sends ahead of its message, kept until the message names it. */
+	async function upload(request: IncomingMessage): Promise<Uploaded> {
+		if (options.uploads === undefined) throw new HttpError(404, "This server doesn't take files.");
+		const header = request.headers[FILE_HEADER.toLowerCase()];
+		let name: string;
+		try {
+			name = decodeURIComponent(String(header)).trim().replace(/[/\\]/g, "_");
+		} catch {
+			throw new HttpError(400, `${FILE_HEADER} isn't a URI-encoded name`);
+		}
+		const data = await readBytes(request, MAX_FILE);
+		if (data.length === 0) throw new HttpError(400, "The file is empty.");
+		const type = request.headers["content-type"]?.split(";")[0]?.trim();
+		return options.uploads.save(name === "" ? "file" : name, type === "" || type === "application/octet-stream" ? undefined : type, data);
 	}
 
 	const isGet = (path: string): path is keyof Gets => Object.hasOwn(gets, path);
@@ -654,11 +699,12 @@ class HttpError extends Error {
 }
 
 /**
- * Another site open in Brad's browser could post here with his tailnet identity. A JSON body forces a
- * CORS preflight, which gets no CORS headers back, and the Origin has to be this host.
+ * Another site open in Brad's browser could post here with his tailnet identity. A JSON body, or a file with its
+ * X-Gaidin-File header, forces a CORS preflight, which gets no CORS headers back, and the Origin has to be this host.
  */
 function sameOrigin(request: IncomingMessage): boolean {
-	if (!request.headers["content-type"]?.startsWith("application/json")) return false;
+	const file = request.url?.split("?")[0] === "/api/files" && request.headers[FILE_HEADER.toLowerCase()] !== undefined;
+	if (!file && !request.headers["content-type"]?.startsWith("application/json")) return false;
 	const origin = request.headers.origin;
 	return origin === undefined || origin === `https://${request.headers.host}` || origin === `http://${request.headers.host}`;
 }
@@ -670,6 +716,21 @@ async function readBody(request: IncomingMessage): Promise<string> {
 		if (text.length > 100_000) throw new HttpError(413, "Too large");
 	}
 	return text;
+}
+
+/** A body of bytes, up to `max`; a longer one is a 413. */
+async function readBytes(request: IncomingMessage, max: number): Promise<Buffer> {
+	const chunks: Buffer[] = [];
+	let size = 0;
+	for await (const chunk of request) {
+		size += chunk.length;
+		if (size > max) {
+			request.resume();
+			throw new HttpError(413, `The file is over ${max / 1_000_000} MB.`);
+		}
+		chunks.push(chunk);
+	}
+	return Buffer.concat(chunks);
 }
 
 function reply(response: ServerResponse, status: number, body: string | Buffer, type: string) {

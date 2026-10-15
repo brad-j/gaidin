@@ -267,6 +267,11 @@ export class ApprovalService {
 		return "continue";
 	}
 
+	/** Closes what's waiting in a conversation, questions included, as a new message that isn't an answer does. */
+	async supersede(conversationId: number): Promise<void> {
+		for (const request of await this.pending()) if (request.conversationId === conversationId) await this.close(request.id, "superseded");
+	}
+
 	/** The pending question asked in the Slack message `ts`, if any. */
 	async questionAt(ts: string): Promise<ApprovalRequest | undefined> {
 		return (await this.pending()).find((r) => r.kind === "question" && r.slackTs === ts);

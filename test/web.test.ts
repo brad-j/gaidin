@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai/providers/faux";
+import { watchEvents } from "@earendil-works/pi-durable";
 import { context, startHost } from "../src/host.ts";
 import { Reminders } from "../src/reminders.ts";
 import { createWebServer, type Settings } from "../src/web.ts";
@@ -21,7 +22,7 @@ async function start(t: TestContext, app?: string) {
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const host = await startHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, adapters: { push: { send: async () => true } } });
-	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: BRAD, app, switchable: host.switchable, approvals: host.approvals, snooze: host.reminders.snooze });
+	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: BRAD, app, uploads: host.uploads, switchable: host.switchable, approvals: host.approvals, snooze: host.reminders.snooze });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(async () => {
 		server.closeAllConnections();
@@ -34,6 +35,18 @@ async function start(t: TestContext, app?: string) {
 	const post = (path: string, body: unknown) =>
 		call(path, { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
 	return { host, call, post };
+}
+
+/** The newest message the owner sent to the default agent's home, once it's in the transcript. */
+async function lastUserEntry(host: Awaited<ReturnType<typeof startHost>>) {
+	for (let tries = 0; tries < 200; tries++) {
+		const stream = await watchEvents(host.harness, host.root.id, context);
+		await stream.stop();
+		const users = stream.snapshot.entries.filter((e) => e.kind === "pi.user");
+		if (users.length > 0) return users.at(-1)!;
+		await new Promise((r) => setTimeout(r, 20));
+	}
+	throw new Error("no message from the owner");
 }
 
 test("only Brad's tailnet login gets in", async (t) => {
@@ -185,6 +198,45 @@ test("the default agent's hosts are the approvals' fetch hosts, read and saved t
 	assert.deepEqual(await host.approvals.hostsFor("scout"), ["scout.example"]);
 	assert.deepEqual(await host.approvals.hostsFor("gaidin"), ["example.org"]);
 	assert.deepEqual(await (await call("/api/workspaces")).json(), { names: [] });
+});
+
+test("files sent from the app: an image goes to the model, another file to the agent's sandbox, and a cross-site upload is refused", async (t) => {
+	const { host, call, post } = await start(t);
+	const upload = (name: string, data: Uint8Array<ArrayBuffer>, headers: Record<string, string> = {}) =>
+		call("/api/files", { method: "POST", body: data, headers: { "X-Gaidin-File": encodeURIComponent(name), "Content-Type": "application/octet-stream", ...headers } });
+	// A 1×1 PNG.
+	const png = Uint8Array.from(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64"));
+
+	// Without the header a browser asks first for, or from another site, it's refused.
+	assert.equal((await call("/api/files", { method: "POST", body: png, headers: { "Content-Type": "image/png" } })).status, 403);
+	assert.equal((await upload("x.png", png, { Origin: "https://evil.example" })).status, 403);
+	assert.equal((await upload("big.bin", new Uint8Array(20_000_001))).status, 413);
+
+	const image = await upload("dog.png", png, { "Content-Type": "image/png" });
+	assert.equal(image.status, 200);
+	const sentImage = (await image.json()) as { id: string; image: boolean };
+	assert.equal(sentImage.image, true);
+	const pdf = (await (await upload("Q3 report.pdf", new TextEncoder().encode("%PDF-1.4 a report"), { "Content-Type": "application/pdf" })).json()) as { id: string; image: boolean };
+	assert.equal(pdf.image, false);
+
+	assert.equal((await post("/api/message", { content: "look", files: [sentImage.id, pdf.id], requestId: "f1" })).status, 200);
+	const user = await lastUserEntry(host);
+	const content = user.model?.[0]?.content;
+	assert.ok(Array.isArray(content), "the message has its image");
+	assert.deepEqual(content.map((part: { type: string }) => part.type), ["text", "image"]);
+	const text = (content[0] as { text: string }).text;
+	assert.match(text, /\] look\n\n\[Files from the app: Q3 report\.pdf is saved as uploads\/[0-9a-f]{8}-Q3_report\.pdf \(application\/pdf, 1 KB\)/);
+	const path = /saved as (uploads\/\S+)/.exec(text)![1]!;
+	assert.equal(readFileSync(join(await host.agents.sandbox("gaidin"), path), "utf8"), "%PDF-1.4 a report");
+
+	// Another agent's files go to its own sandbox; a file it doesn't have is refused.
+	await post("/api/agents/save", { id: "scout", name: "Scout", job: "" });
+	const notes = (await (await upload("notes.txt", new TextEncoder().encode("hello"))).json()) as { id: string };
+	assert.equal((await post("/api/message", { content: "", agent: "scout", files: [notes.id], requestId: "f2" })).status, 200);
+	const scoutUploads = join(await host.agents.sandbox("scout"), "uploads");
+	assert.deepEqual(readdirSync(scoutUploads).map((f) => f.replace(/^[0-9a-f]{8}-/, "")), ["notes.txt"]);
+	assert.equal((await post("/api/message", { content: "again", files: ["00000000-0000-0000-0000-000000000000"] })).status, 400);
+	assert.equal((await post("/api/message", { content: "  " })).status, 400);
 });
 
 test("settings change the agent, and switched-off tools leave the request", async (t) => {

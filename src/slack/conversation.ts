@@ -4,13 +4,11 @@
 // before threads were separate, forks that conversation at that answer. index.ts hands this only the owner's
 // messages in that channel.
 //
-// Files sent with a message are downloaded when it goes to the model. Images go to the model with the text;
-// other files, such as PDFs, are saved in the sandbox's uploads/ directory and the message says where.
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import type { ImageContent } from "@earendil-works/pi-ai";
+// Files sent with a message are downloaded when it goes to the model, and go with it as files.ts has them: images to
+// the model with the text, other files, such as PDFs, to the sandbox's uploads/ directory, with the message saying where.
 import { type Conversation, defineDoc, type EntryId, type Harness, type UserInput } from "@earendil-works/pi-durable";
 import type { ApprovalService } from "../approvals.ts";
+import { MAX_IMAGE, withFiles as attach } from "../files.ts";
 import { assistantText, context } from "../host.ts";
 import type { Threads } from "../threads.ts";
 import { stamp } from "../time.ts";
@@ -18,19 +16,6 @@ import { conversationId as toConversationId, entryId } from "../ids.ts";
 import type { SlackDownload, SlackFile, SlackMessage, SlackPost } from "./api.ts";
 
 type Pending = { conversationId: number; content: string; threadTs?: string; files?: SlackFile[] };
-
-// The model takes images up to 5 MB; a bigger one goes as Slack's 1024-pixel thumbnail.
-const MAX_IMAGE = 3_750_000;
-const MAX_FILE = 20_000_000;
-
-/** The image type from the bytes themselves, which a thumbnail's URL doesn't say, or nothing for another kind of file. */
-function imageType(data: Buffer): string | undefined {
-	if (data.subarray(0, 4).toString("hex") === "89504e47") return "image/png";
-	if (data.subarray(0, 3).toString("hex") === "ffd8ff") return "image/jpeg";
-	if (data.subarray(0, 4).toString("latin1") === "GIF8") return "image/gif";
-	if (data.subarray(0, 4).toString("latin1") === "RIFF" && data.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
-	return undefined;
-}
 
 /** Slack bookkeeping, keyed by message ts. Durable, so a restart still posts answers it owes. */
 export const SlackState = defineDoc<{
@@ -217,34 +202,20 @@ export function createSlackConversation(options: {
 		}
 	}
 
-	/** The message with its images, and a note of where its other files are saved or why one couldn't be fetched. */
+	/** The message with its files. An image over the model's limit goes as Slack's 1024-pixel thumbnail. */
 	async function withFiles(text: string, files: SlackFile[], ts: string): Promise<UserInput> {
 		const { download, sandbox } = options.files!;
-		const images: ImageContent[] = [];
-		const notes: string[] = [];
-		for (const file of files) {
-			const name = file.name ?? "file";
-			try {
+		return attach(
+			text,
+			files.map((file) => {
 				const image = file.mimetype?.startsWith("image/") === true;
-				const url = image && (file.size ?? 0) > MAX_IMAGE ? (file.thumb_1024 ?? file.url_private!) : file.url_private!;
-				if (!image && (file.size ?? 0) > MAX_FILE) throw new Error(`it's over ${MAX_FILE / 1_000_000} MB`);
-				const data = await download(url);
-				const mimeType = imageType(data);
-				if (image && mimeType !== undefined && data.length <= MAX_IMAGE) {
-					images.push({ type: "image", data: data.toString("base64"), mimeType });
-					continue;
-				}
-				// The same name each time, so delivering again after a restart overwrites it.
-				const path = `uploads/${ts}-${name.replace(/[^\w.-]+/g, "_")}`;
-				mkdirSync(join(sandbox, "uploads"), { recursive: true });
-				writeFileSync(join(sandbox, path), data);
-				notes.push(`${name} is saved as ${path} (${file.mimetype ?? "unknown type"}, ${Math.ceil(data.length / 1000)} KB)`);
-			} catch (error) {
-				notes.push(`${name} couldn't be fetched: ${error instanceof Error ? error.message : error}`);
-			}
-		}
-		const note = notes.length === 0 ? "" : `\n\n[Files from Slack: ${notes.join("; ")}. Read them with the file tools; for a PDF, run pdftotext FILE - in bash. uploads/ is read-only to commands, so write what you make from them elsewhere.]`;
-		return images.length === 0 ? `${text}${note}` : [{ type: "text", text: `${text}${note}` }, ...images];
+				const thumbnail = image && (file.size ?? 0) > MAX_IMAGE;
+				// The same prefix each time, so delivering again after a restart overwrites the file.
+				return { name: file.name ?? "file", type: file.mimetype, size: image ? undefined : file.size, prefix: ts, load: () => download(thumbnail ? (file.thumb_1024 ?? file.url_private!) : file.url_private!) };
+			}),
+			sandbox,
+			"Slack",
+		);
 	}
 
 	async function postWithRetry(threadTs: string | undefined, text: string): Promise<string[]> {
