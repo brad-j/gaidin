@@ -44,10 +44,10 @@
 
 Candidates:
 
-- Several named agents, designed below: Slack's channel per agent, then the web view. Then connectors (MCP servers with OAuth, tokens held by the server, granted per agent), a persistent browser with a take-over view, and owner-written allow and ask-first rules, in that order.
+- Several named agents, designed below: Slack's channel per agent, then the app (designed below), which replaces the web view and holds the agents' pages. Then connectors (MCP servers with OAuth, tokens held by the server, granted per agent), a persistent browser with a take-over view, and owner-written allow and ask-first rules, in that order.
 - Release polish: a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
 
-Not planned: branching from any message in the web view, since each Slack thread is already a conversation of its own, and push-to-talk, since the owner dictates with superwhisper.
+Not planned: branching from any message in the web view, since each thread is already a conversation of its own; push-to-talk, since the owner dictates with superwhisper; and projects or image generation in the app.
 
 ## Design: several agents
 
@@ -121,6 +121,8 @@ Requests carry the agent and show its name: "Scout asks to fetch ..." in Slack a
 
 ### Web view
 
+Built in the app ([Design: the app](#design-the-app)), whose URLs replace the hash routes below; the rest stands.
+
 - The header gets an agent switcher. The default agent keeps today's routes (`#/`, `#/settings`, ...); another agent's pages are under `#/a/<id>/`. The console, settings, memory, schedule and history pages show the chosen agent. Activity and the timeline show every agent, with a column for which.
 - The dock shows every pending request, each labeled with its agent, whichever agent is shown.
 - A new agents page (`#/agents`) lists the roster and creates and archives agents. The settings page gains the roster entry's fields: name, job, channel, hosts (with remove), workspaces and who it may message.
@@ -143,6 +145,61 @@ Going back to an older build ignores the new documents and fields, but would run
 1. Commit item 26 (Slack threads as conversations), which is in progress.
 2. Done: the roster, bindings, prompts, sandboxes, memory split, per-agent approvals, jobs and reminders, history, messaging and hand-off, and the CLI. Tests with the faux provider cover isolation: one agent's tools can't reach another's sandbox, notes, jobs, history or hosts.
 3. Slack: a channel per agent.
-4. Web view: the switcher, the agents page and the per-agent pages, checked in a browser with the Playwright e2e tests.
+4. Web view: the switcher, the agents page and the per-agent pages, built in the app (its steps 1 to 3), checked in a browser with the Playwright e2e tests.
 
 Each step ends with `pnpm check` passing and is a commit of its own.
+
+## Design: the app
+
+For review before any code. The web view becomes an app, moiraine (in the Wheel of Time, the Aes Sedai bonded to her Warder): each agent's conversations in a sidebar, with its home conversation pinned and its threads below, beside the pages the web view has now. It's a project of its own beside gaidin, written in TanStack Start as a client of gaidin's HTTP API, installs as a PWA as the web view does, and can be wrapped as a native app later without changes to the server.
+
+Decided with the owner:
+
+- Each agent's home conversation stays pinned at the top of its list. New thread starts a thread with that agent, as a top-level message in Slack does: the home conversation's settings and the agent's memory, none of its history.
+- Any thread continues from the app, whether it began in Slack, in the app or as a job run. A message sent from the app to a Slack thread is posted to that thread too, with the answer.
+- No voice, projects or image generation.
+- The app's look and names are gaidin's own and follow the owner's UI defaults; it borrows nothing from other assistants' apps.
+- Step 4 of the agents design (the agent switcher and per-agent pages) is built in the app, not the current web view.
+- The app is its own repository, `moiraine`, beside gaidin's checkout. It's built on the owner's machine and copied to the server.
+
+### Shape
+
+- moiraine is TanStack Start in SPA mode, with React, TanStack Router (file routes, typed params and search), Query, Form and Virtual. No server functions or SSR: gaidin is the server, and its HTTP API stays the one interface, so a native client would use the same one.
+- Its build, `dist/client`, is a directory of static files. gaidin serves them from the directory in `web.app` beside the API on the same origin, behind the same Tailscale login check, Origin check and CSP. Built files have hashed names and can be cached; the page itself isn't. Any path that isn't the API or a file gets the shell, `_shell.html`, so the router's URLs survive a reload. The shell has three small inline scripts (scroll restoration and the router's start-up state, as of Start 1.168), which change with each build, so gaidin reads the shell at start and adds each one's hash to `script-src`, which otherwise stays `'self'`.
+- moiraine depends on gaidin as `link:../gaidin` and imports `Gets`, `Posts` and `StreamEvent` from `src/web.ts` with `import type`, so a changed answer still fails `tsc` on both sides. Types are erased in the build, so none of gaidin's code ships in it. Each GET is a query keyed by its agent and conversation, and events from the stream invalidate the queries they affect. A conversation's transcript is kept by the reducer in `web/transcript.ts`, which moves to moiraine with `test/transcript.test.ts`.
+- `/api/version` answers with the protocol's version, a number gaidin raises when an answer or body changes shape. moiraine's build records the version it was typed against and says so when the server's differs, since the two are deployed separately.
+- moiraine's `pnpm dev` runs Vite's dev server, proxying `/api` and `/events` to a local gaidin and adding `Tailscale-User-Login` with `web.user`, for development only. Its Playwright tests start gaidin's e2e server from the sibling checkout.
+- `sw.js` keeps its jobs (notifications and the can't-reach-the-server page) and moves to moiraine at the switch, served at the same path and scope, so devices signed up for notifications stay signed up. It still caches nothing. A notification opens the conversation it came from.
+
+### Layout
+
+- The sidebar shows the chosen agent: a switcher with its name at the top, then its home conversation, New thread, and its threads newest first, each labeled with where it began (Slack, the app, a job, or another agent) and loading more as it scrolls. The pages are a compact list at its foot. On a phone the sidebar is a drawer and the conversation takes the screen.
+- A conversation is drawn as the console is now: the log with thinking and tool calls folded, the dock, the prompt with slash commands, and the status line. The dock shows every agent's pending requests, each labeled with its agent.
+- URLs: `/<agent>` for the home conversation, `/<agent>/t/<id>` for a thread, `/<agent>/schedule`, `/memory`, `/skills` and `/settings` for that agent's pages, and `/agents` and `/activity` across agents. Old hash links such as `#/schedule` go to the default agent's page.
+- The pages keep what the web view's pages do, with the per-agent changes from the agents design: memory in shared and work sections, the roster entry's fields on settings, and an agents page that creates and archives agents.
+
+### Server changes
+
+- Threads without Slack. Starting a thread (a new conversation bound to the agent, with its home settings copied) and continuing one (a job run or another agent's message forks at its last answer, as a Slack reply on a report does) move out of `src/slack/conversation.ts` into a module both surfaces use. Slack keeps its message bookkeeping and posting. A thread records where it began, for the sidebar's labels.
+- The protocol, beyond the agents design's `?agent=` and `agent` in bodies:
+  - `/events?conversation=<id>` streams any conversation, not only the root's.
+  - `/api/message` and `/api/abort` take an optional `conversation`, defaulting to the agent's home. A message that forks says the new conversation's id, and the app moves to it.
+  - `/api/threads/start` takes an agent and a first message and answers with the new thread's id.
+  - `/api/conversations` lists an agent's threads with where each began, and `/api/conversation` drops its read-only rule.
+- Attachments. `/api/files` takes a file's bytes, up to 20 MB, with a custom header that forces a CORS preflight as a JSON body does, and the Origin check. Images go to the model with the message, as from Slack; the app shrinks one over 3.75 MB before sending it. Other files are saved in the agent's sandbox under `uploads/`, as Slack's are. The code that does this for Slack is shared.
+- Slack mirroring. A message sent from the app to a conversation with a Slack thread is posted in that thread, marked as sent from the app, followed by the answer. It's recorded as pending before it's posted, as Slack's own messages are, so a restart still posts it.
+
+### Deploying
+
+moiraine's deploy script builds on the owner's machine and copies the build over Tailscale SSH to `/var/lib/gaidin/moiraine` on the VM, which `web.app` names. The VM needs no second checkout, deploy key or build dependencies. When the protocol changes, gaidin is deployed first. `gaidin doctor` says when `web.app` is set and the directory is missing or built against another protocol version.
+
+### Order of work
+
+1. Server: the shared thread module, the protocol for any conversation and agent, and the agents routes, with tests using the faux provider.
+2. moiraine's skeleton, served by gaidin at `/app/` beside the web view: the sidebar, a conversation, the dock and the prompt, with the Playwright e2e tests moved over and run against the app.
+3. The pages, with the per-agent changes.
+4. Attachments.
+5. Slack mirroring. It needs Slack's channel per agent (agents step 3) only for agents other than the default.
+6. The switch: the app moves to `/`, `sw.js` moves to moiraine, `web/` is removed, and Surfaces describes the app.
+
+Each step ends with `pnpm check` passing in each repository it touches and is a commit of its own there.
