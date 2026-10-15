@@ -286,6 +286,13 @@ export function createHistory(file: string, owner: string) {
 			const end = rows.at(-1);
 			return rows.length < 50 || end === undefined ? { items } : { items, next: { entry: end.entry, ref: end.ref } };
 		},
+		/** Each agent's newest message in any of its conversations, its home included: who said it, when, and where. */
+		async latest(): Promise<{ agent: string; conversation: number; place: Place; role: "user" | "assistant"; at: number; text: string }[]> {
+			await work;
+			// SAFETY: rows of the messages table, with the columns it has.
+			const rows = db.prepare("SELECT m.* FROM messages m JOIN (SELECT max(id) AS id FROM messages GROUP BY agent) newest ON m.id = newest.id").all() as Row[];
+			return rows.map((row) => ({ agent: row.agent, conversation: row.conversation, place: row.place, role: row.role === "user" ? "user" : "assistant", at: row.at, text: row.text.slice(0, 200) }));
+		},
 		/**
 		 * Up to 50 of `agent`'s threads, job runs and conversations other agents started, every agent's when it's not given,
 		 * the most recently active first, with an older message than `before`; and the cursor for the next 50.

@@ -10,7 +10,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, resolve, sep } from "node:path";
-import { type AgentEvent, type Conversation, type Harness, type ModelRef, type SnapshotEvent, type ToolRegistration, type Tx, type UsageState, watchEvents } from "@earendil-works/pi-durable";
+import { type AgentEvent, type Conversation, type ConversationId, type Harness, type ModelRef, type SnapshotEvent, type ToolRegistration, type Tx, type UsageState, watchEvents } from "@earendil-works/pi-durable";
 import { type AgentEntry, agentIdOf, DEFAULT_AGENT, type RosterService } from "./agents.ts";
 import type { ApprovalRequest, ApprovalService, Decision } from "./approvals.ts";
 import type { BudgetGuard, BudgetStatus } from "./budget.ts";
@@ -66,7 +66,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 5;
+export const PROTOCOL = 6;
 
 /** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
 export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
@@ -125,6 +125,11 @@ export type Settings = {
 export type ListedJob = Job & { when: string };
 export type PushInfo = { publicKey: string; devices: Pick<Device, "endpoint" | "label" | "addedAt">[] };
 export type Timeline = Awaited<ReturnType<ReturnType<typeof createHistory>["timeline"]>>;
+/**
+ * What an agent is up to: whether a run of its is going, in any of its conversations, and its newest message, the owner's
+ * or its own (`role`), with where it is. `place` "main" is its home conversation.
+ */
+export type AgentActivity = { agent: string; running: boolean; last?: { at: number; text: string; role: "user" | "assistant"; conversation: number; place: "main" | ConversationSummary["place"] } };
 /** A skill as the page lists it, without where it is on the server. */
 export type ListedSkill = Omit<Skill, "dir">;
 const listed = ({ name, description, source, files }: Skill): ListedSkill => ({ name, description, source, files });
@@ -137,6 +142,8 @@ export type Gets = {
 	"/api/version": { protocol: number };
 	/** Every agent, archived ones included, the default agent first. */
 	"/api/agents": AgentEntry[];
+	/** Every agent's activity, for the sidebar. */
+	"/api/agents/activity": AgentActivity[];
 	/** The workspaces an agent can be given, by name. */
 	"/api/workspaces": { names: string[] };
 	/** `?agent=` for each of these: that agent's, the default agent's without it. */
@@ -243,8 +250,8 @@ export function createWebServer(options: {
 	snooze?: (tx: Tx, id: number, minutes: number) => Promise<Reminder | undefined>;
 	/** What gaidin did, for /timeline. */
 	timeline?: ReturnType<typeof createHistory>["timeline"];
-	/** Slack threads and job runs, for the history page. */
-	history?: Pick<ReturnType<typeof createHistory>, "conversations" | "conversation">;
+	/** Threads, job runs and each agent's newest message, for the sidebar. */
+	history?: Pick<ReturnType<typeof createHistory>, "conversations" | "conversation" | "latest">;
 	/** Notifications to the devices that sign up here. */
 	push?: Push;
 	/** Stops a conversation's run and tells the model it was withdrawn (host.ts). Default: just stop it. */
@@ -391,6 +398,22 @@ export function createWebServer(options: {
 		"/api/version": async () => ({ protocol: PROTOCOL }),
 		"/api/agents": async () => Promise.all((await agents.list()).map(shown)),
 		"/api/workspaces": async () => ({ names: [...(options.workspaces?.() ?? [])] }),
+		"/api/agents/activity": async () => {
+			// Each conversation with a message waiting or being answered, as its agent's.
+			const busy = new Set<string>();
+			const owners = new Map<ConversationId, string>();
+			for (const { conversationId: id } of (await harness.inspect(context)).submissions) {
+				if (!owners.has(id)) owners.set(id, await agentIdOf(harness, id, context));
+				busy.add(owners.get(id)!);
+			}
+			const latest = new Map(((await options.history?.latest()) ?? []).map((row) => [row.agent, row]));
+			return (await agents.list()).map(({ id }): AgentActivity => {
+				const row = latest.get(id);
+				const activity: AgentActivity = { agent: id, running: busy.has(id) };
+				if (row !== undefined) activity.last = { at: row.at, text: row.text, role: row.role, conversation: row.conversation, place: row.place };
+				return activity;
+			});
+		},
 		"/api/settings": (url) => settings(agentIn(url)),
 		"/api/reminders": async (url) => {
 			const items = (await harness.snapshot(Reminders, context))?.items ?? [];

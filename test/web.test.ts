@@ -22,7 +22,7 @@ async function start(t: TestContext, app?: string) {
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const host = await startHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, adapters: { push: { send: async () => true } } });
-	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: BRAD, app, uploads: host.uploads, avatars: host.avatars, switchable: host.switchable, approvals: host.approvals, snooze: host.reminders.snooze });
+	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: BRAD, app, uploads: host.uploads, avatars: host.avatars, history: host.history, switchable: host.switchable, approvals: host.approvals, snooze: host.reminders.snooze });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(async () => {
 		server.closeAllConnections();
@@ -266,6 +266,26 @@ test("an agent's picture is set from a file sent to /api/files, served from its 
 	assert.equal(cleared.entry?.avatar, undefined);
 	assert.equal((await call("/api/agents/avatar?id=scout")).status, 404);
 	assert.equal((await call("/api/agents/avatar?id=nobody")).status, 404);
+});
+
+test("each agent's activity: its newest message, from any of its conversations, and whether it's running", async (t) => {
+	const { host, call, post } = await start(t);
+	await post("/api/agents/save", { id: "scout", name: "Scout", job: "" });
+	type Activity = { agent: string; running: boolean; last?: { at: number; role: string; text: string; place: string; conversation: number } };
+	const activity = async () => (await (await call("/api/agents/activity")).json()) as Activity[];
+	assert.deepEqual((await activity()).map((a) => [a.agent, a.running, a.last]), [["gaidin", false, undefined], ["scout", false, undefined]]);
+
+	await post("/api/message", { content: "hi", requestId: "a1" });
+	for (let tries = 0; ; tries++) {
+		const gaidin = (await activity())[0]!;
+		if (gaidin.last?.role === "assistant" && !gaidin.running) {
+			assert.deepEqual(gaidin.last, { at: gaidin.last.at, role: "assistant", text: "Hello, Brad.", conversation: host.root.id, place: "main" });
+			break;
+		}
+		if (tries > 200) throw new Error("no answer in the activity");
+		await new Promise((r) => setTimeout(r, 20));
+	}
+	assert.equal((await activity())[1]!.last, undefined);
 });
 
 test("settings change the agent, and switched-off tools leave the request", async (t) => {
