@@ -349,5 +349,5 @@ test("the history page lists a job run and opens its transcript", async ({ page 
 	await expect(history.locator(".convo-title")).toHaveText("Quick weather check");
 
 	await page.goto("/#/history/1");
-	await expect(history.locator(".page-problem")).toHaveText("No thread or job run 1");
+	await expect(history.locator(".page-problem")).toHaveText("No thread, job run or conversation from another agent 1");
 });

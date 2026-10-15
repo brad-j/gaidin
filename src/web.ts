@@ -1,6 +1,8 @@
-// Web view of the root conversation: the live transcript, a message box, a stop button, open reminders
-// and the agent's settings. It listens on loopback only; `tailscale serve` puts HTTPS in front and adds
-// Tailscale-User-Login, and only GAIDIN_WEB_USER is let in.
+// The web view and the app's API: each agent's conversations, live, with a message box and a stop button, its
+// reminders, jobs, notes and settings, the roster, and threads the owner starts and continues (threads.ts). A request
+// names its agent with `?agent=` or `agent` in its body, and a conversation with `conversation`; without them, it's the
+// default agent's home conversation, the root. It listens on loopback only; `tailscale serve` puts HTTPS in front and
+// adds Tailscale-User-Login, and only GAIDIN_WEB_USER is let in.
 //
 // The page is web/index.html, web/app.ts and the modules it imports, with their types stripped as they're served. Its icon is assets/logo.svg,
 // and the header shows assets/logo-transparent.svg. The PNG icons, for phone home screens and ntfy.icon, are
@@ -11,17 +13,19 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { stripTypeScriptTypes } from "node:module";
 import { resolve } from "node:path";
 import { type AgentEvent, type Conversation, type Harness, type ModelRef, type SnapshotEvent, type ToolRegistration, type Tx, type UsageState, watchEvents } from "@earendil-works/pi-durable";
+import { type AgentEntry, agentIdOf, DEFAULT_AGENT, type RosterService } from "./agents.ts";
 import type { ApprovalRequest, ApprovalService, Decision } from "./approvals.ts";
 import type { BudgetGuard, BudgetStatus } from "./budget.ts";
 import { context } from "./host.ts";
 import type { ConversationSummary, createHistory } from "./history.ts";
 import { conversationId } from "./ids.ts";
-import { describeSchedule, type Job, Jobs, pauseJob, removeJob, resumeJob } from "./jobs.ts";
-import { addNote, forgetNote, MAX_NOTE, MAX_TOTAL, Memory, type Note, updateNote } from "./memory.ts";
-import { array, integer, literal, number, object, optional, ParseError, type Parser, parseJson, string } from "./parse.ts";
+import { describeSchedule, type Job, jobOf, Jobs, pauseJob, removeJob, resumeJob } from "./jobs.ts";
+import { addNote, forgetNote, MAX_NOTE, MAX_TOTAL, MAX_WORK, type Note, notesOn, SHARED, type Shelf, updateNote } from "./memory.ts";
+import { array, boolean, integer, literal, number, object, optional, ParseError, type Parser, parseJson, string } from "./parse.ts";
 import type { Device, Push } from "./push.ts";
-import { type Reminder, Reminders, removeReminder } from "./reminders.ts";
+import { type Reminder, reminderOf, Reminders, removeReminder } from "./reminders.ts";
 import { type createSkills, readSkillFile, type Skill } from "./skills.ts";
+import type { Threads } from "./threads.ts";
 import { stamp } from "./time.ts";
 
 const WEB_DIR = resolve(import.meta.dirname, "../web");
@@ -40,16 +44,36 @@ const SECURITY_HEADERS = {
 };
 const THINKING = ["off", "low", "medium", "high"] as const;
 
+/** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
+export const PROTOCOL = 1;
+
 /** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
 export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
 
-// What each POST route takes.
+// What each POST route takes. `agent` is an agent's id, and `conversation` a conversation's; without them, the default
+// agent and its home conversation.
 const nothing = object({});
 const byId = object({ id: integer });
-const messageBody = object({ content: string, requestId: optional(string) });
+const messageBody = object({ content: string, requestId: optional(string), agent: optional(string), conversation: optional(integer) });
+const abortBody = object({ agent: optional(string), conversation: optional(integer) });
+const threadBody = object({ content: string, requestId: optional(string), agent: optional(string) });
 const snoozeBody = object({ id: integer, minutes: integer });
-const noteBody = object({ text: string });
-const noteChange = object({ id: integer, text: string });
+/** `work`: the agent's work notes; otherwise the shared notes. */
+const noteBody = object({ text: string, agent: optional(string), work: optional(boolean) });
+const noteChange = object({ id: integer, text: string, agent: optional(string), work: optional(boolean) });
+const noteForget = object({ id: integer, agent: optional(string), work: optional(boolean) });
+/** Makes the agent when there's none with this id, which needs a name. */
+const agentSave = object({
+	id: string,
+	name: optional(string),
+	job: optional(string),
+	channel: optional(string),
+	canMessage: optional(array(string)),
+	workspaces: optional(array(string)),
+	hosts: optional(array(string)),
+	extensions: optional(array(string)),
+});
+const agentArchive = object({ id: string, archived: boolean });
 const skillSave = object({ name: string, file: string, text: string });
 const skillRemove = object({ name: string, file: optional(string) });
 const allowBody = object({ amount: optional(number) });
@@ -58,6 +82,7 @@ const decideBody = object({ id: string, decision: literal<Decision>("once", "alw
 const subscribeBody = object({ endpoint: string, keys: object({ p256dh: string, auth: string }), label: optional(string) });
 const endpointBody = object({ endpoint: string });
 const settingsChange = object({
+	agent: optional(string),
 	model: optional(string),
 	thinkingLevel: optional(literal(...THINKING)),
 	instructions: optional(string),
@@ -85,20 +110,25 @@ const listed = ({ name, description, source, files }: Skill): ListedSkill => ({ 
 
 /** What each GET route answers. */
 export type Gets = {
+	"/api/version": { protocol: number };
+	/** Every agent, archived ones included. */
+	"/api/agents": AgentEntry[];
+	/** `?agent=` for each of these: that agent's, the default agent's without it. */
 	"/api/settings": Settings;
 	"/api/reminders": Reminder[];
 	"/api/jobs": ListedJob[];
-	/** `?entry=&ref=` continues from the cursor the last page gave. */
+	/** Every agent's. `?entry=&ref=` continues from the cursor the last page gave. */
 	"/api/timeline": Timeline;
-	"/api/memory": { notes: Note[]; maxNote: number; maxTotal: number };
+	/** `notes`: the shared notes; `work`: the agent's work notes. */
+	"/api/memory": { notes: Note[]; work: Note[]; maxNote: number; maxTotal: number; maxWork: number };
 	"/api/budget": BudgetStatus | null;
 	"/api/usage": UsageState;
 	"/api/approvals": ApprovalRequest[];
 	"/api/push": PushInfo | null;
 	"/api/skills": { skills: ListedSkill[]; problems: string[] };
-	/** `?before=` continues from the cursor the last page gave. */
+	/** `?agent=`: the agent's threads, job runs and conversations other agents started. `?before=` continues from the cursor the last page gave. */
 	"/api/conversations": { items: ConversationSummary[]; next?: number };
-	/** `?id=`: a Slack thread or job run, and its transcript as the event stream starts it. */
+	/** `?id=`: a thread, job run or conversation another agent started, and its transcript as the event stream starts it. */
 	"/api/conversation": { conversation: Omit<ConversationSummary, "startedAt" | "lastAt" | "messages">; snapshot: SnapshotEvent };
 	/** `?name=&file=`: one of a skill's files; SKILL.md when no file is given. */
 	"/api/skills/file": { name: string; file: string; text: string };
@@ -107,15 +137,24 @@ export type Gets = {
 type Ok = { ok: boolean };
 /** What each POST route takes, as its parser reads it, and what it answers. */
 export type Posts = {
-	"/api/message": { body: BodyOf<typeof messageBody>; answer: { ok: true; answered?: true } };
-	"/api/abort": { body: BodyOf<typeof nothing>; answer: Ok };
+	/**
+	 * To the conversation, or the agent's home. A job run or a conversation another agent started is forked at its last
+	 * answer, and the message goes to the fork: `conversation` is where it went.
+	 */
+	"/api/message": { body: BodyOf<typeof messageBody>; answer: { ok: true; answered?: true; conversation: number } };
+	"/api/abort": { body: BodyOf<typeof abortBody>; answer: Ok };
+	/** A new thread with the agent, answering its first message. */
+	"/api/threads/start": { body: BodyOf<typeof threadBody>; answer: { conversation: number } };
+	"/api/agents/save": { body: BodyOf<typeof agentSave>; answer: AgentEntry };
+	/** Archives an agent, or restores it with `archived: false`. */
+	"/api/agents/archive": { body: BodyOf<typeof agentArchive>; answer: AgentEntry };
 	"/api/reminders/snooze": { body: BodyOf<typeof snoozeBody>; answer: { ok: true; at: number } };
 	"/api/reminders/cancel": { body: BodyOf<typeof byId>; answer: Ok };
 	"/api/memory/add": { body: BodyOf<typeof noteBody>; answer: Note };
 	"/api/memory/update": { body: BodyOf<typeof noteChange>; answer: Note };
 	"/api/skills/save": { body: BodyOf<typeof skillSave>; answer: ListedSkill };
 	"/api/skills/remove": { body: BodyOf<typeof skillRemove>; answer: Ok };
-	"/api/memory/forget": { body: BodyOf<typeof byId>; answer: Ok };
+	"/api/memory/forget": { body: BodyOf<typeof noteForget>; answer: Ok };
 	"/api/budget/allow": { body: BodyOf<typeof allowBody>; answer: BudgetStatus };
 	"/api/jobs/cancel": { body: BodyOf<typeof byId>; answer: Ok };
 	"/api/jobs/pause": { body: BodyOf<typeof byId>; answer: Ok };
@@ -138,6 +177,9 @@ type PostRoutes = { [P in keyof Posts]: PostRoute<Posts[P]> };
 export function createWebServer(options: {
 	harness: Harness;
 	root: Conversation;
+	/** The roster, whose home conversations the requests without a conversation go to. */
+	agents: RosterService;
+	threads: Threads;
 	user: string;
 	/** Tools the page can switch off, as of now. The reminder and homelab tools stay on. */
 	switchable: () => readonly ToolRegistration[];
@@ -153,12 +195,12 @@ export function createWebServer(options: {
 	history?: Pick<ReturnType<typeof createHistory>, "conversations" | "conversation">;
 	/** Notifications to the devices that sign up here. */
 	push?: Push;
-	/** Stops the root conversation's run and tells the model it was withdrawn (host.ts). Default: just stop it. */
-	stop?: () => Promise<boolean>;
+	/** Stops a conversation's run and tells the model it was withdrawn (host.ts). Default: just stop it. */
+	stop?: (conversation: Conversation) => Promise<boolean>;
 	/** The skills gaidin can open, which the owner changes here. */
 	skills?: ReturnType<typeof createSkills>;
 }) {
-	const { harness, root, user, switchable, approvals } = options;
+	const { harness, root, agents, threads, user, switchable, approvals } = options;
 	const choices = options.models ?? [];
 	// Each open page's event stream, told when a request for approval opens or closes.
 	const streams = new Set<(event: StreamEvent) => void>();
@@ -182,8 +224,30 @@ export function createWebServer(options: {
 		["/sw.js", asset("web/sw.js", "text/javascript; charset=utf-8")],
 	]);
 
-	async function settings(): Promise<Settings> {
-		const agent = await root.agent(context);
+	/** The agent a GET names, or the default agent. */
+	const agentIn = (url: URL) => url.searchParams.get("agent") ?? DEFAULT_AGENT;
+
+	/** An agent's home conversation, the default agent's unless one is named. */
+	const home = (agent?: string) => refused(() => agents.home(agent), 404);
+
+	/** A conversation by id; `agent`, when given, has to be the one it belongs to. */
+	async function conversationAt(id: number, agent?: string): Promise<Conversation> {
+		const conversation = await harness.conversation(conversationId(id), context);
+		if (conversation === undefined) throw new HttpError(404, `There's no conversation ${id}.`);
+		if (agent !== undefined && (await agentIdOf(harness, conversation.id, context)) !== agent) throw new HttpError(400, `Conversation ${id} isn't ${agent}'s.`);
+		return conversation;
+	}
+
+	/** The shelf a note change means: the agent's work notes, or the shared notes. The agent has to exist. */
+	async function shelfOf(body: { agent?: string; work?: boolean }): Promise<Shelf> {
+		if (body.work !== true) return SHARED;
+		const agent = body.agent ?? DEFAULT_AGENT;
+		if (!(await agents.list()).some((a) => a.id === agent)) throw new HttpError(404, `There's no agent ${agent}.`);
+		return { shared: false, agent };
+	}
+
+	async function settings(agentId?: string): Promise<Settings> {
+		const agent = await (await home(agentId)).agent(context);
 		const model = agent.model ?? { provider: "", modelId: "" };
 		const offered = new Set(agent.tools.map((t) => t.name));
 		return {
@@ -196,16 +260,17 @@ export function createWebServer(options: {
 	}
 
 	async function configure(change: ReturnType<typeof settingsChange>) {
-		const current = await settings();
+		const conversation = await home(change.agent);
+		const current = await settings(change.agent);
 		const modelId = change.model ?? current.model;
 		if (!current.models.includes(modelId)) throw new HttpError(400, `Unknown model ${modelId}`);
 		const thinkingLevel = change.thinkingLevel ?? THINKING.find((level) => level === current.thinkingLevel) ?? "off";
 		const disabled = new Set(change.disabledTools ?? []);
 		const remove = switchable().filter((t) => disabled.has(t.name));
 		const instructions = change.instructions?.trim() ?? current.instructions;
-		const provider = (await root.agent(context)).model?.provider ?? "anthropic";
+		const provider = (await conversation.agent(context)).model?.provider ?? "anthropic";
 		const model: ModelRef = { provider, modelId };
-		await root.configure({
+		await conversation.configure({
 			model,
 			thinkingLevel,
 			instructions: instructions === "" ? null : instructions,
@@ -223,7 +288,10 @@ export function createWebServer(options: {
 		}
 	}
 
-	async function events(response: ServerResponse) {
+	/** A conversation's events: `?conversation=`, or the home of `?agent=`. */
+	async function events(url: URL, response: ServerResponse) {
+		const id = url.searchParams.get("conversation");
+		const conversation = id === null ? await home(agentIn(url)) : await conversationAt(Number(id));
 		response.writeHead(200, {
 			...SECURITY_HEADERS,
 			"Content-Type": "text/event-stream",
@@ -232,7 +300,7 @@ export function createWebServer(options: {
 		});
 		const send = (event: StreamEvent) => response.write(`data: ${JSON.stringify(event)}\n\n`);
 		streams.add(send);
-		const stream = await watchEvents(harness, root.id, context);
+		const stream = await watchEvents(harness, conversation.id, context);
 		send(stream.snapshot);
 		stream.start(async (batch) => {
 			for (const event of batch) send(event);
@@ -246,10 +314,15 @@ export function createWebServer(options: {
 	}
 
 	const gets: GetRoutes = {
-		"/api/settings": settings,
-		"/api/reminders": async () => [...((await harness.snapshot(Reminders, context))?.items ?? [])].sort((a, b) => a.at - b.at),
-		"/api/jobs": async () => {
-			const items = (await harness.snapshot(Jobs, context))?.items ?? [];
+		"/api/version": async () => ({ protocol: PROTOCOL }),
+		"/api/agents": () => agents.list(),
+		"/api/settings": (url) => settings(agentIn(url)),
+		"/api/reminders": async (url) => {
+			const items = (await harness.snapshot(Reminders, context))?.items ?? [];
+			return items.filter((r) => reminderOf(r, agentIn(url))).sort((a, b) => a.at - b.at);
+		},
+		"/api/jobs": async (url) => {
+			const items = ((await harness.snapshot(Jobs, context))?.items ?? []).filter((j) => jobOf(j, agentIn(url)));
 			return items.map((job) => ({ ...job, when: describeSchedule(job.schedule) })).sort((a, b) => (a.nextAt ?? 0) - (b.nextAt ?? 0));
 		},
 		"/api/timeline": async (url) => {
@@ -257,7 +330,13 @@ export function createWebServer(options: {
 			const ref = url.searchParams.get("ref");
 			return (await options.timeline?.(ref === null || !Number.isInteger(entry) ? undefined : { entry, ref })) ?? { items: [] };
 		},
-		"/api/memory": async () => ({ notes: [...((await harness.snapshot(Memory, context))?.notes ?? [])], maxNote: MAX_NOTE, maxTotal: MAX_TOTAL }),
+		"/api/memory": async (url) => ({
+			notes: [...(await notesOn(harness, SHARED, context))],
+			work: [...(await notesOn(harness, { shared: false, agent: agentIn(url) }, context))],
+			maxNote: MAX_NOTE,
+			maxTotal: MAX_TOTAL,
+			maxWork: MAX_WORK,
+		}),
 		"/api/budget": async () => (options.budget === undefined ? null : await options.budget.refresh()),
 		"/api/usage": () => harness.usage(context),
 		"/api/approvals": () => approvals.pending(),
@@ -271,13 +350,13 @@ export function createWebServer(options: {
 		}),
 		"/api/conversations": async (url) => {
 			const before = Number(url.searchParams.get("before"));
-			return (await options.history?.conversations(Number.isInteger(before) && before > 0 ? before : undefined)) ?? { items: [] };
+			return (await options.history?.conversations(Number.isInteger(before) && before > 0 ? before : undefined, agentIn(url))) ?? { items: [] };
 		},
 		"/api/conversation": async (url) => {
 			const id = Number(url.searchParams.get("id"));
-			// Only threads and job runs: the main conversation is the console's.
+			// Not a home conversation: the event stream gives those.
 			const conversation = Number.isInteger(id) ? await options.history?.conversation(id) : undefined;
-			if (conversation === undefined) throw new HttpError(404, `No thread or job run ${url.searchParams.get("id")}`);
+			if (conversation === undefined) throw new HttpError(404, `No thread, job run or conversation from another agent ${url.searchParams.get("id")}`);
 			const stream = await watchEvents(harness, conversationId(id), context);
 			// Never started, so there's nothing to stop but the stream's own watch.
 			await stream.stop();
@@ -298,20 +377,46 @@ export function createWebServer(options: {
 			handle: async (message) => {
 				const content = message.content.trim();
 				if (content === "") throw new HttpError(400, "Empty message");
-				if ((await approvals.intercept(root.id, content, "web")) === "answered") return { ok: true, answered: true };
 				const requestId = `web:${message.requestId ?? randomUUID()}`;
-				await root.submit({ type: "input", content: stamp(content), requestId }, context);
-				return { ok: true };
+				const named = message.conversation === undefined ? undefined : await conversationAt(message.conversation, message.agent);
+				const conversation = named === undefined ? await home(message.agent) : await refused(() => threads.target(named.id, { origin: "app", key: requestId }));
+				if ((await approvals.intercept(conversation.id, content, "web")) === "answered") return { ok: true, answered: true, conversation: conversation.id };
+				await conversation.submit({ type: "input", content: stamp(content), requestId }, context);
+				return { ok: true, conversation: conversation.id };
 			},
 		},
 		"/api/abort": {
-			body: nothing,
-			handle: async () => {
-				if (options.stop === undefined) await root.abort(context);
-				else await options.stop();
+			body: abortBody,
+			handle: async ({ agent, conversation: id }) => {
+				const conversation = id === undefined ? await home(agent) : await conversationAt(id, agent);
+				if (options.stop === undefined) await conversation.abort(context);
+				else await options.stop(conversation);
 				return { ok: true };
 			},
 		},
+		"/api/threads/start": {
+			body: threadBody,
+			handle: async (message) => {
+				const content = message.content.trim();
+				if (content === "") throw new HttpError(400, "Empty message");
+				const requestId = `web:${message.requestId ?? randomUUID()}`;
+				const conversation = await refused(() => threads.start({ agent: message.agent, origin: "app", key: requestId }), 404);
+				await conversation.submit({ type: "input", content: stamp(content), requestId }, context);
+				return { conversation: conversation.id };
+			},
+		},
+		"/api/agents/save": {
+			body: agentSave,
+			handle: ({ id, name, job, ...change }) =>
+				refused(async () => {
+					if (!(await agents.list()).some((a) => a.id === id)) {
+						if (name === undefined) throw new HttpError(400, "A new agent needs a name.");
+						await agents.add({ id, name, job: job ?? "" });
+					}
+					return agents.update(id, { name, job, ...change });
+				}),
+		},
+		"/api/agents/archive": { body: agentArchive, handle: ({ id, archived }) => refused(() => agents.archive(id, archived)) },
 		"/api/reminders/snooze": {
 			body: snoozeBody,
 			// A reminder push's button, pressed on the owner's phone.
@@ -325,24 +430,17 @@ export function createWebServer(options: {
 		"/api/reminders/cancel": { body: byId, handle: async ({ id }) => ({ ok: (await root.commit((tx) => removeReminder(tx, id), context)) !== undefined }) },
 		"/api/memory/add": {
 			body: noteBody,
-			handle: async ({ text }) => {
-				try {
-					return await root.commit((tx) => addNote(tx, text, "owner"), context);
-				} catch (error) {
-					throw new HttpError(400, error instanceof Error ? error.message : String(error));
-				}
+			handle: async (body) => {
+				const shelf = await shelfOf(body);
+				return refused(() => root.commit((tx) => addNote(tx, body.text, "owner", shelf), context));
 			},
 		},
 		"/api/memory/update": {
 			body: noteChange,
-			handle: async ({ id, text }) => {
-				let note: Note | undefined;
-				try {
-					note = await root.commit((tx) => updateNote(tx, id, text, "owner"), context);
-				} catch (error) {
-					throw new HttpError(400, error instanceof Error ? error.message : String(error));
-				}
-				if (note === undefined) throw new HttpError(404, `No note ${id}`);
+			handle: async (body) => {
+				const shelf = await shelfOf(body);
+				const note = await refused(() => root.commit((tx) => updateNote(tx, body.id, body.text, "owner", shelf), context));
+				if (note === undefined) throw new HttpError(404, `No note ${body.id}`);
 				return note;
 			},
 		},
@@ -361,7 +459,13 @@ export function createWebServer(options: {
 				return { ok: true };
 			},
 		},
-		"/api/memory/forget": { body: byId, handle: async ({ id }) => ({ ok: (await root.commit((tx) => forgetNote(tx, id), context)) !== undefined }) },
+		"/api/memory/forget": {
+			body: noteForget,
+			handle: async (body) => {
+				const shelf = await shelfOf(body);
+				return { ok: (await root.commit((tx) => forgetNote(tx, body.id, shelf), context)) !== undefined };
+			},
+		},
 		"/api/budget/allow": {
 			body: allowBody,
 			handle: async ({ amount: asked }) => {
@@ -402,7 +506,7 @@ export function createWebServer(options: {
 			body: settingsChange,
 			handle: async (change) => {
 				await configure(change);
-				return settings();
+				return settings(change.agent);
 			},
 		},
 	};
@@ -422,7 +526,7 @@ export function createWebServer(options: {
 			if (code !== undefined) return reply(response, 200, code, "text/javascript; charset=utf-8");
 			const file = files.get(path);
 			if (file !== undefined) return reply(response, 200, file.body, file.type);
-			if (path === "/events") return events(response);
+			if (path === "/events") return events(url, response);
 			if (isGet(path)) return json(response, await gets[path](url));
 		}
 		if (request.method !== "POST" || !isPost(path)) throw new HttpError(404, "Not found");
@@ -443,6 +547,16 @@ export function createWebServer(options: {
 			else response.end();
 		});
 	});
+}
+
+/** Runs `work`, turning what it throws into an answer with `status` and its message: the request asked for what can't be. */
+async function refused<T>(work: () => Promise<T>, status = 400): Promise<T> {
+	try {
+		return await work();
+	} catch (error) {
+		if (error instanceof HttpError) throw error;
+		throw new HttpError(status, error instanceof Error ? error.message : String(error));
+	}
 }
 
 class HttpError extends Error {

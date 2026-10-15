@@ -209,7 +209,7 @@ test("a note that can't be written isn't put to Brad", async (t) => {
 
 test("the web view lists, adds, edits and deletes notes", async (t) => {
 	const host = await start(t, () => []);
-	const server = createWebServer({ harness: host.harness, root: host.root, user: "me", switchable: host.switchable, approvals: host.approvals });
+	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: "me", switchable: host.switchable, approvals: host.approvals });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(() => new Promise((resolve) => {
 		server.closeAllConnections();

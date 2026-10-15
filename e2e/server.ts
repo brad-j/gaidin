@@ -86,6 +86,8 @@ const host = await startHost({
 const web = createWebServer({
 	harness: host.harness,
 	root: host.root,
+	agents: host.agents,
+	threads: host.threads,
 	user,
 	switchable: host.switchable,
 	approvals: host.approvals,

@@ -27,7 +27,7 @@ gaidin agent set scout --name Seeker --job "..."    # an id can't change; an emp
 
 ## Slack
 
-gaidin answers in one channel, for one Slack user, over Socket Mode, so the server needs no inbound port. It answers every top-level message you post in the channel, in that message's thread; you don't need to mention it. Each thread is a [conversation of its own](concepts.md#slack-threads), and later replies in it continue that conversation. It ignores other people, other channels, bots and edited messages. A thread on a message it never answered gets a note instead of an answer.
+gaidin answers in one channel, for one Slack user, over Socket Mode, so the server needs no inbound port. It answers every top-level message you post in the channel, in that message's thread; you don't need to mention it. Each thread is a [conversation of its own](concepts.md#threads), and later replies in it continue that conversation. It ignores other people, other channels, bots and edited messages. A thread on a message it never answered gets a note instead of an answer.
 
 Each reminder that fires is posted to the channel as well as pushed, with buttons that snooze it; once pressed, the message says when it'll come back. A job that [paused](tools.md#scheduled-jobs) after failing is posted with a button that resumes it.
 
@@ -55,6 +55,8 @@ The web view is a console on the root conversation, live from every surface, wit
 - The log shows your messages and gaidin's answers, rendered as Markdown, with thinking and tool calls folded to one line each; open one to see its input and output, which streams while it runs. Fired reminders and job reports appear in it too.
 - The dock holds pending approvals and questions above the prompt. Approvals have Allow, the wider grant where there is one, and Deny (Alt+Y, Alt+A, Alt+N for the oldest). Questions have a button per choice, and whatever you type at the prompt next is taken as the answer.
 - The status line shows whether a run is going, with Esc or Ctrl+C to stop it (from the console's prompt, or with nothing else focused: Esc in another page's text box only leaves that box), the model, thinking level and tools, and the cost of the conversation and today's spend against any limit. When the spend guard has stopped gaidin, it shows a button to allow more today. Stopping a run leaves gaidin a note that you withdrew the request, so it doesn't take it up again with your next message; ask again to have it done.
+
+The pages show the default agent's reminders, jobs and conversations, and the shared notes; the dock, activity and the timeline cover every agent.
 
 On a phone, the views are tabs across the top, scrolling sideways when they don't fit, the log gives its whole width to the text, and the prompt is one line that grows as you type. Only the console has the prompt there; approvals and questions stay docked on every page, and the schedule page's new-reminder and new-job buttons go to the console to ask.
 
@@ -85,6 +87,10 @@ sudo tailscale serve --bg --yes 8410
 Serve removes any identity headers a client sends and adds `Tailscale-User-Login` for requests from a person's device. The server answers only the login in `web.user` and returns 403 to everyone else, including tagged devices, which get no identity. POSTs need a JSON body and an `Origin` matching the page, so another site open in your browser can't drive it.
 
 Without `web.user` there's no web view. The page is `web/index.html`, `web/app.ts` and `web/transcript.ts`; Node strips the TypeScript types as it serves them, so there's no build step.
+
+### The API
+
+The page works through an HTTP API under `/api`, and `/events` for a conversation's live events, behind the same checks. `Gets` and `Posts` in `src/web.ts` say what each route takes and answers, and moiraine, the app that will replace the web view ([Plan](plan.md#design-the-app)), is typed from them. A request names an agent with `?agent=` or `agent` in its body, and a conversation with `?conversation=` or `conversation`; without them, it's the default agent and its home conversation. Through it you also start [threads](concepts.md#threads) and continue any conversation, and add, change, archive and restore [agents](concepts.md#agents). `/api/version` gives the protocol's version, raised whenever an answer or a body changes shape.
 
 ### As an app
 

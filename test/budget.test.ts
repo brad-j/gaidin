@@ -101,7 +101,7 @@ test("the monthly limit holds across days", async (t) => {
 
 test("the web view shows the budget and allows more", async (t) => {
 	const { host, spent } = await start(t);
-	const server = createWebServer({ harness: host.harness, root: host.root, user: "me", switchable: host.switchable, approvals: host.approvals, budget: host.budget });
+	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: "me", switchable: host.switchable, approvals: host.approvals, budget: host.budget });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(() => new Promise((resolve) => {
 		server.closeAllConnections();

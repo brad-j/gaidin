@@ -221,7 +221,7 @@ test("Slack asks with buttons, in the thread for a forked conversation, and show
 test("the web view lists requests and decides them", async (t) => {
 	const { createWebServer } = await import("../src/web.ts");
 	const { host } = await start(t, [["a.test"]]);
-	const server = createWebServer({ harness: host.harness, root: host.root, user: "me", switchable: host.switchable, approvals: host.approvals });
+	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: "me", switchable: host.switchable, approvals: host.approvals });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(() => new Promise((resolve) => {
 		server.closeAllConnections();

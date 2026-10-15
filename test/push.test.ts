@@ -103,7 +103,7 @@ test("reminders and requests reach signed-up devices, a device that's gone is dr
 		model: { provider: "faux", modelId: "faux-1" },
 		pushFetch,
 	});
-	const server = createWebServer({ harness: host.harness, root: host.root, user: BRAD, switchable: host.switchable, approvals: host.approvals, push: host.push! });
+	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: BRAD, switchable: host.switchable, approvals: host.approvals, push: host.push! });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(async () => {
 		server.closeAllConnections();

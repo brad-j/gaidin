@@ -37,8 +37,9 @@
 23. Skills: guides gaidin opens when a request calls for one, listed in every system prompt and read with `read_skill`. The documentation is the built-in `gaidin` skill, so gaidin can answer questions about itself; local skills live in the data directory, and the web view has a page for them ([Tools](tools.md#skills)).
 24. The web view controls the rest: a memory page to add, edit and forget notes; a settings page for the model, thinking, tools, standing instructions and notification devices; an activity page with spend against the limits, cost by model and the timeline; and writing skills, by the owner on the skills page and by gaidin with `write_skill` and `remove_skill`, which always ask, each change a commit ([Surfaces](surfaces.md#web-view), [Tools](tools.md#skills)).
 25. A history page for Slack threads and job runs; compaction from about 60,000 tokens, so requests stay under the 100,000-token price tier ([Concepts](concepts.md#compaction)); and Esc stops a run only from the console.
-26. Slack threads as separate conversations: each top-level message starts one with the root's settings and is answered in its thread, so the channel no longer shares the root conversation with the CLI and web view ([Concepts](concepts.md#slack-threads)).
+26. Slack threads as separate conversations: each top-level message starts one with the root's settings and is answered in its thread, so the channel no longer shares the root conversation with the CLI and web view ([Concepts](concepts.md#threads)).
 27. Several named agents, the core: a roster in the database with the current gaidin as the default agent, each agent with its own home conversation, sandbox, work notes beside the shared notes, reminders, jobs, past conversations, allowed hosts, workspaces and self-written tools; `message_agent` and `hand_off` between agents an entry allows; and `gaidin ask --agent` and `gaidin agent` on the command line ([Concepts](concepts.md#agents), [Security](security.md#agents)). Slack and the web view still talk to the default agent.
+28. The app's server side: threads start and continue through the web server's API as well as Slack, in a module both use (`src/threads.ts`), and a message to a job run or a conversation another agent started forks it at its last answer. Every route takes an agent and, where it applies, a conversation; the roster is listed, saved, archived and restored there, and `/api/version` gives the protocol's version ([Concepts](concepts.md#threads), [Surfaces](surfaces.md#the-api)).
 
 ## Next
 
@@ -195,7 +196,7 @@ moiraine's deploy script builds on the owner's machine and copies the build over
 
 ### Order of work
 
-1. Server: the shared thread module, the protocol for any conversation and agent, and the agents routes, with tests using the faux provider.
+1. Done: the shared thread module, the protocol for any conversation and agent, and the agents routes, with tests using the faux provider (item 28). `web.app`, the CSP hashes and the shell for every path come with step 2, when there's a build to serve.
 2. moiraine's skeleton, served by gaidin at `/app/` beside the web view: the sidebar, a conversation, the dock and the prompt, with the Playwright e2e tests moved over and run against the app.
 3. The pages, with the per-agent changes.
 4. Attachments.

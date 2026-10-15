@@ -1,6 +1,6 @@
-// The owner's messages in Slack. Each top-level message in the channel starts a conversation of its own, with
-// the root conversation's settings but none of its history, and is answered in its thread; later replies in the
-// thread continue it. A thread on something gaidin posted on its own, such as a job's report, or on an answer from
+// The owner's messages in Slack. Each top-level message in the channel starts a thread (threads.ts), with the
+// root conversation's settings but none of its history, and is answered in its Slack thread; later replies there
+// continue it. A thread on something gaidin posted on its own, such as a job's report, or on an answer from
 // before threads were separate, forks that conversation at that answer. index.ts hands this only the owner's
 // messages in that channel.
 //
@@ -9,9 +9,10 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import { AgentDoc, type Conversation, defineDoc, type EntryId, type Harness, type UserInput } from "@earendil-works/pi-durable";
+import { type Conversation, defineDoc, type EntryId, type Harness, type UserInput } from "@earendil-works/pi-durable";
 import type { ApprovalService } from "../approvals.ts";
 import { assistantText, context } from "../host.ts";
+import type { Threads } from "../threads.ts";
 import { stamp } from "../time.ts";
 import { conversationId as toConversationId, entryId } from "../ids.ts";
 import type { SlackDownload, SlackFile, SlackMessage, SlackPost } from "./api.ts";
@@ -70,6 +71,7 @@ const POST_ATTEMPTS = 5;
 export function createSlackConversation(options: {
 	harness: Harness;
 	root: Conversation;
+	threads: Threads;
 	post: SlackPost;
 	channel: string;
 	retryDelayMs?: number;
@@ -80,7 +82,7 @@ export function createSlackConversation(options: {
 	/** How files in messages are fetched, and the sandbox directory other files are saved in. Without them, files are left out. */
 	files?: { download: SlackDownload; sandbox: string };
 }) {
-	const { harness, root, post, channel, retryDelayMs = 1000 } = options;
+	const { harness, root, threads, post, channel, retryDelayMs = 1000 } = options;
 	const delivering = new Set<string>();
 	// Accepting is serialized, so two quick replies in a new thread make one fork.
 	let accepting: Promise<unknown> = Promise.resolve();
@@ -129,19 +131,16 @@ export function createSlackConversation(options: {
 		const content = stamp(text);
 		if (threadTs === undefined) {
 			// Nothing can be waiting in a new conversation, so the message is pending from the commit that creates it.
-			await harness.createConversation({
-				ownership: { kind: "ownerless" },
+			await threads.start({
+				origin: "slack",
 				init: async (tx, id) => {
-					// The root's model, thinking, tools and instructions as they are now; later changes there don't reach it.
-					const settings = JSON.parse(JSON.stringify(await tx.doc(AgentDoc, root.id)));
-					Object.assign(await tx.doc(AgentDoc, id), settings);
 					const pending: Pending = { conversationId: id, content, threadTs: ts };
 					if (files.length > 0) pending.files = files;
 					const doc = await tx.doc(SlackState);
 					doc.threads[ts] = id;
 					doc.pending[ts] = pending;
 				},
-			}, context);
+			});
 			return true;
 		}
 		let conversationId: number;
@@ -157,12 +156,12 @@ export function createSlackConversation(options: {
 			const from = state.answerConversations?.[threadTs];
 			const parent = from === undefined ? root : await harness.conversation(toConversationId(from), context);
 			if (parent === undefined) throw new Error(`conversation ${from} is gone`);
-			const fork = await parent.fork(entryId(at), {
-				ownership: { kind: "ownerless" },
+			const fork = await threads.fork(parent, entryId(at), {
+				origin: "slack",
 				init: async (tx, id) => {
 					(await tx.doc(SlackState)).threads[threadTs] = id;
 				},
-			}, context);
+			});
 			conversationId = fork.id;
 		}
 		// A question waiting in this conversation takes the message as its answer; a waiting approval is skipped.

@@ -14,17 +14,18 @@ import { type Config, configFor, secretsOf, SETTINGS_DIR } from "./config.ts";
 import { createHomelab, homelabGuards, type HomelabOptions } from "./extensions/homelab/index.ts";
 import { createFetch, type FetchOptions } from "./fetch.ts";
 import { createHistory } from "./history.ts";
-import { createJobs, type Deliver, type Gate } from "./jobs.ts";
+import { createJobs, type Deliver, type Gate, jobOf, Jobs, pauseJob } from "./jobs.ts";
 import { createMemory } from "./memory.ts";
 import { type Adapter, type Adapters, createNotifications, type Notice, type Notifications } from "./notifications.ts";
 import { ntfyAdapter } from "./ntfy.ts";
 import { createPush, loadPushKeys, type Push, pushAdapter } from "./push.ts";
 import { type Redactor, redactionExtension, redactorFor } from "./redact.ts";
-import { createReminders } from "./reminders.ts";
+import { createReminders, reminderOf, Reminders, removeReminder } from "./reminders.ts";
 import { findBwrap, inside, prepareServerDirs, SandboxEnv } from "./sandbox.ts";
 import { backendFor, type SearchBackend, searchGuards, webSearchTool } from "./search.ts";
 import { createSelf } from "./self/index.ts";
 import { createSkills } from "./skills.ts";
+import { createThreads } from "./threads.ts";
 import { setTimeZone } from "./time.ts";
 import { createWorkspaces, readWorkspaces, type Remote, sshRemote, type Workspace } from "./workspaces.ts";
 
@@ -240,8 +241,13 @@ export async function openHost(options: HostOptions = {}) {
 		dataDir: dir,
 		workspaces: () => workspaces.names,
 		selfTools: () => self?.extensions() ?? [],
+		archiving: async (tx, agent) => {
+			for (const job of (await tx.doc(Jobs)).items.filter((j) => jobOf(j, agent))) await pauseJob(tx, job.taskId, "its agent was archived");
+			for (const reminder of (await tx.doc(Reminders)).items.filter((r) => reminderOf(r, agent))) await removeReminder(tx, reminder.taskId, agent);
+		},
 	});
 	await roster.start();
+	const threads = createThreads(harness, roster);
 
 	/** Starts the tasks, with `slack` among the ways to reach the owner when the server has it. */
 	async function start(slack?: Adapter) {
@@ -274,7 +280,7 @@ export async function openHost(options: HostOptions = {}) {
 	// and the self-written ones.
 	const builtIn = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...history.tools, ...workspaces.tools];
 	const switchable = () => [...builtIn, ...(self?.tools() ?? [])];
-	return { harness, root, agents: roster, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation }, skills, sandbox, push, start, stop };
+	return { harness, root, agents: roster, threads, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation }, skills, sandbox, push, start, stop };
 }
 
 export type Host = Awaited<ReturnType<typeof openHost>>;

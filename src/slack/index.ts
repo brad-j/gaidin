@@ -24,12 +24,13 @@ export type SlackConnect = (handlers: SlackHandlers) => { stop(): void };
  * Socket Mode connection; tests use them.
  */
 export function createSlack(settings: SlackConfig, host: Host, ports: { api?: SlackApi; download?: SlackDownload; connect?: SlackConnect; retryDelayMs?: number } = {}) {
-	const { harness, root, approvals, explain, sandbox, reminders } = host;
+	const { harness, root, threads, approvals, explain, sandbox, reminders } = host;
 	const channel = settings.channelId;
 	const api = ports.api ?? slackApi(settings.botToken);
 	const conversation = createSlackConversation({
 		harness,
 		root,
+		threads,
 		post: slackPoster(api),
 		channel,
 		explain,

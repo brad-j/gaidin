@@ -173,7 +173,7 @@ async function offerSelfTools(tx: Tx, roster: Readonly<Roster>, agent: AgentEntr
 }
 
 /** Copies an agent's home settings into a conversation it starts, cwd included, so its tools work in its sandbox. */
-async function copyHomeSettings(tx: Tx, from: number, to: ConversationId): Promise<void> {
+export async function copyHomeSettings(tx: Tx, from: number, to: ConversationId): Promise<void> {
 	// SAFETY: the agent document is plain JSON data, so a JSON round trip gives back the same settings.
 	const settings = JSON.parse(JSON.stringify(await tx.doc(AgentDoc, toConversationId(from)))) as AgentState;
 	Object.assign(await tx.doc(AgentDoc, to), settings);
@@ -341,6 +341,8 @@ export function createRoster(options: {
 	workspaces: () => readonly string[];
 	/** The self-written tools, by extension name, which a new agent starts without. */
 	selfTools: () => { extension: string; tools: string[] }[];
+	/** Stops what an agent being archived has going: its jobs and reminders. Runs in the commit that archives it. */
+	archiving?: (tx: Tx, id: string) => Promise<void>;
 }) {
 	const { harness, root, dataDir } = options;
 	const read = async () => rosterOf(harness, background);
@@ -431,6 +433,25 @@ export function createRoster(options: {
 		}, background);
 	}
 
+	/**
+	 * Archives an agent, or restores one. Archiving pauses its jobs and cancels its reminders; its conversations, notes and
+	 * sandbox stay, and restoring leaves its jobs paused for the owner to resume. The default agent can't be archived.
+	 */
+	async function archive(id: string, archived: boolean): Promise<AgentEntry> {
+		if (id === DEFAULT_AGENT && archived) throw new Error("The default agent can't be archived.");
+		return root.commit(async (tx) => {
+			const agent = (await tx.doc(Agents)).agents.find((a) => a.id === id);
+			if (agent === undefined) throw new Error(`There's no agent ${id}.`);
+			if (archived && agent.archived === undefined) {
+				agent.archived = Date.now();
+				await options.archiving?.(tx, id);
+			}
+			if (!archived) delete agent.archived;
+			// SAFETY: a roster entry is plain JSON data, so a JSON round trip gives back the same entry.
+			return JSON.parse(JSON.stringify(agent)) as AgentEntry;
+		}, background);
+	}
+
 	/** An agent's home conversation, which the CLI and web view talk to. Throws when there's no such agent. */
 	async function home(id: string = DEFAULT_AGENT): Promise<Conversation> {
 		if (id === DEFAULT_AGENT) return root;
@@ -441,7 +462,7 @@ export function createRoster(options: {
 		return conversation;
 	}
 
-	return { start, list: async () => (await read()).agents.map((a) => ({ ...a })), add, update, home, sandbox };
+	return { start, list: async () => (await read()).agents.map((a) => ({ ...a })), add, update, archive, home, sandbox };
 }
 
 export type RosterService = ReturnType<typeof createRoster>;

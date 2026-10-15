@@ -20,6 +20,7 @@ import { ApprovalSettled } from "./approvals.ts";
 import { outsideText } from "./guards.ts";
 import { JobReported } from "./jobs.ts";
 import { ReminderFired } from "./reminders.ts";
+import { type Origin, originOf } from "./threads.ts";
 import { formatTime } from "./time.ts";
 import { conversationId, entryId } from "./ids.ts";
 import { object, parse, string } from "./parse.ts";
@@ -106,11 +107,13 @@ async function placeOf(tx: Tx, id: ConversationId, home: boolean, started: boole
 	return (await tx.task(conversation.owner.taskId))?.kind === "gaidin.job" ? "job" : undefined;
 }
 
-/** A Slack thread or a job run, as the web view lists them. */
+/** A thread, a job run or a conversation another agent started, as the web view lists them. */
 export type ConversationSummary = {
 	id: number;
 	place: Exclude<Place, "main">;
 	agent: string;
+	/** For a thread: where it began. */
+	origin?: Origin;
 	/** A job run's job, or a thread's first message. */
 	title: string;
 	/** The last answer in it. */
@@ -221,6 +224,7 @@ export function createHistory(file: string, owner: string) {
 		}
 		const summary: Omit<ConversationSummary, "startedAt" | "lastAt" | "messages"> = { id, place, agent, title: title.slice(0, 200), preview: (last?.text ?? "").slice(0, 300) };
 		if (found?.forkedAt !== undefined) summary.forkedAt = found.forkedAt;
+		if (place === "thread" && attached !== undefined) summary.origin = await originOf(attached, id);
 		return summary;
 	}
 
@@ -282,14 +286,17 @@ export function createHistory(file: string, owner: string) {
 			const end = rows.at(-1);
 			return rows.length < 50 || end === undefined ? { items } : { items, next: { entry: end.entry, ref: end.ref } };
 		},
-		/** Up to 50 Slack threads and job runs, the most recently active first, with an older message than `before`; and the cursor for the next 50. */
-		async conversations(before?: number): Promise<{ items: ConversationSummary[]; next?: number }> {
+		/**
+		 * Up to 50 of `agent`'s threads, job runs and conversations other agents started, every agent's when it's not given,
+		 * the most recently active first, with an older message than `before`; and the cursor for the next 50.
+		 */
+		async conversations(before?: number, agent?: string): Promise<{ items: ConversationSummary[]; next?: number }> {
 			await work;
 			// SAFETY: rows of the tables createHistory makes, with the columns the query names.
 			const rows = db.prepare(`
 				SELECT conversation, place, agent, min(at) AS startedAt, max(at) AS lastAt, max(id) AS newest, count(*) AS messages FROM messages
-				WHERE place != 'main' GROUP BY conversation HAVING newest < ? ORDER BY newest DESC LIMIT 50
-			`).all(before ?? Number.MAX_SAFE_INTEGER) as { conversation: number; place: Exclude<Place, "main">; agent: string; startedAt: number; lastAt: number; newest: number; messages: number }[];
+				WHERE place != 'main' AND (?2 IS NULL OR agent = ?2) GROUP BY conversation HAVING newest < ?1 ORDER BY newest DESC LIMIT 50
+			`).all(before ?? Number.MAX_SAFE_INTEGER, agent ?? null) as { conversation: number; place: Exclude<Place, "main">; agent: string; startedAt: number; lastAt: number; newest: number; messages: number }[];
 			const items: ConversationSummary[] = [];
 			for (const row of rows) {
 				const summary = await summarise(row.conversation, row.place, row.agent);
