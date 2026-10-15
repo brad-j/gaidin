@@ -20,13 +20,16 @@ export function press(action_id: string, value: string, extra: Partial<SlackActi
 }
 
 /**
- * Slack for `host`, started. Every Web API call is in `calls`; each post gets the ts `bot.<n>`. `api` replaces the
- * fake Web API, such as one that never answers.
+ * Slack for `host`, started. Every Web API call but auth.test is in `calls`; each post gets the ts `bot.<n>`. auth.test
+ * answers with `scopes`, which have chat:write.customize unless given. `api` replaces the fake Web API, such as one that
+ * never answers.
  */
-export function fakeSlack(host: Host, options: { api?: SlackApi; download?: SlackDownload } = {}) {
+export function fakeSlack(host: Host, options: { api?: SlackApi; download?: SlackDownload; scopes?: string[] } = {}) {
 	const calls: Call[] = [];
 	let posted = 0;
+	const scopes = options.scopes ?? ["channels:history", "groups:history", "chat:write", "chat:write.customize", "files:read"];
 	const api: SlackApi = options.api ?? (async (method, body) => {
+		if (method === "auth.test") return { scopes };
 		const call: Call = { method, body: body as Record<string, any> };
 		if (method === "chat.postMessage") call.ts = `bot.${++posted}`;
 		calls.push(call);

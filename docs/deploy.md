@@ -15,7 +15,7 @@ gaidin config                   # print the settings in use, secrets shortened
 
 From a checkout, `pnpm gaidin ...` runs it, and `pnpm serve`, `pnpm ask`, `pnpm watch` and `pnpm doctor` are shortcuts. On the VM, `setup.sh` installs `/usr/local/bin/gaidin`, which runs it as the service's user with the service's settings.
 
-`gaidin doctor` doesn't start the server and spends no tokens. It checks the settings, Node, the data directory, that bubblewrap can start a sandbox, that Chromium starts with its sandbox when there are browser profiles, the API key and model (by looking the model up), the ntfy topic, that the push services can be reached, both Slack tokens, the search key and its remaining credits, `tailscale serve`, each workspace, and the homelab feeds and log hosts, and says what to fix.
+`gaidin doctor` doesn't start the server and spends no tokens. It checks the settings, Node, the data directory, that bubblewrap can start a sandbox, that Chromium starts with its sandbox when there are browser profiles, the API key and model (by looking the model up), the ntfy topic, that the push services can be reached, both Slack tokens and whether agents can post under their own names, the search key and its remaining credits, `tailscale serve`, each workspace, and the homelab feeds and log hosts, and says what to fix.
 
 ## Running it locally
 
@@ -111,7 +111,7 @@ The settings file is JSON: the first of `--config`, `GAIDIN_CONFIG`, `./gaidin.j
 | `ntfy.icon` | | | URL of a PNG or JPEG the ntfy app shows beside each push. The phone fetches it, so the app's `https://<gaidin's tailnet name>/icon-192.png` works while the phone is on the tailnet. |
 | `slack.botToken` | `SLACK_BOT_TOKEN` | | `xoxb-` token. All four Slack values or none. |
 | `slack.appToken` | `SLACK_APP_TOKEN` | | `xapp-` token with `connections:write`. |
-| `slack.channelId` | `SLACK_CHANNEL_ID` | | The one channel gaidin answers in. |
+| `slack.channelId` | `SLACK_CHANNEL_ID` | | The default agent's channel. Other agents' channels are in the roster, set from the app or `gaidin agent set --channel`. |
 | `slack.userId` | `SLACK_USER_ID` | | The one Slack user it answers. |
 | `web.user` | `GAIDIN_WEB_USER` | | Tailscale login allowed into the app. Without it there's no app. |
 | `web.port` | `GAIDIN_WEB_PORT` | `8410` | Loopback port for the app. |

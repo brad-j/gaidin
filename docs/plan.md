@@ -49,19 +49,20 @@
 35. The browser's reading tools: profiles named in the settings and given per agent in its roster entry, a Chromium per profile with its own sandbox and its cookies in `<data>/browser/`, and `browser_open`, `browser_snapshot`, `browser_screenshot` and `browser_tabs`, offered only to agents with a profile. Opening a page asks as a fetch does, a page's own navigations to other hosts are stopped, and private addresses are refused for everything a page loads. `setup.sh` installs Chromium with its AppArmor profile (protocol 7) ([Tools](tools.md#browser), [Security](security.md#the-browser)).
 36. The browser's acting tools: `browser_click`, `browser_type`, `browser_select`, `browser_back` and `browser_upload`. Acting asks while outside text is in the conversation, naming the element as the snapshot showed it, unless the owner let the agent act on that site in that profile without asking (a new second button, kept in the roster entry and removable on the settings page), and happens only if the page is still what was asked about. Typing into a password field is refused, and uploads ask every time. Downloads land in the agent's read-only `downloads/`, and dialogs are dismissed and reported. Refs now come only from whole-page snapshots, since snapshotting one element renumbered the page's refs (protocol 8) ([Tools](tools.md#browser)).
 37. Taking a browser profile over: the app's Browser page lists the profiles and opens one live, a screencast relayed as an event stream of JPEG frames, with the owner's clicks, scrolls and typing sent back as POSTs, on a phone too, and the agents' browser calls on it waiting until the owner is done. `browser_hand_over` asks the owner to take over and waits like `ask_owner`, shown in the dock, pushed and posted in Slack with Take over, Done and Can't (protocol 9) ([Tools](tools.md#taking-a-profile-over)).
+38. Slack's channel per agent: a roster entry names its agent's channel, where a top-level message starts a thread with that agent and the agent's reminders, reports, paused jobs, requests and questions go, under its name (`chat:write.customize`, falling back to the app's name with the agent's in front). Messages in other channels are keyed `<channel>:<ts>` in `SlackState`, the default channel's keeping bare ts, and an agent without a channel posts in the default one, named. `gaidin doctor` says whether the app has the scope ([Surfaces](surfaces.md#slack)).
 
 ## Next
 
 Candidates:
 
-- Several named agents, designed below: Slack's channel per agent, the one step left now the app (designed below) has replaced the web view and holds the agents' pages. Then connectors (MCP servers with OAuth, tokens held by the server, granted per agent) and owner-written allow and ask-first rules, in that order. The browser (designed below) is done.
+- Connectors (MCP servers with OAuth, tokens held by the server, granted per agent), then owner-written allow and ask-first rules, in that order. Several named agents, the app and the browser (designed below) are done.
 - Release polish: a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
 
 Not planned: branching from any message in the web view, since each thread is already a conversation of its own; push-to-talk, since the owner dictates with superwhisper; and projects or image generation in the app.
 
 ## Design: several agents
 
-The core is built (item 27); Slack and the web view are next. A roster of named agents, each with its own job, standing instructions, model, tools, work notes, sandbox, allowed hosts and workspaces. Agents message each other and hand work on; one can coordinate the rest. Unlike Grok Bot, whose bots share one machine, agents are kept apart: one can't read another's sandbox, notes, jobs or past conversations, or use its grants.
+Built: the core (item 27), the web view's part in the app (items 29 and 30), and Slack (item 38). A roster of named agents, each with its own job, standing instructions, model, tools, work notes, sandbox, allowed hosts and workspaces. Agents message each other and hand work on; one can coordinate the rest. Unlike Grok Bot, whose bots share one machine, agents are kept apart: one can't read another's sandbox, notes, jobs or past conversations, or use its grants.
 
 Decided with the owner:
 
@@ -154,8 +155,8 @@ Going back to an older build ignores the new documents and fields, but would run
 
 1. Commit item 26 (Slack threads as conversations), which is in progress.
 2. Done: the roster, bindings, prompts, sandboxes, memory split, per-agent approvals, jobs and reminders, history, messaging and hand-off, and the CLI. Tests with the faux provider cover isolation: one agent's tools can't reach another's sandbox, notes, jobs, history or hosts.
-3. Slack: a channel per agent.
-4. Web view: the switcher, the agents page and the per-agent pages, built in the app (its steps 1 to 3), checked in a browser with the Playwright e2e tests.
+3. Done: Slack, a channel per agent (item 38). An agent without a channel posts in the default agent's, named, rather than only being reached from the app and CLI.
+4. Done: web view: the switcher, the agents page and the per-agent pages, built in the app (its steps 1 to 3), checked in a browser with the Playwright e2e tests (items 29 and 30).
 
 Each step ends with `pnpm check` passing and is a commit of its own.
 

@@ -10,6 +10,7 @@ import { sshRunner } from "./extensions/homelab/logs.ts";
 import { chromium } from "playwright-core";
 import { bwrapArgs, findBwrap, prepareServerDirs } from "./sandbox.ts";
 import { tavilyUsage } from "./search.ts";
+import { CUSTOMIZE } from "./slack/api.ts";
 import { isListening, socketPathFor } from "./server.ts";
 import { answer, readAnswer, readWorkspaces, sshRemote } from "./workspaces.ts";
 
@@ -17,14 +18,15 @@ export type Check = { status: "ok" | "warn" | "fail" | "skip"; area: string; det
 
 const message = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 
-async function json(url: string, init: RequestInit = {}): Promise<{ status: number; body: any }> {
+/** `scopes`: the token's, which Slack's Web API names in a header with each answer. */
+async function json(url: string, init: RequestInit = {}): Promise<{ status: number; body: any; scopes?: string }> {
 	const response = await fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
 	const text = await response.text();
 	let body: unknown = text;
 	try {
 		body = JSON.parse(text);
 	} catch {}
-	return { status: response.status, body };
+	return { status: response.status, body, scopes: response.headers.get("x-oauth-scopes") ?? undefined };
 }
 
 /** Each check resolves to one or more lines; none of them throws. */
@@ -162,10 +164,15 @@ async function slack(config: Config): Promise<Check[]> {
 	if (config.slack === undefined) return [{ status: "skip", area: "slack", detail: "not set up" }];
 	const call = (method: string, token: string) => json(`https://slack.com/api/${method}`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
 	const [auth, connection] = await Promise.all([call("auth.test", config.slack.botToken), call("apps.connections.open", config.slack.appToken)]);
+	const scopes = auth.scopes?.split(",").map((s) => s.trim());
+	const named: Check[] = scopes === undefined || !auth.body?.ok ? [] : scopes.includes(CUSTOMIZE)
+		? [{ status: "ok", area: "slack", detail: "agents post under their own names" }]
+		: [{ status: "warn", area: "slack", detail: `the app lacks ${CUSTOMIZE}, so agents' posts go under the app's name with theirs in front: add the scope under OAuth & Permissions and reinstall the app` }];
 	return [
 		auth.body?.ok
 			? { status: "ok", area: "slack", detail: `bot token works: ${auth.body.user} in ${auth.body.team}` }
 			: { status: "fail", area: "slack", detail: `bot token refused: ${auth.body?.error ?? auth.status}` },
+		...named,
 		connection.body?.ok
 			? { status: "ok", area: "slack", detail: "app token can open Socket Mode" }
 			: { status: "fail", area: "slack", detail: `app token refused: ${connection.body?.error ?? connection.status}${connection.body?.error === "missing_scope" ? " (it needs connections:write)" : ""}` },

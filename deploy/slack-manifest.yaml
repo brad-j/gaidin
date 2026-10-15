@@ -13,6 +13,8 @@ oauth_config:
       - channels:history
       - groups:history
       - chat:write
+      # Each agent other than the default one posts under its own name (src/slack/api.ts).
+      - chat:write.customize
       - files:read
 settings:
   event_subscriptions:

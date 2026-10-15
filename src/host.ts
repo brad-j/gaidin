@@ -249,6 +249,7 @@ export async function openHost(options: HostOptions = {}) {
 		dataDir: dir,
 		workspaces: () => workspaces.names,
 		profiles: () => config.browser?.profiles ?? [],
+		slackChannel: config.slack?.channelId,
 		selfTools: () => self?.extensions() ?? [],
 		archiving: async (tx, agent) => {
 			for (const job of (await tx.doc(Jobs)).items.filter((j) => jobOf(j, agent))) await pauseJob(tx, job.taskId, "its agent was archived");

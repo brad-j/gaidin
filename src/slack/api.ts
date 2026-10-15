@@ -33,11 +33,17 @@ export const slackMessage = object({
 	files: optional(array(slackFile)),
 });
 
-/** Posts markdown and returns the ts of each message it made. */
-export type SlackPost = (channel: string, markdown: string, threadTs?: string) => Promise<string[]>;
+/** Posts markdown, under `name` when given, and returns the ts of each message it made. */
+export type SlackPost = (channel: string, markdown: string, threadTs?: string, name?: string) => Promise<string[]>;
 
-/** Calls a Slack Web API method with the bot token; throws unless Slack answers ok. */
-export type SlackApi = (method: string, body: { readonly [field: string]: Json | undefined }) => Promise<{ ts?: string }>;
+/** A Web API call's body. */
+export type SlackBody = { readonly [field: string]: Json | undefined };
+
+/** What chat.postMessage is given here: markdown, or fallback text with blocks. */
+export type SlackPostBody = { channel: string; thread_ts?: string; markdown_text?: string; text?: string; blocks?: Json[] };
+
+/** Calls a Slack Web API method with the bot token; throws unless Slack answers ok. `scopes` are the token's, as Slack says with each answer. */
+export type SlackApi = (method: string, body: SlackBody) => Promise<{ ts?: string; scopes?: string[] }>;
 
 export function slackApi(botToken: string): SlackApi {
 	return async (method, body) => {
@@ -49,8 +55,56 @@ export function slackApi(botToken: string): SlackApi {
 		});
 		const answer = parse(await response.json(), object({ ok: boolean, error: optional(string), ts: optional(string) }), `Slack's answer to ${method}`);
 		if (!answer.ok) throw new Error(`${method}: ${answer.error ?? response.status}`);
-		return answer;
+		const scopes = response.headers.get("x-oauth-scopes")?.split(",").map((s) => s.trim());
+		return scopes === undefined ? answer : { ...answer, scopes };
 	};
+}
+
+/** The scope that lets the app post under another name, as each agent other than the default one does. */
+export const CUSTOMIZE = "chat:write.customize";
+
+/**
+ * Posting as an agent: under its name when the app has CUSTOMIZE, otherwise under the app's name with the agent's in
+ * front. `check` asks Slack which scopes the app has; until it knows, a post tries the name and falls back when Slack
+ * refuses it for want of the scope.
+ */
+export function slackVoice(api: SlackApi) {
+	let customize: boolean | undefined;
+	return {
+		api,
+		async check(): Promise<void> {
+			try {
+				const { scopes } = await api("auth.test", {});
+				if (scopes !== undefined) customize = scopes.includes(CUSTOMIZE);
+			} catch {
+				// Asked again by the posts themselves.
+			}
+		},
+		/** chat.postMessage under `name`, or the app's own when it's undefined. */
+		async postMessage(body: SlackPostBody, name?: string): Promise<{ ts?: string }> {
+			if (name === undefined) return api("chat.postMessage", body);
+			if (customize !== false) {
+				try {
+					return await api("chat.postMessage", { ...body, username: name });
+				} catch (error) {
+					if (!(error instanceof Error && error.message.includes("missing_scope"))) throw error;
+					customize = false;
+				}
+			}
+			return api("chat.postMessage", named(body, name));
+		},
+	};
+}
+
+export type SlackVoice = ReturnType<typeof slackVoice>;
+
+/** `body` with `name` in front, for a post under the app's own name. */
+function named(body: SlackPostBody, name: string): SlackPostBody {
+	const out = { ...body };
+	if (body.markdown_text !== undefined) out.markdown_text = `*${name}:* ${body.markdown_text}`;
+	if (body.text !== undefined) out.text = `${name}: ${body.text}`;
+	if (body.blocks !== undefined) out.blocks = [{ type: "context", elements: [{ type: "mrkdwn", text: `*${name}*` }] }, ...body.blocks];
+	return out;
 }
 
 export function slackDownload(botToken: string): SlackDownload {
@@ -66,11 +120,11 @@ export function slackDownload(botToken: string): SlackDownload {
 }
 
 /** chat.postMessage with Slack rendering the markdown. Longer answers go out in several messages. */
-export function slackPoster(api: SlackApi): SlackPost {
-	return async (channel, markdown, threadTs) => {
+export function slackPoster(voice: SlackVoice): SlackPost {
+	return async (channel, markdown, threadTs, name) => {
 		const posted: string[] = [];
 		for (const chunk of chunks(markdown, 12_000)) {
-			const { ts } = await api("chat.postMessage", { channel, markdown_text: chunk, thread_ts: threadTs });
+			const { ts } = await voice.postMessage({ channel, markdown_text: chunk, thread_ts: threadTs }, name);
 			if (ts === undefined) throw new Error("chat.postMessage: no ts");
 			posted.push(ts);
 		}

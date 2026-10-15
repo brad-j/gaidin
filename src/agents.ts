@@ -427,6 +427,8 @@ export function createRoster(options: {
 	workspaces: () => readonly string[];
 	/** Browser profile names, which an agent may be given. Default: none. */
 	profiles?: () => readonly string[];
+	/** The settings' Slack channel, the default agent's, which no other agent can have. */
+	slackChannel?: string;
 	/** The self-written tools, by extension name, which a new agent starts without. */
 	selfTools: () => { extension: string; tools: string[] }[];
 	/** Stops what an agent being archived has going: its jobs and reminders. Runs in the commit that archives it. */
@@ -467,6 +469,14 @@ export function createRoster(options: {
 		const known = options.workspaces();
 		for (const workspace of change.workspaces ?? []) if (!known.includes(workspace)) throw new Error(`There's no workspace ${workspace}.`);
 		for (const profile of change.profiles ?? []) if (!profiles().includes(profile)) throw new Error(`There's no browser profile ${profile}.`);
+		const channel = change.channel;
+		if (channel !== undefined && channel !== "") {
+			if (id === DEFAULT_AGENT) throw new Error("The default agent's Slack channel is slack.channelId in the settings file.");
+			if (!/^[CG][A-Z0-9]+$/.test(channel)) throw new Error("A Slack channel's ID looks like C0123ABCD: in Slack, the channel's details, at the bottom.");
+			if (channel === options.slackChannel) throw new Error("That's the default agent's Slack channel.");
+			const other = roster.agents.find((a) => a.id !== id && a.channel === channel);
+			if (other !== undefined) throw new Error(`That's ${other.name}'s Slack channel.`);
+		}
 	}
 
 	/** A new agent, with the default agent's model, thinking and built-in tools, and no instructions, grants or self-written tools. */

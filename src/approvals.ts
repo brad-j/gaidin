@@ -56,6 +56,8 @@ export type ApprovalRequest = {
 	decision?: Decision;
 	/** The Slack message that asks, once it's posted. */
 	slackTs?: string;
+	/** Its channel, when that isn't the default agent's. */
+	slackChannel?: string;
 };
 
 /** A workspace allowed in one conversation until a time. */
@@ -287,9 +289,9 @@ export class ApprovalService {
 		for (const request of await this.pending()) if (request.conversationId === conversationId) await this.close(request.id, "superseded");
 	}
 
-	/** The pending question asked in the Slack message `ts`, if any. */
-	async questionAt(ts: string): Promise<ApprovalRequest | undefined> {
-		return (await this.pending()).find((r) => r.kind === "question" && r.slackTs === ts);
+	/** The pending question asked in the Slack message `ts` in `channel`, the default agent's when it's not given, if any. */
+	async questionAt(ts: string, channel?: string): Promise<ApprovalRequest | undefined> {
+		return (await this.pending()).find((r) => r.kind === "question" && r.slackTs === ts && r.slackChannel === channel);
 	}
 
 	/** Ends a pending request without an answer: the run was stopped, the time ran out, or the owner moved on. */
@@ -305,7 +307,7 @@ export class ApprovalService {
 	}
 
 	/** Remembers where a surface asked, so it can show the outcome there. */
-	async note(id: string, fields: Pick<ApprovalRequest, "slackTs">): Promise<void> {
+	async note(id: string, fields: Pick<ApprovalRequest, "slackTs" | "slackChannel">): Promise<void> {
 		await this.#commit((doc) => {
 			const request = doc.requests[id];
 			if (request !== undefined) Object.assign(request, fields);

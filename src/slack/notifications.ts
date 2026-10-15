@@ -1,9 +1,10 @@
 // Notifications in Slack (notifications.ts): reminders with snooze buttons, job reports, a paused job with a
-// Resume button, budget warnings, and requests for approval and questions with their buttons, all in the
-// gaidin channel. A request is asked in the thread when its conversation is a thread's, and its message
-// shows the outcome once it's decided anywhere; a reply in a report's thread continues that run's
-// conversation. Presses on these buttons come back through `action`; index.ts hands it only the owner's, in
-// the channel. Messages the owner writes are conversation.ts's.
+// Resume button, budget warnings, and requests for approval and questions with their buttons. Each goes to the
+// channel of the agent it's from (channels.ts), under its name; budget warnings to the default agent's. A request is
+// asked in the thread when its conversation is a thread's, and its message shows the outcome once it's decided
+// anywhere; a reply in a report's thread continues that run's conversation. Presses on these buttons come back
+// through `action`; index.ts hands it only the owner's, in the agents' channels. Messages the owner writes are
+// conversation.ts's.
 import type { Conversation, Harness } from "@earendil-works/pi-durable";
 import type { ApprovalRequest, ApprovalService, Decision } from "../approvals.ts";
 import { context } from "../host.ts";
@@ -12,7 +13,8 @@ import type { Adapter } from "../notifications.ts";
 import { integer, isObject, type Json, literal, object, optional, parseJson, string } from "../parse.ts";
 import type { Reminder } from "../reminders.ts";
 import { formatTime } from "../time.ts";
-import { type SlackAction, type SlackApi, slackPoster } from "./api.ts";
+import { type SlackAction, slackPoster, type SlackVoice } from "./api.ts";
+import type { Channels } from "./channels.ts";
 import { recordPosted, SlackState } from "./conversation.ts";
 
 /** What an approval or answer button carries, as blocksFor writes it. */
@@ -151,8 +153,8 @@ export function createSlackNotifications(options: {
 	harness: Harness;
 	root: Conversation;
 	approvals: ApprovalService;
-	api: SlackApi;
-	channel: string;
+	voice: SlackVoice;
+	channels: Channels;
 	/** Sets a fired reminder again, `minutes` from now. Nothing if it isn't one. */
 	snooze: (id: number, minutes: number) => Promise<Reminder | undefined>;
 	/** Resumes a paused job. Nothing if it isn't one. */
@@ -160,26 +162,32 @@ export function createSlackNotifications(options: {
 	/** The app's address, which a hand-over links to. */
 	app?: string;
 }) {
-	const { harness, root, approvals, api, channel } = options;
-	const post = slackPoster(api);
+	const { harness, root, approvals, voice, channels } = options;
+	const { api } = voice;
+	const post = slackPoster(voice);
 
-	/** The thread a conversation lives in, if it's a thread's. */
-	async function threadOf(conversationId: number): Promise<string | undefined> {
+	/** The thread a conversation lives in, if it's a thread's: its channel and ts. */
+	async function threadOf(conversationId: number): Promise<{ channel: string; ts: string } | undefined> {
 		const threads = (await harness.snapshot(SlackState, context))?.threads ?? {};
-		return Object.entries(threads).find(([, id]) => id === conversationId)?.[0];
+		const key = Object.entries(threads).find(([, id]) => id === conversationId)?.[0];
+		return key === undefined ? undefined : channels.place(key);
 	}
 
+	/** Asks in the conversation's thread, or else the agent's channel, under the agent's name. */
 	async function ask(request: ApprovalRequest) {
 		const thread = await threadOf(request.conversationId);
-		const { ts } = await api("chat.postMessage", { channel, ...blocksFor(request, options.app), thread_ts: thread });
-		if (ts !== undefined) await approvals.note(request.id, { slackTs: ts });
+		const channel = thread?.channel ?? (await channels.channelOf(request.agent));
+		const { ts } = await voice.postMessage({ channel, ...blocksFor(request, options.app), thread_ts: thread?.ts }, await channels.nameOf(request.agent));
+		if (ts === undefined) return;
+		if (channel === channels.home) await approvals.note(request.id, { slackTs: ts });
+		else await approvals.note(request.id, { slackTs: ts, slackChannel: channel });
 	}
 
 	async function show(request: ApprovalRequest) {
 		// The ts is stored after posting, so read it back rather than trusting the event's copy.
-		const ts = (await approvals.state()).requests[request.id]?.slackTs;
-		if (ts === undefined) return;
-		await api("chat.update", { channel, ts, ...blocksFor(request, options.app) });
+		const stored = (await approvals.state()).requests[request.id];
+		if (stored?.slackTs === undefined) return;
+		await api("chat.update", { channel: stored.slackChannel ?? channels.home, ts: stored.slackTs, ...blocksFor(request, options.app) });
 	}
 
 	const adapter: Adapter = {
@@ -187,23 +195,26 @@ export function createSlackNotifications(options: {
 			switch (notice.kind) {
 				case "reminder": {
 					const { reminder } = notice;
-					await api("chat.postMessage", { channel, text: reminder.text, blocks: reminderBlocks(reminder.text, { id: reminder.taskId }) });
+					const channel = await channels.channelOf(reminder.agent);
+					await voice.postMessage({ channel, text: reminder.text, blocks: reminderBlocks(reminder.text, { id: reminder.taskId }) }, await channels.nameOf(reminder.agent));
 					return true;
 				}
 				case "report": {
 					// A thread on the report continues that run's conversation.
 					const { report } = notice;
-					const posted = await post(channel, `*${report.title}*\n\n${report.text}`);
-					if (report.answer !== undefined) await recordPosted(root, posted, report.answer, report.conversationId);
+					const channel = await channels.channelOf(report.agent);
+					const posted = await post(channel, `*${report.title}*\n\n${report.text}`, undefined, await channels.nameOf(report.agent));
+					if (report.answer !== undefined) await recordPosted(root, posted.map((ts) => channels.key(channel, ts)), report.answer, report.conversationId);
 					return true;
 				}
 				case "paused": {
 					const { report } = notice;
-					await api("chat.postMessage", { channel, text: `${report.title}: ${report.text}`, blocks: pausedBlocks(report) });
+					const channel = await channels.channelOf(report.agent);
+					await voice.postMessage({ channel, text: `${report.title}: ${report.text}`, blocks: pausedBlocks(report) }, await channels.nameOf(report.agent));
 					return true;
 				}
 				case "budget":
-					await post(channel, notice.text);
+					await post(channels.home, notice.text);
 					return true;
 				case "request":
 					if (notice.request.status === "pending") await ask(notice.request);
@@ -214,7 +225,8 @@ export function createSlackNotifications(options: {
 	};
 
 	/** A press on an approval, question, snooze or Resume button. */
-	async function press(action: { action_id: string; value?: string }, message: SlackAction["message"]) {
+	/** `channelOf`: the channel the pressed message is in. */
+	async function press(action: { action_id: string; value?: string }, message: SlackAction["message"], channelOf: string) {
 		if (APPROVAL_ACTIONS.test(action.action_id)) {
 			const parsed = parseJson(action.value ?? "", buttonValue, "the button's value");
 			let decided;
@@ -232,14 +244,14 @@ export function createSlackNotifications(options: {
 			const { id, minutes } = parseJson(action.value ?? "", object({ id: integer, minutes: integer }), "the snooze button's value");
 			const snoozed = await options.snooze(id, minutes);
 			if (snoozed !== undefined && message !== undefined) {
-				await api("chat.update", { channel, ts: message.ts, text: snoozed.text, blocks: reminderBlocks(snoozed.text, { until: snoozed.at }) });
+				await api("chat.update", { channel: channelOf, ts: message.ts, text: snoozed.text, blocks: reminderBlocks(snoozed.text, { until: snoozed.at }) });
 			}
 		} else if (action.action_id === "gaidin-resume-job") {
 			const resumed = await options.resume(Number(action.value));
 			if (message === undefined) return;
 			const outcome = { type: "context", elements: [{ type: "mrkdwn", text: resumed === undefined ? "Not paused any more" : "Resumed" }] };
 			const blocks = [...(message.blocks ?? []).filter((b) => !isObject(b) || b.type !== "actions"), outcome];
-			await api("chat.update", { channel, ts: message.ts, text: message.text ?? "", blocks });
+			await api("chat.update", { channel: channelOf, ts: message.ts, text: message.text ?? "", blocks });
 		}
 	}
 
@@ -247,7 +259,7 @@ export function createSlackNotifications(options: {
 		adapter,
 		/** A button press. */
 		async action(payload: SlackAction) {
-			for (const action of payload.actions ?? []) await press(action, payload.message);
+			for (const action of payload.actions ?? []) await press(action, payload.message, payload.channel?.id ?? channels.home);
 		},
 		/** Asks for requests that came up while Slack was unreachable. */
 		async recover() {

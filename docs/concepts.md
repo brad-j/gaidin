@@ -43,7 +43,7 @@ gaidin can run several named agents, each doing one kind of work for you. The or
 
 They share the skills, the self-written tools you switch on for them, and the spend limits. Every conversation belongs to one agent: a thread or job run is the agent's whose conversation it came from, and one from before agents existed is the default agent's. An agent reaches another only with `message_agent` and `hand_off`, and only those its entry lists ([Tools](tools.md#other-agents)). The roster is stored in the SQLite file, with the rest of gaidin's state; the settings file doesn't list agents.
 
-Slack and the app talk to the default agent for now; the web server's [API](surfaces.md#the-api) reaches every agent. An agent's id is fixed once made; its name, job and grants can change.
+Each agent can have a Slack channel of its own, where a top-level message starts a thread with it and it posts what it tells you under its name ([Surfaces](surfaces.md#slack)); the app and the web server's [API](surfaces.md#the-api) reach every agent. An agent's id is fixed once made; its name, job and grants can change.
 
 Archiving an agent, from the API, pauses its jobs and cancels its reminders, and it can't be talked to; its conversations, notes and sandbox stay. Restoring it leaves its jobs paused, for you to resume. The default agent can't be archived.
 

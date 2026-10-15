@@ -14,7 +14,9 @@ import { slackDownload } from "../src/slack/api.ts";
 import { conversationId } from "../src/ids.ts";
 import { recordPosted, SlackState } from "../src/slack/index.ts";
 import { createWebServer } from "../src/web.ts";
-import { BRAD, CHANNEL, fakeSlack, message, press } from "./fake-slack.ts";
+import { BRAD, type Call, CHANNEL, fakeSlack, message, press, SETTINGS } from "./fake-slack.ts";
+import { agentIdOf } from "../src/agents.ts";
+import { configFor } from "../src/config.ts";
 
 function tempDir(t: TestContext): string {
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
@@ -38,9 +40,9 @@ function echoModels() {
 	return { models, model: { provider: "faux", modelId: "faux-1" } };
 }
 
-async function until(check: () => boolean, timeoutMs = 10_000) {
+async function until(check: () => boolean | Promise<boolean>, timeoutMs = 10_000) {
 	const end = Date.now() + timeoutMs;
-	while (!check()) {
+	while (!(await check())) {
 		if (Date.now() > end) throw new Error("timed out");
 		await new Promise((r) => setTimeout(r, 20));
 	}
@@ -363,4 +365,145 @@ test("a file is downloaded with the bot token only from Slack's file host", asyn
 		await assert.rejects(download(url), /only from https:\/\/files\.slack\.com/, url);
 	}
 	assert.deepEqual(seen, [], "the token was sent elsewhere");
+});
+
+/** A model that asks Brad with ask_owner when a message says "ask", and says what came back; otherwise it echoes. */
+function askingModels() {
+	const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
+	const step = (ctx: { messages: readonly { role: string; content?: unknown }[] }) => {
+		const last = ctx.messages.filter((m) => m.role !== "system").at(-1)!;
+		const text = typeof last.content === "string" ? last.content : JSON.stringify(last.content);
+		if (last.role === "toolResult") return fauxAssistantMessage(fauxText(`got: ${text}`));
+		if (text.includes("ask")) return fauxAssistantMessage(fauxToolCall("ask_owner", { question: "Which one?" }), { stopReason: "toolUse" });
+		return fauxAssistantMessage(fauxText(text.replace(/^\[[^\]]*\] /, "")));
+	};
+	faux.setResponses(Array.from({ length: 50 }, () => step));
+	const models = createModels();
+	models.setProvider(faux.provider);
+	return { models, model: { provider: "faux", modelId: "faux-1" } };
+}
+
+/** gaidin with Scout, whose own channel is C2, and Verin, who has none; Slack started. */
+async function withAgents(t: TestContext, scopes?: string[], models = echoModels()) {
+	const host = await openHost({ dataDir: tempDir(t), ...models, adapters: { push: { send: async () => true } } });
+	t.after(() => host.harness.close(context));
+	await host.agents.add({ id: "scout", name: "Scout", job: "" });
+	await host.agents.update("scout", { channel: "C2" });
+	await host.agents.add({ id: "verin", name: "Verin", job: "" });
+	const slack = fakeSlack(host, { scopes });
+	await host.start(slack.slack.adapter);
+	return { host, ...slack };
+}
+
+/** What a post says and where, as gaidin made it. */
+const shown = (c: Call) => ({ channel: c.body.channel as string, thread: c.body.thread_ts as string | undefined, name: c.body.username as string | undefined, text: (c.body.markdown_text ?? c.body.text) as string });
+
+test("a message in an agent's channel starts a thread with that agent, answered there under its name, and other channels' timestamps don't collide", async (t) => {
+	const { host, calls, receive } = await withAgents(t);
+	const posts = () => calls.filter((c) => c.method === "chat.postMessage").map(shown);
+	// The same ts in both channels, as Slack can give.
+	await receive(message("1.0", "for scout", { channel: "C2" }));
+	await until(() => posts().length === 1);
+	await receive(message("1.0", "for gaidin"));
+	await until(() => posts().length === 2);
+	assert.deepEqual(posts(), [
+		{ channel: "C2", thread: "1.0", name: "Scout", text: "for scout" },
+		{ channel: CHANNEL, thread: "1.0", name: undefined, text: "for gaidin" },
+	]);
+	const threads = (await host.harness.snapshot(SlackState, context))!.threads;
+	assert.equal(await agentIdOf(host.harness, threads["C2:1.0"]!, context), "scout");
+	assert.equal(await agentIdOf(host.harness, threads["1.0"]!, context), "gaidin");
+
+	await receive(message("2.0", "more", { channel: "C2", thread_ts: "1.0" }));
+	await until(() => posts().length === 3);
+	assert.deepEqual(posts()[2], { channel: "C2", thread: "1.0", name: "Scout", text: "for scout / more" });
+
+	// A channel that's no agent's, or an archived agent's, isn't answered.
+	await receive(message("3.0", "hello?", { channel: "C9" }));
+	await host.agents.archive("scout", true);
+	await receive(message("4.0", "still there?", { channel: "C2" }));
+	await new Promise((r) => setTimeout(r, 300));
+	assert.equal(posts().length, 3);
+});
+
+test("an agent's reminders, reports and requests go to its channel under its name; one without a channel uses the default one, named", async (t) => {
+	const { host, slack, calls } = await withAgents(t);
+	const posts = () => calls.filter((c) => c.method === "chat.postMessage").map(shown);
+	await slack.adapter.send({ kind: "reminder", reminder: { taskId: 1, text: "stretch", at: 0, agent: "scout" } });
+	await slack.adapter.send({ kind: "report", report: { taskId: 2, title: "News", text: "Quiet day", conversationId: 9, agent: "verin" } });
+	await slack.adapter.send({ kind: "budget", text: "Half the day's budget is spent" });
+	assert.deepEqual(posts().map((p) => [p.channel, p.name]), [["C2", "Scout"], [CHANNEL, "Verin"], [CHANNEL, undefined]]);
+
+	// A request from Scout's home is asked in its channel, and its outcome shown there.
+	const scout = await host.agents.home("scout");
+	const request = await host.approvals.open("r1", { conversationId: scout.id, taskId: 1 }, "fetch_url", { summary: "fetch https://example.com/" });
+	await until(() => posts().length === 4);
+	assert.deepEqual([posts()[3]!.channel, posts()[3]!.name], ["C2", "Scout"]);
+	await until(async () => (await host.approvals.state()).requests.r1?.slackChannel === "C2");
+	await host.approvals.decide(request.id, "deny", "web");
+	await until(() => calls.some((c) => c.method === "chat.update"));
+	assert.equal(calls.find((c) => c.method === "chat.update")!.body.channel, "C2");
+});
+
+test("a question asked in an agent's channel is answered by a reply in its thread there", async (t) => {
+	const { host, calls, receive } = await withAgents(t, undefined, askingModels());
+	const scout = await host.agents.home("scout");
+	const answered = (await scout.submit({ type: "input", content: "ask Brad" }, context)).wait(context);
+	await until(() => calls.some((c) => c.method === "chat.postMessage" && /Which one\?/.test(JSON.stringify(c.body))));
+	const asked = calls.find((c) => c.method === "chat.postMessage")!;
+	assert.deepEqual([asked.body.channel, asked.body.username], ["C2", "Scout"]);
+	await until(async () => (await host.approvals.pending()).some((r) => r.slackTs === asked.ts && r.slackChannel === "C2"));
+	// The same ts in the default channel is another message, and not its answer.
+	await receive(message("5.0", "wrong place", { thread_ts: asked.ts! }));
+	await new Promise((r) => setTimeout(r, 200));
+	assert.equal((await host.approvals.pending()).length, 1);
+	await receive(message("6.0", "the blue one", { channel: "C2", thread_ts: asked.ts! }));
+	const settled = await answered;
+	if (settled.status !== "done" || settled.type !== "input") throw new Error("the run didn't finish");
+	assert.match(JSON.stringify(await scout.commit((tx) => tx.entry(settled.answer), context)), /the user answered: the blue one/);
+});
+
+test("without chat:write.customize an agent's posts go out under the app's name with the agent's in front", async (t) => {
+	const { slack, calls } = await withAgents(t, ["chat:write", "channels:history"]);
+	await slack.adapter.send({ kind: "reminder", reminder: { taskId: 1, text: "stretch", at: 0, agent: "scout" } });
+	await slack.adapter.send({ kind: "report", report: { taskId: 2, title: "News", text: "Quiet day", conversationId: 9, agent: "scout" } });
+	const [reminder, report] = calls.filter((c) => c.method === "chat.postMessage");
+	assert.equal(reminder!.body.username, undefined);
+	assert.equal(reminder!.body.text, "Scout: stretch");
+	assert.match(JSON.stringify(reminder!.body.blocks[0]), /\*Scout\*/);
+	assert.equal(report!.body.username, undefined);
+	assert.match(report!.body.markdown_text, /^\*Scout:\* \*News\*/);
+});
+
+test("a post refused for want of the scope goes again under the app's name, and later ones don't try", async (t) => {
+	const host = await openHost({ dataDir: tempDir(t), ...echoModels(), adapters: { push: { send: async () => true } } });
+	t.after(() => host.harness.close(context));
+	await host.agents.add({ id: "scout", name: "Scout", job: "" });
+	await host.agents.update("scout", { channel: "C2" });
+	const sent: Record<string, any>[] = [];
+	// Slack doesn't say the scopes here, so the first post finds out.
+	const { slack } = fakeSlack(host, {
+		api: async (method, body) => {
+			if (method === "auth.test") return {};
+			sent.push(body);
+			if (body.username !== undefined) throw new Error("chat.postMessage: missing_scope");
+			return { ts: `bot.${sent.length}` };
+		},
+	});
+	await slack.adapter.send({ kind: "reminder", reminder: { taskId: 1, text: "one", at: 0, agent: "scout" } });
+	await slack.adapter.send({ kind: "reminder", reminder: { taskId: 2, text: "two", at: 0, agent: "scout" } });
+	assert.deepEqual(sent.map((b) => [b.username, b.text]), [["Scout", "one"], [undefined, "Scout: one"], [undefined, "Scout: two"]]);
+});
+
+test("an agent's Slack channel is checked: an ID, not the default agent's, not another agent's", async (t) => {
+	const host = await openHost({ config: configFor({ slack: SETTINGS }), dataDir: tempDir(t), ...echoModels(), adapters: { push: { send: async () => true } } });
+	t.after(() => host.harness.close(context));
+	await host.agents.add({ id: "scout", name: "Scout", job: "" });
+	await host.agents.add({ id: "verin", name: "Verin", job: "" });
+	await assert.rejects(host.agents.update("scout", { channel: "#scout" }), /looks like C0123ABCD/);
+	await assert.rejects(host.agents.update("scout", { channel: CHANNEL }), /the default agent's Slack channel/);
+	await assert.rejects(host.agents.update("gaidin", { channel: "C2" }), /slack\.channelId in the settings file/);
+	await host.agents.update("scout", { channel: "C2" });
+	await assert.rejects(host.agents.update("verin", { channel: "C2" }), /That's Scout's Slack channel\./);
+	assert.equal((await host.agents.update("scout", { channel: "" })).channel, undefined);
 });
