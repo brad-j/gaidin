@@ -199,7 +199,7 @@ export async function openHost(options: HostOptions = {}) {
 	const history = createHistory(resolve(dir, "history.sqlite"), owner);
 	registry.install(history.extension);
 	// Profiles are outside every sandbox, so no agent's commands can read their cookies.
-	const browser = config.browser === undefined ? undefined : createBrowser({ profiles: config.browser.profiles, dir: resolve(dir, "browser"), dataDir: dir, owner, fetch: options.fetch, chromium: options.chromium });
+	const browser = config.browser === undefined ? undefined : createBrowser({ profiles: config.browser.profiles, dir: resolve(dir, "browser"), dataDir: dir, owner, fetch: options.fetch, chromium: options.chromium, approvals: () => approvals!, read: () => harness });
 	if (browser !== undefined) registry.install(browser.extension);
 	// Self-written tools only ever run in a box, so without bubblewrap there are none.
 	const self = bwrap === undefined ? undefined : createSelf({ dataDir: dir, sandbox, bwrap, hide, registry, approvals: () => approvals!, owner, fetch: options.fetch });
@@ -295,7 +295,7 @@ export async function openHost(options: HostOptions = {}) {
 		await harness.close(context);
 	}
 
-	return { harness, root, agents: roster, workspaces: () => workspaces.names, profiles: () => config.browser?.profiles ?? [], close, uploads: createUploads(join(dir, "app-uploads")), avatars: createAvatars(join(dir, "avatars")), threads, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation, latest: history.latest }, skills, sandbox, push, start, stop };
+	return { harness, root, agents: roster, workspaces: () => workspaces.names, profiles: () => config.browser?.profiles ?? [], takeOver: browser?.takeOver, close, uploads: createUploads(join(dir, "app-uploads")), avatars: createAvatars(join(dir, "avatars")), threads, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation, latest: history.latest }, skills, sandbox, push, start, stop };
 }
 
 export type Host = Awaited<ReturnType<typeof openHost>>;

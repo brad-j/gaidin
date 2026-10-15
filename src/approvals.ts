@@ -37,8 +37,10 @@ export type ApprovalRequest = {
 	summary: string;
 	/** More than a line can hold, such as the diff of a self-written extension. */
 	detail?: string;
-	/** A question from ask_owner rather than a request to allow a call. */
-	kind?: "question";
+	/** A question from ask_owner, or a request to take over a browser profile from browser_hand_over, rather than a request to allow a call. */
+	kind?: "question" | "handover";
+	/** For a hand-over, the profile to take over. */
+	profile?: string;
 	/** Answers offered as buttons. */
 	choices?: string[];
 	/** The owner's answer to a question. */
@@ -185,7 +187,7 @@ export class ApprovalService {
 	}
 
 	/** Records a request under `id` unless it exists, and returns it as stored. */
-	async open(id: string, at: { conversationId: number; taskId: number }, tool: string, ask: Pick<ApprovalRequest, "summary" | "detail" | "always" | "kind" | "choices">): Promise<ApprovalRequest> {
+	async open(id: string, at: { conversationId: number; taskId: number }, tool: string, ask: Pick<ApprovalRequest, "summary" | "detail" | "always" | "kind" | "choices" | "profile">): Promise<ApprovalRequest> {
 		const now = Date.now();
 		const agent = (await this.#harness.snapshot(AgentOf, conversationId(at.conversationId), background))?.agent ?? DEFAULT_AGENT;
 		const { request, created } = await this.#commit((doc) => {
@@ -203,11 +205,12 @@ export class ApprovalService {
 		return request;
 	}
 
-	/** The owner's answer. Returns the request, or nothing if it wasn't pending. */
+	/** The owner's answer: for a hand-over, "once" is done and "deny" is couldn't. Returns the request, or nothing if it wasn't pending. */
 	async decide(id: string, decision: Decision, by: string): Promise<ApprovalRequest | undefined> {
 		const decided = await this.#commit(async (doc, tx) => {
 			const request = doc.requests[id];
 			if (request === undefined || request.status !== "pending" || request.kind === "question") return undefined;
+			if (request.kind === "handover" && decision === "always") return undefined;
 			if (request.expiresAt <= Date.now()) {
 				request.status = "expired";
 				request.decidedAt = Date.now();

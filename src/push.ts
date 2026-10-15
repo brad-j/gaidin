@@ -221,6 +221,9 @@ export function pushAdapter(push: Pick<Push, "send">): Adapter {
 			case "request": {
 				const { request } = notice;
 				if (request.status !== "pending") return undefined;
+				if (request.kind === "handover") {
+					return { title: `gaidin asks you to take over ${request.profile ?? "the browser"}`, body: request.summary, tag: `approval-${request.id}`, urgency: "high", url: `/browser/${encodeURIComponent(request.profile ?? "")}` };
+				}
 				return { title: request.kind === "question" ? "gaidin asks" : "gaidin wants to", body: request.summary, tag: `approval-${request.id}`, urgency: "high", url: conversation(request.agent, request.conversationId) };
 			}
 		}

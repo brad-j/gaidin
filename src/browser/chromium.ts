@@ -55,6 +55,8 @@ export type Allowance = {
 	hosts: readonly string[];
 	/** The calling agent's sandbox, whose downloads/ gets what a page downloads. Without it, downloads are dropped. */
 	sandbox?: string;
+	/** The owner has the profile (takeover.ts): the pages go wherever the owner takes them, private addresses aside. */
+	owner?: boolean;
 };
 
 /** A profile that's open: its Chromium, the tab the tools work in, and what happened there since the last result. */
@@ -69,7 +71,7 @@ export class Profile {
 	#notes: string[] = [];
 	readonly #downloads = new Set<Promise<void>>();
 	/** Each page's last snapshot, which its refs belong to. Taking any other snapshot, even of one element, would renumber them. */
-	readonly #snapshots = new WeakMap<Page, string>();
+	#snapshots = new WeakMap<Page, string>();
 	readonly #resolved = new Map<string, { at: number; blocked: Promise<string | undefined> }>();
 	readonly #resolve: Resolve;
 	readonly #blocked: BlockList;
@@ -200,6 +202,11 @@ export class Profile {
 		return snapshot;
 	}
 
+	/** Drops every page's last snapshot, so no ref from before acts: the owner may have changed anything since. */
+	forget(): void {
+		this.#snapshots = new WeakMap();
+	}
+
 	/** The element `ref` names, as the current page's last snapshot showed it, or nothing when it didn't. */
 	seen(ref: string): string | undefined {
 		const snapshot = this.#snapshots.get(this.#current);
@@ -275,7 +282,7 @@ export class Profile {
 	}
 
 	async #navigationAllowed(request: Request, url: URL): Promise<boolean> {
-		if (this.#permitted.has(request.url())) return true;
+		if (this.#permitted.has(request.url()) || this.#allowance.owner === true) return true;
 		// A redirect is the server's, not the page's or the model's choice; the navigation it continues was checked.
 		if (request.redirectedFrom() !== null) return true;
 		if (url.protocol !== "http:" && url.protocol !== "https:") return false;
@@ -350,6 +357,25 @@ export class Chromium {
 			release();
 			if (this.#queues.get(name) === turn) this.#queues.delete(name);
 		}
+	}
+
+	/**
+	 * Holds profile `name` for the owner until `release` is called: it opens if it isn't, at the page `opened` takes it to,
+	 * and every agent's call on it waits its turn behind the hold. The refs of every page are dropped, and on release the
+	 * pages are held to no host until an agent's call sets them again.
+	 */
+	hold(name: string, opened?: (profile: Profile) => Promise<void>): Promise<{ profile: Profile; release: () => void }> {
+		return new Promise((resolve, reject) => {
+			let release!: () => void;
+			const released = new Promise<void>((done) => (release = done));
+			this.use(name, { hosts: [], owner: true }, async (profile) => {
+				profile.forget();
+				resolve({ profile, release });
+				await released;
+				profile.forget();
+				profile.allowance = { hosts: [] };
+			}, { opened }).catch(reject);
+		});
 	}
 
 	/** Runs `work` with profile `name` in its turn if it's open, without opening it or changing its allowance, as a guard looks. */

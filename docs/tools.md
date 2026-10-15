@@ -19,6 +19,7 @@ Every [agent](concepts.md#agents) has these tools, and each works on that agent'
 | `browser_open`, `browser_snapshot`, `browser_screenshot`, `browser_tabs`, `browser_back` | in the server, in a Chromium per profile | the public internet, signed in to sites | opening a page, for a host not allowed for good, unless `web_search` returned the URL; refused for a profile the agent wasn't given |
 | `browser_click`, `browser_type`, `browser_select` | the same | what the signed-in sites allow | while outside text is in the conversation, unless the agent may act on that site without asking; typing into a password field is refused |
 | `browser_upload` | the same | sends files from the agent's sandbox to a site | every call |
+| `browser_hand_over` | in the server | the owner, in the app | it is the request |
 | `load_extension`, `remove_extension` | in the server | the sandbox's `extensions/`, the owner | every load and removal |
 | tools gaidin wrote | in a box of their own | their fetches, through the server | for a host not allowed for good |
 | `workspace_run`, `workspace_read`, `workspace_write`, `workspace_edit` | on a workspace, under bubblewrap | that machine's project roots, and the network | every call |
@@ -148,6 +149,7 @@ A Chromium that stays signed in to sites, for agents you've given a browser prof
 - `browser_click`, `browser_type` and `browser_select` act on an element by its ref in the page's latest snapshot: click it, type into it (replacing what's there, and pressing Enter with `submit`), or choose options in a select box by value or label. Each returns the page as the action left it.
 - `browser_back` goes back a page in the current tab.
 - `browser_upload` puts up to 10 files from the agent's sandbox, up to 20 MB each, in a file field; they go to the site when the page sends its form.
+- `browser_hand_over` asks you to take the profile over, for a sign-in, a CAPTCHA or something only you should confirm, and waits like `ask_owner`, for days if need be, until you press Done or Can't. Then it returns the page as you left it.
 
 Opening a page asks as `fetch_url` does: unless the host is allowed for good for that agent, or `web_search` returned that exact URL in the conversation, it waits for your [approval](security.md#approvals), whose second button allows the host for good for the agent, for its fetches too. A page's own navigations, from a link it follows or its script, go ahead on its own host and to hosts allowed for good; any other is stopped, the page stays as it was, and the next result names the URL so the model can open it with `browser_open`, which asks. A redirect of an allowed navigation goes ahead. Private, LAN, tailnet and loopback addresses are refused as `fetch_url` refuses them, for a page and for everything a page loads ([Security](security.md#the-browser)). What a page shows is outside text and is labelled as coming from the web.
 
@@ -157,7 +159,13 @@ A download a page starts is saved in the agent's sandbox under `downloads/`, whi
 
 Each profile is its own Chromium, started when a tool first uses it and closed after 15 minutes unused; at most two are open at once, and the least recently used idle one closes to make room. A profile's directory, `<data>/browser/<profile>/`, keeps its cookies and site storage, so sign-ins outlast closing and restarts. Open pages don't: a profile that opens again goes back to the last page it was on, and the refs of the pages before are gone. The browser's tools aren't rerun after a restart; a call a restart cut off is reported as interrupted.
 
-Signing in is yours to do: the model never types a password, and until the take-over view exists ([Plan](plan.md#design-the-browser)), there's no way to sign a profile in from the app.
+### Taking a profile over
+
+Signing in is yours to do: the model never types a password. The app's Browser page lists the profiles, with the page each was left on and the agent there, and opens one to take it over: its current tab, live, with an address bar, Back, and Done. Your clicks, scrolls and typing go straight to that page and never through a model or the transcript. On a phone a tap is a click, a drag scrolls, and the Keyboard button opens the phone's keyboard. A tab the page opens, such as a sign-in window, is followed. While you have a profile it goes wherever you take it, private addresses aside, and every agent's browser call on it waits.
+
+You have it until you press Done, leave the page for 15 seconds (switching apps on a phone and back is fine), or give it no input for 10 minutes. Done also finishes any hand-over of that profile. Afterwards the refs of every snapshot from before are dropped, so an agent looks again before acting; downloads you start there aren't kept.
+
+A hand-over shows in the app's dock with Take over, Done and Can't, is pushed to your devices, opening the profile's page when tapped, and is posted in Slack with the same buttons, Take over linking to the app when `web.url` is set. A new message from you in that conversation skips it, as it skips an approval.
 
 ## Workspaces
 

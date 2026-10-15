@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { configFor } from "../src/config.ts";
+import { BrowserState } from "../src/browser/index.ts";
 import { blockedRanges } from "../src/fetch.ts";
 import { context, startHost } from "../src/host.ts";
 import { createWebServer } from "../src/web.ts";
@@ -17,7 +18,12 @@ import { createWebServer } from "../src/web.ts";
 const user = process.argv[2] ?? "brad@example.com";
 const app = process.argv[3];
 
-const site = createServer((_request, response) => {
+// site.test: plain text, and at /form a page with a field in its top left corner, for the browser's take-over view.
+const site = createServer((request, response) => {
+	if (request.url === "/form") {
+		response.writeHead(200, { "Content-Type": "text/html" });
+		return response.end(`<title>Sign in</title><input aria-label="Name" style="position:absolute;left:0;top:0;width:400px;height:60px;font-size:30px">`);
+	}
 	response.writeHead(200, { "Content-Type": "text/plain" });
 	response.end("page text");
 });
@@ -29,13 +35,18 @@ type Context = { messages: readonly { role: string; content?: unknown }[] };
 /**
  * A message with images is answered with how many it sees, and one with a saved file with where it's saved.
  * Otherwise "fetch" fetches site.test, "ask" asks a question, "remind" sets a reminder due now, "dentist" one due in two hours,
- * "briefing" schedules a weekday job, "soon" a one-off job three seconds away, and "markdown" gets a long answer; then it says what came back, in short for a fetch.
+ * "briefing" schedules a weekday job, "soon" a one-off job three seconds away, "hand over" asks Brad to take over browser profile
+ * personal, and "markdown" gets a long answer; then it says what came back, in short for a fetch.
  */
 function step(ctx: Context) {
 	const last = ctx.messages.at(-1);
 	if (last?.role === "toolResult") {
 		const result = JSON.stringify(last.content);
-		const answer = result.includes("page text") ? "The page says: page text." : result.includes("said no") ? "Brad said no." : `Came back: ${result.slice(0, 300)}`;
+		const page = /---\\n(.*)"\}\]$/.exec(result)?.[1];
+		const answer = result.includes("page text") ? "The page says: page text."
+			: result.includes("said no") ? "Brad said no."
+			: result.includes("is done with profile") && page !== undefined ? `Back from the browser: ${page}`
+			: `Came back: ${result.slice(0, 300)}`;
 		return fauxAssistantMessage(fauxText(answer));
 	}
 	if (Array.isArray(last?.content) && last.content.some((part: { type?: string }) => part.type === "image")) {
@@ -47,6 +58,7 @@ function step(ctx: Context) {
 	if (saved !== null) return fauxAssistantMessage(fauxText(`It's saved as ${saved[1]}.`));
 	const call = (name: string, args: Record<string, string | number | string[]>) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: "toolUse" });
 	if (said.includes("fetch")) return call("fetch_url", { url: `http://site.test:${sitePort}/` });
+	if (said.includes("hand over")) return call("browser_hand_over", { profile: "personal", reason: "Sign in to site.test" });
 	if (said.includes("ask")) return call("ask_owner", { question: "Keep the old branch?", choices: ["Yes", "No"] });
 	if (said.includes("markdown")) return fauxAssistantMessage(fauxText(RICH));
 	if (said.includes("dentist")) return call("remind", { text: "Call the dentist", inMinutes: 120 });
@@ -91,13 +103,19 @@ const host = await startHost({
 	model: { provider: "faux", modelId: "faux-1" },
 	adapters: { push: { send: async () => true } },
 	fetch: { blocked: blockedRanges({ allowLoopback: true }), resolve: async () => [{ address: "127.0.0.1", family: 4 }] },
+	chromium: { args: ["--host-resolver-rules=MAP *.test 127.0.0.1"] },
 });
+// Taking profile personal over opens it at site.test's form, as if an agent had left it there.
+await host.root.commit(async (tx) => {
+	(await tx.doc(BrowserState)).profiles.personal = { url: `http://site.test:${sitePort}/form`, agent: "gaidin", at: Date.now() };
+}, context);
 const web = createWebServer({
 	harness: host.harness,
 	root: host.root,
 	agents: host.agents,
 	workspaces: host.workspaces,
 	profiles: host.profiles,
+	takeOver: host.takeOver,
 	uploads: host.uploads,
 	avatars: host.avatars,
 	threads: host.threads,
@@ -119,7 +137,7 @@ async function stop() {
 	web.closeAllConnections();
 	web.close();
 	site.close();
-	await host.harness.close(context);
+	await host.close();
 	rmSync(dir, { recursive: true, force: true });
 	process.exit(0);
 }

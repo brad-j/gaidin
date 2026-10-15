@@ -13,6 +13,10 @@ import type { ApprovalRequest } from "../src/approvals.ts";
 import { BrowserState, capSnapshot, partOf } from "../src/browser/index.ts";
 import { sandboxOf } from "../src/agents.ts";
 import { Chromium } from "../src/browser/chromium.ts";
+import { keyOf, type LiveEvent } from "../src/browser/takeover.ts";
+import { createWebServer } from "../src/web.ts";
+import { blocksFor } from "../src/slack/notifications.ts";
+import type { AddressInfo as Address } from "node:net";
 import { configFor, loadConfig } from "../src/config.ts";
 import { blockedRanges, type FetchOptions } from "../src/fetch.ts";
 import { assistantText, context, startHost } from "../src/host.ts";
@@ -73,6 +77,7 @@ async function site(t: TestContext) {
 		"/upload": `<title>Upload</title><form method="post" enctype="multipart/form-data" action="/uploaded"><input type="file" name="f" aria-label="Attachment"><button>Send</button></form>`,
 		"/uploaded": `<title>Uploaded</title><p>Thanks</p>`,
 		"/confirm": `<title>Confirm</title><button onclick="document.title = confirm('Sure?') ? 'Yes' : 'No'">Delete</button>`,
+		"/owner": `<title>Owner</title><input aria-label="Box" style="position:absolute;left:0;top:0;width:300px;height:40px">`,
 		"/cookie": `<title>Cookie</title><p id="c"></p><script>const before = document.cookie; document.cookie = "kept=1; max-age=3600"; document.getElementById("c").textContent = "before: " + (before || "none");</script>`,
 	}));
 	const server = createServer(async (req, res) => {
@@ -145,7 +150,7 @@ async function say(conversation: Conversation, text: string): Promise<string> {
 	return assistantText(await conversation.commit((tx) => tx.entry(settled.answer), context)) ?? "";
 }
 
-const TOOLS = ["browser_open", "browser_snapshot", "browser_screenshot", "browser_tabs", "browser_click", "browser_type", "browser_select", "browser_back", "browser_upload"];
+const TOOLS = ["browser_open", "browser_snapshot", "browser_screenshot", "browser_tabs", "browser_click", "browser_type", "browser_select", "browser_back", "browser_upload", "browser_hand_over"];
 const offered = async (conversation: Conversation) => (await conversation.agent(context)).tools.map((tool) => tool.name).filter((name) => name.startsWith("browser_"));
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -414,3 +419,129 @@ async function until<T>(get: () => T | undefined, timeoutMs = 10_000): Promise<T
 		await pause(20);
 	}
 }
+
+test("the owner's keys are the ones the view may press", () => {
+	assert.equal(keyOf("Enter"), "Enter");
+	assert.equal(keyOf("a"), "a");
+	assert.equal(keyOf("Control+a"), "Control+a");
+	assert.equal(keyOf("Shift+ArrowLeft"), "Shift+ArrowLeft");
+	assert.equal(keyOf("Space"), " ");
+	assert.equal(keyOf("F12"), undefined);
+	assert.equal(keyOf("Control+Control+a"), undefined);
+	assert.equal(keyOf("Hyper+a"), undefined);
+	assert.equal(keyOf("+"), undefined);
+});
+
+test("a hand-over in Slack links to the profile's page, with Done and Can't, and says how it ended", () => {
+	const request: ApprovalRequest = { id: "h1", conversationId: 1, taskId: 2, tool: "browser_hand_over", summary: "Sign in to the shop", kind: "handover", profile: "personal", createdAt: 0, expiresAt: 1, status: "pending" };
+	const asked = JSON.stringify(blocksFor(request, "https://gaidin.example.ts.net"));
+	assert.match(asked, /take over browser profile \*personal\*: Sign in to the shop/);
+	assert.match(asked, /"url":"https:\/\/gaidin.example.ts.net\/browser\/personal"/);
+	assert.match(asked, /"text":"Done".*"value":"\{\\"id\\":\\"h1\\",\\"decision\\":\\"once\\"\}"/);
+	assert.match(asked, /"text":"Can't"/);
+	assert.doesNotMatch(JSON.stringify(blocksFor(request)), /"url"/);
+	assert.match(JSON.stringify(blocksFor({ ...request, status: "approved", by: "web" })), /Done in the app\./);
+	assert.match(JSON.stringify(blocksFor({ ...request, status: "denied", by: "slack" })), /You couldn't in Slack\./);
+});
+
+test("while the owner has a profile, an agent's call on it waits; the owner goes anywhere public and types, and refs from before don't act", { skip }, async (t) => {
+	const { host, scout, url } = await start(t);
+	await host.agents.update("scout", { hosts: ["public.test"], actHosts: { personal: ["public.test"] } });
+	const before = await say(scout, CALL("browser_open", { profile: "personal", url: url("public", "/form") }));
+	const events: LiveEvent[] = [];
+	const stop = await host.takeOver!.watch("personal", (event) => (events.push(event), true));
+	assert.ok(events.some((e) => e.type === "page" && e.url === url("public", "/form")));
+	await until(() => events.find((e) => e.type === "frame" && e.width === 1280));
+
+	// Not one of Scout's hosts, but the owner can go there.
+	await host.takeOver!.go("personal", { url: url("other", "/owner") });
+	await host.takeOver!.input("personal", [{ type: "click", x: 10, y: 10 }, { type: "text", text: "owner typed" }, { type: "key", key: "Shift+Home" }]);
+	let settled = false;
+	const waiting = say(scout, CALL("browser_snapshot", { profile: "personal" })).then((answer) => ((settled = true), answer));
+	await pause(500);
+	assert.equal(settled, false);
+	await until(() => events.find((e) => e.type === "page" && e.url === url("other", "/owner")));
+	assert.equal(await host.takeOver!.release("personal", "you're done"), true);
+	assert.deepEqual(events.at(-1), { type: "released", reason: "you're done" });
+	stop();
+	const after = await waiting;
+	assert.match(after, new RegExp(`URL: ${url("other", "/owner")}`));
+	assert.match(after, /textbox \\"Box\\" \[active\] \[ref=\w+\]: owner typed/);
+
+	// A hold, even one that changes nothing, drops the refs from before it.
+	await say(scout, CALL("browser_open", { profile: "personal", url: url("public", "/form") }));
+	const page = await say(scout, CALL("browser_snapshot", { profile: "personal" }));
+	(await host.takeOver!.watch("personal", () => true))();
+	await host.takeOver!.release("personal", "you're done");
+	assert.match(await say(scout, CALL("browser_click", { profile: "personal", ref: ref(page, /button "Go"/) })), /No element \w+ in the page's last snapshot/);
+	assert.match(before, /Form/);
+	await assert.rejects(host.takeOver!.input("personal", [{ type: "text", text: "x" }]), /isn't taken over/);
+});
+
+test("browser_hand_over waits for the owner, through the app's routes: the live view, input, and Done", { skip }, async (t) => {
+	const { host, scout, asked, url } = await start(t, { decide: (r) => (r.kind === "handover" ? "wait" : "once") });
+	await host.agents.update("scout", { hosts: ["public.test"] });
+	await say(scout, CALL("browser_open", { profile: "personal", url: url("public") }));
+	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: "brad@example.com", profiles: host.profiles, takeOver: host.takeOver, switchable: host.switchable, approvals: host.approvals });
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	t.after(async () => {
+		server.closeAllConnections();
+		await new Promise((resolve) => server.close(resolve));
+	});
+	const base = `http://127.0.0.1:${(server.address() as Address).port}`;
+	const headers = { "Tailscale-User-Login": "brad@example.com" };
+	const post = (path: string, body: unknown) => fetch(base + path, { method: "POST", body: JSON.stringify(body), headers: { ...headers, "Content-Type": "application/json" } });
+	type Listed = { name: string; url?: string; agent?: string; held: boolean };
+	const listed = async () => (await (await fetch(`${base}/api/browser`, { headers })).json()) as Listed[];
+
+	assert.deepEqual((await listed()).map((p) => [p.name, p.url, p.agent, p.held]), [["personal", url("public"), "scout", false], ["work", undefined, undefined, false]]);
+	assert.equal((await post("/api/browser/input", { profile: "personal", events: [{ type: "text", text: "x" }] })).status, 409);
+	assert.equal((await fetch(`${base}/api/browser/live?profile=bank`, { headers })).status, 404);
+	// Another site can't take the profile over from the owner's browser.
+	assert.equal((await fetch(`${base}/api/browser/live?profile=personal`, { headers: { ...headers, "Sec-Fetch-Site": "cross-site" } })).status, 403);
+	assert.equal((await listed())[0]!.held, false);
+
+	const answer = say(scout, CALL("browser_hand_over", { profile: "personal", reason: "Sign in to the shop" }));
+	const request = await until(() => asked.find((r) => r.kind === "handover"));
+	assert.deepEqual([request.tool, request.summary, request.profile, request.agent], ["browser_hand_over", "Sign in to the shop", "personal", "scout"]);
+
+	const live = await fetch(`${base}/api/browser/live?profile=personal`, { headers });
+	assert.equal(live.headers.get("content-type"), "text/event-stream");
+	const reader = live.body!.pipeThrough(new TextDecoderStream()).getReader();
+	const seen: LiveEvent[] = [];
+	let buffer = "";
+	const read = async (check: () => boolean) => {
+		while (!check()) {
+			const { value, done } = await reader.read();
+			if (done) return;
+			buffer += value;
+			let end: number;
+			while ((end = buffer.indexOf("\n\n")) >= 0) {
+				const frame = buffer.slice(0, end);
+				buffer = buffer.slice(end + 2);
+				if (frame.startsWith("data: ")) seen.push(JSON.parse(frame.slice(6)) as LiveEvent);
+			}
+		}
+	};
+	await read(() => seen.some((e) => e.type === "frame"));
+	assert.ok(seen.some((e) => e.type === "page" && e.title === "Home"));
+	assert.equal((await listed())[0]!.held, true);
+	assert.equal((await post("/api/browser/go", { profile: "personal", url: "file:///etc/passwd" })).status, 400);
+	assert.equal((await post("/api/browser/go", { profile: "personal", url: url("other", "/owner") })).status, 200);
+	assert.equal((await post("/api/browser/input", { profile: "personal", events: [{ type: "click", x: 10, y: 10 }, { type: "text", text: "signed in" }] })).status, 200);
+	assert.equal((await post("/api/browser/input", { profile: "personal", events: [{ type: "key", key: "F12" }] })).status, 400);
+
+	assert.equal((await post("/api/browser/release", { profile: "personal" })).status, 200);
+	await read(() => seen.some((e) => e.type === "released"));
+	assert.deepEqual(seen.at(-1), { type: "released", reason: "you're done" });
+	const done = await answer;
+	assert.match(done, /Brad is done with profile personal\./);
+	assert.match(done, /textbox \\"Box\\".*: signed in/);
+	assert.equal((await listed())[0]!.held, false);
+	assert.equal((await host.approvals.state()).requests[request.id]?.status, "approved");
+});
+
+test("browser_hand_over says when the owner couldn't", { skip }, async (t) => {
+	const { scout } = await start(t, { decide: (r) => (r.kind === "handover" ? "deny" : "once") });
+	assert.match(await say(scout, CALL("browser_hand_over", { profile: "personal", reason: "Solve the CAPTCHA" })), /Not taken over: Brad couldn't do it\./);
+});

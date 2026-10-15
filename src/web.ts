@@ -12,6 +12,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { extname, resolve, sep } from "node:path";
 import { type AgentEvent, type Conversation, type ConversationId, type Harness, type ModelRef, type SnapshotEvent, type ToolRegistration, type Tx, type UsageState, watchEvents } from "@earendil-works/pi-durable";
 import { type AgentEntry, agentIdOf, DEFAULT_AGENT, type RosterService } from "./agents.ts";
+import { BrowserState } from "./browser/index.ts";
+import type { LiveEvent, TakeOver } from "./browser/takeover.ts";
 import type { ApprovalRequest, ApprovalService, Decision } from "./approvals.ts";
 import type { BudgetGuard, BudgetStatus } from "./budget.ts";
 import { context } from "./host.ts";
@@ -66,7 +68,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 8;
+export const PROTOCOL = 9;
 
 /** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
 export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
@@ -101,6 +103,20 @@ const agentSave = object({
 	avatar: optional(string),
 });
 const agentArchive = object({ id: string, archived: boolean });
+const profileBody = object({ profile: string });
+const liveInput = object({
+	type: literal("click", "down", "up", "move", "wheel", "key", "text"),
+	x: optional(number),
+	y: optional(number),
+	button: optional(literal("left", "right", "middle")),
+	dx: optional(number),
+	dy: optional(number),
+	key: optional(string),
+	text: optional(string),
+});
+const inputBody = object({ profile: string, events: array(liveInput) });
+/** `url` to open, or `back`. */
+const goBody = object({ profile: string, url: optional(string), back: optional(boolean) });
 const skillSave = object({ name: string, file: string, text: string });
 const skillRemove = object({ name: string, file: optional(string) });
 const allowBody = object({ amount: optional(number) });
@@ -151,6 +167,8 @@ export type Gets = {
 	"/api/workspaces": { names: string[] };
 	/** The browser profiles an agent can be given, by name. */
 	"/api/profiles": { names: string[] };
+	/** Each browser profile: the page it was last on and the agent there, and whether the owner has it taken over. */
+	"/api/browser": BrowserProfile[];
 	/** `?agent=` for each of these: that agent's, the default agent's without it. */
 	"/api/settings": Settings;
 	"/api/reminders": Reminder[];
@@ -175,6 +193,14 @@ export type Gets = {
 type Ok = { ok: boolean };
 
 export type { Uploaded };
+export type { LiveEvent };
+/** A browser profile as the app lists it. */
+export type BrowserProfile = { name: string; url?: string; agent?: string; at?: number; held: boolean };
+/**
+ * GET with `?profile=`: an event stream of LiveEvents, the profile's current tab as JPEG frames, taking it over for the
+ * owner while anyone watches. Every agent's browser call on it waits until the owner is done.
+ */
+export const LIVE_PATH = "/api/browser/live";
 /**
  * POST /api/files takes a file's bytes, up to 20 MB, as the body, its name URI-encoded in X-Gaidin-File and its type
  * in Content-Type, and answers with this. A message names its files by their ids. The header makes a browser ask
@@ -216,6 +242,12 @@ export type Posts = {
 	"/api/push/unsubscribe": { body: BodyOf<typeof endpointBody>; answer: Ok };
 	"/api/push/test": { body: BodyOf<typeof nothing>; answer: { sent: number } };
 	"/api/settings": { body: BodyOf<typeof settingsChange>; answer: Settings };
+	/** The owner's input to a profile they've taken over, in order. 409 when they haven't. */
+	"/api/browser/input": { body: BodyOf<typeof inputBody>; answer: Ok };
+	/** The owner's navigation in a profile they've taken over. */
+	"/api/browser/go": { body: BodyOf<typeof goBody>; answer: Ok };
+	/** The owner is done with a profile: the agents' calls on it go ahead, and any hand-over of it is done. */
+	"/api/browser/release": { body: BodyOf<typeof profileBody>; answer: Ok };
 };
 
 /** A POST route: how its body is read, and what it does with it. */
@@ -234,6 +266,8 @@ export function createWebServer(options: {
 	workspaces?: () => readonly string[];
 	/** The browser profiles' names, which an agent's entry gives it. Default: none. */
 	profiles?: () => readonly string[];
+	/** Taking a profile over; without it the browser routes are 404s. */
+	takeOver?: TakeOver;
 	threads: Threads;
 	user: string;
 	/** The directory of moiraine's build, the app, served at /. */
@@ -376,6 +410,61 @@ export function createWebServer(options: {
 		}
 	}
 
+	/** The take-over, for a profile the settings name. */
+	function takeOverOf(profile: string | null) {
+		const takeOver = options.takeOver;
+		if (takeOver === undefined) throw new HttpError(404, "There's no browser: the settings name no profiles.");
+		if (profile === null || !(options.profiles?.() ?? []).includes(profile)) throw new HttpError(404, `There's no browser profile ${profile ?? ""}.`);
+		return { takeOver, profile };
+	}
+
+	/** A failure of the owner's input or navigation: 409 when the profile isn't taken over, else the page's error. */
+	async function asOwner(work: () => Promise<void>): Promise<Ok> {
+		try {
+			await work();
+		} catch (error) {
+			const message = error instanceof Error ? error.message.split("\n")[0]! : String(error);
+			throw new HttpError(/isn't taken over/.test(message) ? 409 : 400, message);
+		}
+		return { ok: true };
+	}
+
+	/**
+	 * A profile's live view, which takes it over while it's open. Opening it changes something, as a POST does, so a
+	 * request another site made in the owner's browser is refused, by the header browsers mark it with.
+	 */
+	async function live(url: URL, request: IncomingMessage, response: ServerResponse) {
+		const site = request.headers["sec-fetch-site"];
+		if (site !== undefined && site !== "same-origin") throw new HttpError(403, "Cross-site request");
+		const { takeOver, profile } = takeOverOf(url.searchParams.get("profile"));
+		response.writeHead(200, {
+			...SECURITY_HEADERS,
+			"Content-Type": "text/event-stream",
+			"Cache-Control": "no-store",
+			"X-Accel-Buffering": "no",
+		});
+		let open = true;
+		const viewer = (event: LiveEvent) => {
+			if (!open) return true;
+			const flowing = response.write(`data: ${JSON.stringify(event)}\n\n`);
+			if (event.type === "released") response.end();
+			return flowing;
+		};
+		const ping = setInterval(() => response.write(": ping\n\n"), 25_000);
+		let stop: (() => void) | undefined;
+		response.once("close", () => {
+			open = false;
+			clearInterval(ping);
+			stop?.();
+		});
+		try {
+			stop = await takeOver.watch(profile, viewer);
+			if (!open) stop();
+		} catch (error) {
+			viewer({ type: "released", reason: `couldn't open it: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}` });
+		}
+	}
+
 	/** A conversation's events: `?conversation=`, or the home of `?agent=`. */
 	async function events(url: URL, response: ServerResponse) {
 		const id = url.searchParams.get("conversation");
@@ -406,6 +495,10 @@ export function createWebServer(options: {
 		"/api/agents": async () => Promise.all((await agents.list()).map(shown)),
 		"/api/workspaces": async () => ({ names: [...(options.workspaces?.() ?? [])] }),
 		"/api/profiles": async () => ({ names: [...(options.profiles?.() ?? [])] }),
+		"/api/browser": async () => {
+			const state = (await harness.snapshot(BrowserState, context))?.profiles ?? {};
+			return (options.profiles?.() ?? []).map((name): BrowserProfile => ({ name, ...state[name], held: options.takeOver?.held(name) === true }));
+		},
 		"/api/agents/activity": async () => {
 			// Each conversation with a message waiting or being answered, as its agent's.
 			const busy = new Set<string>();
@@ -626,6 +719,33 @@ export function createWebServer(options: {
 				return { sent: await options.push.send({ title: "gaidin", body: "Notifications work on this device.", tag: "test" }) };
 			},
 		},
+		"/api/browser/input": {
+			body: inputBody,
+			handle: async ({ profile, events }) => {
+				const found = takeOverOf(profile);
+				return asOwner(() => found.takeOver.input(found.profile, events));
+			},
+		},
+		"/api/browser/go": {
+			body: goBody,
+			handle: async ({ profile, url, back }) => {
+				const found = takeOverOf(profile);
+				if (url !== undefined && !/^https?:\/\//i.test(url)) throw new HttpError(400, "Open an http or https address.");
+				if (url === undefined && back !== true) throw new HttpError(400, "Give a url, or back.");
+				return asOwner(() => found.takeOver.go(found.profile, url === undefined ? { back: true } : { url }));
+			},
+		},
+		"/api/browser/release": {
+			body: profileBody,
+			handle: async ({ profile }) => {
+				const found = takeOverOf(profile);
+				await found.takeOver.release(found.profile, "you're done");
+				for (const request of await approvals.pending()) {
+					if (request.kind === "handover" && request.profile === found.profile) await approvals.decide(request.id, "once", "web");
+				}
+				return { ok: true };
+			},
+		},
 		"/api/settings": {
 			body: settingsChange,
 			handle: async (change) => {
@@ -646,6 +766,7 @@ export function createWebServer(options: {
 		const path = url.pathname;
 		if (request.method === "GET") {
 			if (path === "/events") return events(url, response);
+			if (path === LIVE_PATH) return live(url, request, response);
 			if (path === AVATAR_PATH) return avatar(url, response);
 			if (isGet(path)) return json(response, await gets[path](url));
 			if (path === OLD_APP_PATH || path.startsWith(`${OLD_APP_PATH}/`)) return redirect(response, `${path.slice(OLD_APP_PATH.length) || "/"}${url.search}`);

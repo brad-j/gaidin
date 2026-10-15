@@ -46,6 +46,7 @@ export function createSlack(settings: SlackConfig, host: Host, ports: { api?: Sl
 		channel,
 		snooze: (id, minutes) => root.commit((tx) => reminders.snooze(tx, id, minutes), context),
 		resume: (id) => root.commit((tx) => resumeJob(tx, id), context),
+		app: host.config.web?.url,
 	});
 	const fromOwner = (user: string | undefined, at: string | undefined) => user === settings.userId && at === channel;
 	const connect = ports.connect ?? ((handlers) => socketMode(settings.appToken, handlers));

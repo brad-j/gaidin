@@ -66,8 +66,35 @@ function questionBlocks(request: ApprovalRequest): Message {
 	return { text: `gaidin asks: ${request.summary}`, blocks };
 }
 
-export function blocksFor(request: ApprovalRequest): Message {
+/** A hand-over: what the agent needs, a link to the profile's page in the app when there's one, and Done and Can't. */
+function handOverBlocks(request: ApprovalRequest, app: string | undefined): Message {
+	const profile = request.profile ?? "";
+	const head = `gaidin asks you to take over browser profile *${escape(profile)}*: ${escape(request.summary)}`;
+	if (request.status !== "pending") {
+		const outcome = request.status === "approved" ? "Done" : request.status === "denied" ? "You couldn't" : OUTCOME[request.status];
+		const where = request.by === undefined ? "" : ` in ${request.by === "slack" ? "Slack" : "the app"}`;
+		return { text: `gaidin asked you to take over ${profile}: ${request.summary}`, blocks: [{ type: "section", text: { type: "mrkdwn", text: `${head}\n*${outcome}${where}.*` } }] };
+	}
+	const value = (decision: Decision) => JSON.stringify({ id: request.id, decision });
+	const buttons: Json[] = [];
+	if (app !== undefined) buttons.push({ type: "button", action_id: "gaidin-handover-open", style: "primary", text: { type: "plain_text", text: "Take over" }, url: `${app}/browser/${encodeURIComponent(profile)}` });
+	buttons.push(
+		{ type: "button", action_id: "gaidin-approve-once", text: { type: "plain_text", text: "Done" }, value: value("once") },
+		{ type: "button", action_id: "gaidin-deny", style: "danger", text: { type: "plain_text", text: "Can't" }, value: value("deny") },
+	);
+	return {
+		text: `gaidin asks you to take over ${profile}: ${request.summary}`,
+		blocks: [
+			{ type: "section", text: { type: "mrkdwn", text: `${head}\n_Its browser calls wait while you're there. Waits until ${formatTime(request.expiresAt)}._` } },
+			{ type: "actions", block_id: "gaidin-approval", elements: buttons },
+		],
+	};
+}
+
+/** `app`: the app's address, for a hand-over's link. */
+export function blocksFor(request: ApprovalRequest, app?: string): Message {
 	if (request.kind === "question") return questionBlocks(request);
+	if (request.kind === "handover") return handOverBlocks(request, app);
 	const what = `\`${escape(request.summary)}\``;
 	if (request.status !== "pending") {
 		const how = request.decision === "always" && request.always !== undefined ? request.always.done : request.decision === "once" ? "Allowed once" : OUTCOME[request.status];
@@ -130,6 +157,8 @@ export function createSlackNotifications(options: {
 	snooze: (id: number, minutes: number) => Promise<Reminder | undefined>;
 	/** Resumes a paused job. Nothing if it isn't one. */
 	resume: (id: number) => Promise<Job | undefined>;
+	/** The app's address, which a hand-over links to. */
+	app?: string;
 }) {
 	const { harness, root, approvals, api, channel } = options;
 	const post = slackPoster(api);
@@ -142,7 +171,7 @@ export function createSlackNotifications(options: {
 
 	async function ask(request: ApprovalRequest) {
 		const thread = await threadOf(request.conversationId);
-		const { ts } = await api("chat.postMessage", { channel, ...blocksFor(request), thread_ts: thread });
+		const { ts } = await api("chat.postMessage", { channel, ...blocksFor(request, options.app), thread_ts: thread });
 		if (ts !== undefined) await approvals.note(request.id, { slackTs: ts });
 	}
 
@@ -150,7 +179,7 @@ export function createSlackNotifications(options: {
 		// The ts is stored after posting, so read it back rather than trusting the event's copy.
 		const ts = (await approvals.state()).requests[request.id]?.slackTs;
 		if (ts === undefined) return;
-		await api("chat.update", { channel, ts, ...blocksFor(request) });
+		await api("chat.update", { channel, ts, ...blocksFor(request, options.app) });
 	}
 
 	const adapter: Adapter = {

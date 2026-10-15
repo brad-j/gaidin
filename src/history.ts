@@ -73,6 +73,7 @@ function activityOf(entry: EntryRecord): Contribution {
 		const d = entry.data;
 		const where = WHERE.get(d.by ?? "") ?? "";
 		const outcome = d.kind === "question" ? (d.status === "answered" ? `answered${where}: ${d.answer}` : d.status)
+			: d.kind === "handover" ? (d.status === "approved" ? `done${where}` : d.status === "denied" ? `couldn't${where}` : d.status)
 			: d.status === "approved" ? `${d.decision === "always" ? "always allowed" : "allowed once"}${where}`
 			: d.status === "denied" ? `denied${where}`
 			: d.status;

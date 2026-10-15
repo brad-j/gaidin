@@ -66,6 +66,7 @@ A URL can carry data out in its path or query, which is why a fetch to a new hos
 | `browser_open` | for a host not allowed for good for the agent, unless `web_search` returned the URL in that conversation; refused for a profile the agent wasn't given | always allow that host, for that agent |
 | `browser_click`, `browser_type`, `browser_select` | while outside text is in the conversation's context, unless the agent acts on that site in that profile without asking; typing into a password field is refused | act on that site without asking, for that agent and profile |
 | `browser_upload` | every call, naming the files | none |
+| `browser_hand_over` | it is the request: Done or Can't | none |
 | `workspace_*` | every call | allow that workspace for an hour, in that conversation only |
 | `schedule_job` | every new job | none |
 | `remember`, `update_memory` | while outside text is in the conversation's context | none |
@@ -104,7 +105,8 @@ A browser profile holds live sign-ins, so the browser is checked in these layers
 - Opening a page asks as a fetch does. Every request a page makes is routed through the server first: one to a private, CGNAT, loopback, link-local or reserved address is refused, so a page can't reach your LAN, your tailnet or gaidin's own port, and a navigation of the page itself to a host that isn't its own or allowed for good is stopped. Routing turns off Chromium's HTTP cache.
 - What a page shows is outside text, labelled as from the web and redacted like any result, so note writes and cancels after it ask, and so do clicks, typing and choosing, until you let the agent act on a site without asking. That's per agent, profile and site, and removable on the settings page.
 - An approved action happens only if the page is still on the site and the ref still the element the request named, since an answer can come days later and another conversation can use the profile meanwhile.
-- The model never types a password: `browser_type` refuses a field whose type or autocomplete says password, before anyone is asked and again before typing. A page that needs signing in is yours to sign in to.
+- The model never types a password: `browser_type` refuses a field whose type or autocomplete says password, before anyone is asked and again before typing. A page that needs signing in is yours to sign in to, by taking the profile over in the app.
+- Taking over goes through the app's own checks: the Tailscale login; for the live view, which takes the profile over as it opens, a refusal of any request a browser marks as made by another site (`Sec-Fetch-Site`); and for your input and navigation, a JSON POST from the app's origin. Your input goes to the page and isn't stored or shown to a model. While you hold a profile its pages go anywhere public, since they're yours, and every agent's call on it waits; when you let go, the refs from before are dropped and the pages are held to no host until an agent's call sets them again, so nothing you opened lets an agent act there without asking.
 - An upload sends files from the agent's own sandbox only, read through its file tools, and asks every time, naming them. A download lands in the agent's `downloads/`, which its commands see read-only, so none can swap it for a symlink that carries the server's write elsewhere.
 
 ## Container logs
@@ -135,6 +137,8 @@ The app trusts the identity header Tailscale Serve adds, and listens only on loo
 - On a site an agent acts on without asking, a page there can steer what it clicks and types there, including typing text from the conversation into a form.
 - A file the browser downloads is read with the sandbox's file tools, which don't count as outside text. The page that offered it already does, until compaction summarises it away.
 - A password field is recognised by its `type` and `autocomplete` attributes; a page that hides one behind a plain text field isn't caught.
+- The live view's frames show whatever the signed-in page shows, to any device with your Tailscale login, as the conversations do.
+- A sign-in you make while taking a profile over is then usable by every agent given that profile, which is the point of it, and by nothing else.
 - A page can send what it shows, or what's in its own storage, to its own servers, and its scripts and images go to any public host; only its own navigations are checked. A page on a host you've allowed for good can steer what the agent reads there.
 - The browser's address check resolves a name itself, before Chromium does, so a second DNS answer could still point Chromium at a private address. WebSockets aren't routed and aren't checked.
 - A page that exploited Chromium would run as gaidin's user, outside bubblewrap, with Chromium's own sandbox the only layer between it and gaidin's data.
