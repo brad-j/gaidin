@@ -7,6 +7,7 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { configFor } from "../src/config.ts";
 import { context, startHost } from "../src/host.ts";
+import { defaultEntry } from "../src/agents.ts";
 import type { Situation } from "../src/guards.ts";
 import { backoff, createJobs, describeSchedule, type Job, JobReported, Jobs, MAX_JOBS, nextRun, NOTHING, parseSchedule, recordReport, type Report, resumeJob } from "../src/jobs.ts";
 import { setTimeZone } from "../src/time.ts";
@@ -391,7 +392,7 @@ test("a job is refused when there's no room, before asking and again after the o
 function ask(name: string, args: Record<string, any>, read: string[] = []) {
 	const guard = createJobs({ deliver: async () => {}, owner: "Brad" }).guards.find((g) => g.tool === name)!;
 	const jobs = { items: [{ taskId: 7, title: "Watch the homelab alerts" }] };
-	const situation: Situation = { fetchHosts: [], grants: [], conversationId: 1, outside: async () => read, searched: async () => [], snapshot: async (doc: object) => (doc === Jobs ? jobs : undefined) as never };
+	const situation: Situation = { fetchHosts: [], grants: [], conversationId: 1, agent: defaultEntry(), outside: async () => read, searched: async () => [], snapshot: async (doc: object) => (doc === Jobs ? jobs : undefined) as never };
 	return guard.ask(args, situation);
 }
 

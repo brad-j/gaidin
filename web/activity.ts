@@ -122,7 +122,7 @@ const compact = (n: number) => compactNumber.format(n);
 
 const GOOD = /^(ok|allowed once|always allowed|answered|reported|pushed)\b/;
 const BAD = /^(denied|blocked|expired|not delivered|push failed)\b/;
-const PLACES = { thread: "Slack thread", job: "job run" } as const;
+const PLACES = { thread: "Slack thread", job: "job run", agent: "from another agent" } as const;
 
 function timeline(): HTMLElement {
 	const section = el("section");

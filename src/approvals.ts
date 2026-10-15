@@ -14,7 +14,8 @@ import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
 import { type Message, type ToolCall, Type } from "@earendil-works/pi-ai";
 import { type ConversationId, defineDoc, defineEntry, defineExtension, defineTool, type DocumentReader, type Harness, type HookApi, hook, type ToolExecutionApi, ToolTask, type Tx } from "@earendil-works/pi-durable";
-import type { Ask, Guard, Situation } from "./guards.ts";
+import { AGENT_MESSAGE, agentAt, AgentOf, Agents, DEFAULT_AGENT, entryOf, hostsOf, rosterOf } from "./agents.ts";
+import type { Ask, Guard, Situation, Where } from "./guards.ts";
 import { GATE_FINDINGS } from "./jobs.ts";
 import { ParseError } from "./parse.ts";
 import { searchedUrls } from "./search.ts";
@@ -27,6 +28,8 @@ export type ApprovalStatus = "pending" | "approved" | "denied" | "answered" | "e
 export type ApprovalRequest = {
 	id: string;
 	conversationId: number;
+	/** The agent whose conversation asks. Absent: the default agent. */
+	agent?: string;
 	/** The tool call's task. A request whose task has ended isn't waited on any more. */
 	taskId: number;
 	tool: string;
@@ -85,9 +88,9 @@ export async function askFor(guard: Guard, call: ToolCall, situation: Situation)
 }
 
 /** Why `call` can't succeed under its guard, or nothing. Arguments it can't read aren't refused here; they ask (askFor). */
-async function refusalOf(guard: Guard, call: ToolCall, read: DocumentReader, context: Context): Promise<string | undefined> {
+async function refusalOf(guard: Guard, call: ToolCall, read: DocumentReader, context: Context, where: Where): Promise<string | undefined> {
 	try {
-		return await guard.refuse(call.arguments, read, context);
+		return await guard.refuse(call.arguments, read, context, where);
 	} catch (error) {
 		if (error instanceof ParseError) return undefined;
 		throw error;
@@ -116,6 +119,11 @@ export class ApprovalService {
 
 	async state(): Promise<ApprovalState> {
 		return (await this.#harness.snapshot(Approvals, background)) ?? { requests: {}, fetchHosts: [] };
+	}
+
+	/** The hosts `agent` fetches from without asking. */
+	async hostsFor(agent: string): Promise<readonly string[]> {
+		return hostsOf(entryOf(await rosterOf(this.#harness, background), agent), (await this.state()).fetchHosts);
 	}
 
 	/** Requests still waiting for the owner. Ones whose call was stopped, or whose time ran out while the server was down, are closed. */
@@ -172,6 +180,7 @@ export class ApprovalService {
 	/** Records a request under `id` unless it exists, and returns it as stored. */
 	async open(id: string, at: { conversationId: number; taskId: number }, tool: string, ask: Pick<ApprovalRequest, "summary" | "detail" | "always" | "kind" | "choices">): Promise<ApprovalRequest> {
 		const now = Date.now();
+		const agent = (await this.#harness.snapshot(AgentOf, conversationId(at.conversationId), background))?.agent ?? DEFAULT_AGENT;
 		const { request, created } = await this.#commit((doc) => {
 			for (const [key, old] of Object.entries(doc.requests)) {
 				if (old.status !== "pending" && (old.decidedAt ?? old.createdAt) < now - KEEP_DECIDED_MS) delete doc.requests[key];
@@ -179,6 +188,7 @@ export class ApprovalService {
 			const existing = doc.requests[id];
 			if (existing !== undefined) return { request: plain(existing), created: false };
 			const fresh: ApprovalRequest = { id, ...at, tool, ...ask, createdAt: now, expiresAt: now + this.#timeoutMs, status: "pending" };
+			if (agent !== DEFAULT_AGENT) fresh.agent = agent;
 			doc.requests[id] = fresh;
 			return { request: plain(fresh), created: true };
 		});
@@ -200,8 +210,12 @@ export class ApprovalService {
 			request.decidedAt = Date.now();
 			request.by = by;
 			request.decision = decision;
-			if (decision === "always" && request.always?.kind === "fetch-host" && !doc.fetchHosts.includes(request.always.value)) {
-				doc.fetchHosts.push(request.always.value);
+			// A host is allowed for the agent that asked, the default agent's in this document and the others' in the roster.
+			if (decision === "always" && request.always?.kind === "fetch-host") {
+				const host = request.always.value;
+				const other = request.agent === undefined ? undefined : (await tx.doc(Agents)).agents.find((a) => a.id === request.agent);
+				const hosts = other === undefined ? doc.fetchHosts : other.hosts;
+				if (!hosts.includes(host)) hosts.push(host);
 			}
 			if (decision === "always" && request.always?.kind === "workspace-hour") {
 				const now = Date.now();
@@ -327,17 +341,18 @@ export function signalOf(api: ToolExecutionApi | HookApi, context: Context): Abo
  * The tools whose results are in the conversation's context and are text from outside (`isOutside`), and the job's gate
  * when a message there holds what a gate found. Text the model has read stays able to steer it for as long as it's in the
  * context, whoever spoke since; compaction is what takes it out. The hook's api is the tool task's runtime, which can
- * read that context.
+ * read that context. The context already holds a placeholder result for the call being decided, `callId`, which is skipped.
  */
-export async function outsideTextIn(api: HookApi, context: Context, isOutside: (tool: string) => boolean): Promise<string[]> {
+export async function outsideTextIn(api: HookApi, context: Context, isOutside: (tool: string) => boolean, callId?: string): Promise<string[]> {
 	const messages = await contextOf(api, context);
 	// Without the context there's no telling what was read, so it counts as outside text.
 	if (messages === undefined) return ["a conversation it couldn't check"];
 	const found = new Set<string>();
 	for (const message of messages) {
-		// A job run a gate woke starts with what the gate found.
+		// A job run a gate woke starts with what the gate found, and a conversation another agent started with its message.
 		if (message.role === "user" && JSON.stringify(message.content).includes(GATE_FINDINGS)) found.add("the job's gate");
-		if (message.role === "toolResult" && isOutside(message.toolName)) found.add(message.toolName);
+		if (message.role === "user" && JSON.stringify(message.content).includes(AGENT_MESSAGE)) found.add("a message from another agent");
+		if (message.role === "toolResult" && message.toolCallId !== callId && isOutside(message.toolName)) found.add(message.toolName);
 	}
 	return [...found];
 }
@@ -397,14 +412,17 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 					const guard = all.find((g) => g.tool === call.name);
 					if (guard === undefined) return undefined;
 					const approvals = service();
-					const impossible = await refusalOf(guard, call, api, context);
+					const { agent, roster } = await agentAt(api, api.conversationId, context);
+					const where: Where = { conversationId: api.conversationId, agent, roster };
+					const impossible = await refusalOf(guard, call, api, context, where);
 					if (impossible !== undefined) return { block: impossible };
 					const { fetchHosts, grants = [] } = await approvals.state();
 					const ask = await askFor(guard, call, {
-						fetchHosts,
+						fetchHosts: hostsOf(agent, fetchHosts),
 						grants,
 						conversationId: api.conversationId,
-						outside: () => outsideTextIn(api, context, (tool) => all.some((g) => g.tool === tool && g.outside)),
+						agent,
+						outside: () => outsideTextIn(api, context, (tool) => all.some((g) => g.tool === tool && g.outside), call.id),
 						searched: () => searchedIn(api, context),
 						snapshot: (doc) => api.snapshot(doc, context),
 					});
@@ -414,7 +432,8 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 					const request = await approvals.open(id, { conversationId: api.conversationId, taskId: api.taskId }, call.name, ask);
 					const done = await approvals.wait(request, signalOf(api, context));
 					if (done.status === "approved") {
-						const since = await refusalOf(guard, call, api, context);
+						// The roster as it is now: an agent's grants can change while it waits.
+						const since = await refusalOf(guard, call, api, context, { conversationId: api.conversationId, ...(await agentAt(api, api.conversationId, context)) });
 						return since === undefined ? undefined : { block: `${owner} allowed it, but it can't happen now: ${since}` };
 					}
 					const why = done.status === "denied" ? `${owner} said no`

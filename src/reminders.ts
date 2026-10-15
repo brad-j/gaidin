@@ -1,11 +1,13 @@
 import { Type } from "@earendil-works/pi-ai";
 import { type ConversationId, defineDoc, defineEntry, defineExtension, defineTask, defineTool, type TaskId, type Tx } from "@earendil-works/pi-durable";
+import { agentIdOf, DEFAULT_AGENT } from "./agents.ts";
 import { guard, ifOutsideText, quoted } from "./guards.ts";
 import { formatTime } from "./time.ts";
 import { taskId } from "./ids.ts";
 import { number, object } from "./parse.ts";
 
-export type Reminder = { taskId: number; text: string; at: number };
+/** `agent`: the agent that set it; absent, the default agent. */
+export type Reminder = { taskId: number; text: string; at: number; agent?: string };
 export type Notify = (reminder: Reminder) => Promise<void>;
 
 /** Open reminders. A reminder leaves the list when it fires or is cancelled. */
@@ -19,13 +21,17 @@ export const Reminders = defineDoc<{ items: Reminder[] }>({
 /** Transcript record of a fired reminder. It carries no model messages, so the model doesn't see it. */
 export const ReminderFired = defineEntry<{ text: string; at: number; delivered: boolean; error?: string; taskId?: number }>("gaidin.reminder-fired");
 
+/** Whether `reminder` is `agent`'s. */
+export const reminderOf = (reminder: Reminder, agent: string) => (reminder.agent ?? DEFAULT_AGENT) === agent;
+
 /**
  * Takes a reminder off the open list. Its task finds itself gone when it wakes, and finishes without
- * notifying. Returns the reminder, or nothing if it wasn't open.
+ * notifying. Returns the reminder, or nothing if it wasn't open, or wasn't `agent`'s when one is given.
  */
-export async function removeReminder(tx: Tx, id: number): Promise<Reminder | undefined> {
+export async function removeReminder(tx: Tx, id: number, agent?: string): Promise<Reminder | undefined> {
 	const doc = await tx.doc(Reminders);
-	const found = doc.items.find((r) => r.taskId === id);
+	const found = doc.items.find((r) => r.taskId === id && (agent === undefined || reminderOf(r, agent)));
+	if (found === undefined) return undefined;
 	doc.items = doc.items.filter((r) => r.taskId !== id);
 	return found === undefined ? undefined : { ...found };
 }
@@ -36,7 +42,7 @@ type State = { phase: "wait" } | { phase: "notify"; attempt: number; retryAt: nu
 type Result = "sent" | "cancelled" | "failed";
 
 export function createReminders(notify: Notify, owner = "the user") {
-	const ReminderTask = defineTask<{ text: string; at: number }, State, Result>({
+	const ReminderTask = defineTask<{ text: string; at: number; agent?: string }, State, Result>({
 		name: "gaidin.reminder",
 		version: 1,
 		initial: () => ({ phase: "wait" }),
@@ -88,10 +94,11 @@ export function createReminders(notify: Notify, owner = "the user") {
 		},
 	});
 
-	async function add(tx: Tx, conversationId: ConversationId, text: string, at: number): Promise<number> {
+	async function add(tx: Tx, conversationId: ConversationId, text: string, at: number, agent: string): Promise<number> {
+		const input = agent === DEFAULT_AGENT ? { text, at } : { text, at, agent };
 		// Background: the conversation goes idle while it waits, and Esc doesn't cancel it.
-		const id = await tx.createTask(ReminderTask, { text, at }, { ownership: { kind: "conversation" }, conversationId, background: true });
-		(await tx.doc(Reminders)).items.push({ taskId: id, text, at });
+		const id = await tx.createTask(ReminderTask, input, { ownership: { kind: "conversation" }, conversationId, background: true });
+		(await tx.doc(Reminders)).items.push({ taskId: id, ...input });
 		return id;
 	}
 
@@ -100,9 +107,10 @@ export function createReminders(notify: Notify, owner = "the user") {
 		const task = await tx.task(taskId(id));
 		if (task === undefined || task.kind !== "gaidin.reminder") return undefined;
 		// SAFETY: a gaidin.reminder task's input is what add() made it with.
-		const { text } = task.input as { text: string };
+		const { text, agent = DEFAULT_AGENT } = task.input as { text: string; agent?: string };
 		const at = Date.now() + minutes * 60_000;
-		return { taskId: await add(tx, task.conversationId, text, at), text, at };
+		const again = await add(tx, task.conversationId, text, at, agent);
+		return agent === DEFAULT_AGENT ? { taskId: again, text, at } : { taskId: again, text, at, agent };
 	}
 
 	const remind = defineTool({
@@ -120,7 +128,8 @@ export function createReminders(notify: Notify, owner = "the user") {
 			const at = args.at === undefined ? Date.now() + args.inMinutes! * 60_000 : Date.parse(args.at);
 			if (Number.isNaN(at)) throw new Error(`Can't parse at: ${args.at}`);
 			if (at < Date.now() - 60_000) throw new Error(`${formatTime(at)} is in the past.`);
-			const taskId = await api.commit((tx) => add(tx, api.conversationId, args.text, at), context);
+			const agent = await agentIdOf(api, api.conversationId, context);
+			const taskId = await api.commit((tx) => add(tx, api.conversationId, args.text, at, agent), context);
 			return { content: [{ type: "text", text: `Reminder ${taskId} set for ${formatTime(at)}: ${args.text}` }] };
 		},
 	});
@@ -131,7 +140,8 @@ export function createReminders(notify: Notify, owner = "the user") {
 		parameters: Type.Object({}),
 		replay: "safe",
 		execute: async (_args, api, context) => {
-			const items = await api.commit(async (tx) => [...(await tx.doc(Reminders)).items], context);
+			const agent = await agentIdOf(api, api.conversationId, context);
+			const items = ((await api.snapshot(Reminders, context))?.items ?? []).filter((r) => reminderOf(r, agent));
 			const text = items.length === 0
 				? "No open reminders."
 				: items.sort((a, b) => a.at - b.at).map((r) => `${r.taskId}: ${formatTime(r.at)}: ${r.text}`).join("\n");
@@ -145,7 +155,8 @@ export function createReminders(notify: Notify, owner = "the user") {
 		parameters: Type.Object({ id: Type.Number() }),
 		replay: "safe",
 		execute: async (args, api, context) => {
-			const removed = await api.commit((tx) => removeReminder(tx, args.id), context);
+			const agent = await agentIdOf(api, api.conversationId, context);
+			const removed = await api.commit((tx) => removeReminder(tx, args.id, agent), context);
 			const text = removed ? `Cancelled ${args.id}: ${removed.text}` : `No open reminder ${args.id}.`;
 			return { content: [{ type: "text", text }] };
 		},
@@ -154,7 +165,7 @@ export function createReminders(notify: Notify, owner = "the user") {
 	// Cancelling asks after outside text, so a page can't quietly undo what the owner set up.
 	const guards = [
 		guard("cancel_reminder", object({ id: number }), {
-			ask: (a, situation) => ifOutsideText(situation, async () => `cancel reminder ${a.id}${quoted((await situation.snapshot(Reminders))?.items.find((r) => r.taskId === a.id)?.text)}`),
+			ask: (a, situation) => ifOutsideText(situation, async () => `cancel reminder ${a.id}${quoted((await situation.snapshot(Reminders))?.items.find((r) => r.taskId === a.id && reminderOf(r, situation.agent.id))?.text)}`),
 		}),
 	];
 

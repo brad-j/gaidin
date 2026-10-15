@@ -1,20 +1,29 @@
-// `gaidin ask` and `gaidin watch`: clients of a running server, over its Unix socket.
+// `gaidin ask`, `gaidin watch` and `gaidin agent`: clients of a running server, over its Unix socket.
 import { randomUUID } from "node:crypto";
 import { connect } from "node:net";
 import { createInterface } from "node:readline";
 import type { Config } from "./config.ts";
 import { type ClientMessage, parseServerMessage, socketPathFor } from "./server.ts";
 
-/** Sends a message and prints the run until it settles. Resolves with the exit code. */
-export function ask(config: Config, prompt: string, id?: string): Promise<number> {
+/** Sends a message to `agent`, the default agent unless given, and prints the run until it settles. Resolves with the exit code. */
+export function ask(config: Config, prompt: string, id?: string, agent?: string): Promise<number> {
 	const requestId = id ?? randomUUID();
 	if (id === undefined) console.error(`request ${requestId}`);
-	return talk(config, { type: "ask", content: prompt, requestId }, true);
+	const request: ClientMessage = { type: "ask", content: prompt, requestId };
+	if (agent !== undefined) request.agent = agent;
+	return talk(config, request, true);
 }
 
-/** Prints everything the agent does until Ctrl+C. */
-export function watch(config: Config): Promise<number> {
-	return talk(config, { type: "watch" }, false);
+/** Prints everything `agent` does in its conversation until Ctrl+C. */
+export function watch(config: Config, agent?: string): Promise<number> {
+	const request: ClientMessage = { type: "watch" };
+	if (agent !== undefined) request.agent = agent;
+	return talk(config, request, false);
+}
+
+/** Lists, adds or changes an agent. */
+export function agents(config: Config, request: Extract<ClientMessage, { type: "agent" }>): Promise<number> {
+	return talk(config, request, true);
 }
 
 function talk(config: Config, request: ClientMessage, waitForDone: boolean): Promise<number> {

@@ -11,6 +11,7 @@
 import type { Context } from "@earendil-works/chord";
 import type { ToolCall } from "@earendil-works/pi-ai";
 import type { DocumentReader, JsonObject, SessionDocToken } from "@earendil-works/pi-durable";
+import type { AgentEntry, Roster } from "./agents.ts";
 import type { ApprovalRequest, Grant } from "./approvals.ts";
 import { parse, type Parser } from "./parse.ts";
 
@@ -20,14 +21,19 @@ export type Ask = Pick<ApprovalRequest, "summary" | "always" | "detail">;
 /** One of gaidin's session documents as it stands. */
 export type Snapshot = <T extends JsonObject>(doc: SessionDocToken<T>) => Promise<Readonly<T> | undefined>;
 
+/** Where a call is made: its conversation, and the agent that conversation belongs to. */
+export type Where = { conversationId: number; agent: AgentEntry; roster: Readonly<Roster> };
+
 /** What a guard can see when it decides whether a call asks. */
 export type Situation = {
-	/** Hosts the owner allowed for good. */
+	/** Hosts the owner allowed for good, for the calling agent. */
 	fetchHosts: readonly string[];
 	/** Workspaces allowed in a conversation until a time. */
 	grants: readonly Grant[];
 	/** The conversation the call is in. */
 	conversationId: number;
+	/** The agent making the call. */
+	agent: AgentEntry;
 	/** The outside-text tools whose results are in the conversation's context. It reads the context, so call it only when it matters. */
 	outside: () => Promise<string[]>;
 	/** The URLs web_search returned in the conversation's context. It reads the context too. */
@@ -47,13 +53,13 @@ export type Guard = {
 	/** What the call asks, or nothing. Throws a ParseError when the arguments don't read right. */
 	readonly ask: (args: Args, situation: Situation) => Promise<Ask | undefined>;
 	/** Why the call can't succeed, read from the current state, or nothing. Checked before asking and again after an approval. Throws a ParseError when the arguments don't read right. */
-	readonly refuse: (args: Args, read: DocumentReader, context: Context) => Promise<string | undefined>;
+	readonly refuse: (args: Args, read: DocumentReader, context: Context, where: Where) => Promise<string | undefined>;
 };
 
 /** A guard for `tool`, whose rules get the call's arguments as `parser` reads them. */
 export function guard<A>(tool: string, parser: Parser<A>, rules: {
 	ask?: (args: A, situation: Situation) => Awaitable<Ask | undefined>;
-	refuse?: (args: A, read: DocumentReader, context: Context) => Awaitable<string | undefined>;
+	refuse?: (args: A, read: DocumentReader, context: Context, where: Where) => Awaitable<string | undefined>;
 	outside?: true;
 }): Guard {
 	const { ask, refuse } = rules;
@@ -62,7 +68,7 @@ export function guard<A>(tool: string, parser: Parser<A>, rules: {
 		tool,
 		outside: rules.outside === true,
 		ask: async (args, situation) => (ask === undefined ? undefined : ask(read(args), situation)),
-		refuse: async (args, reader, context) => (refuse === undefined ? undefined : refuse(read(args), reader, context)),
+		refuse: async (args, reader, context, where) => (refuse === undefined ? undefined : refuse(read(args), reader, context, where)),
 	};
 }
 

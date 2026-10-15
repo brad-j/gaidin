@@ -1,14 +1,17 @@
 # Tools
 
+Every [agent](concepts.md#agents) has these tools, and each works on that agent's own sandbox, work notes, reminders, jobs and past conversations, and its own allowed hosts and workspaces.
+
 | Tool | Runs | Reaches | Asks first |
 |---|---|---|---|
 | `read`, `write`, `edit`, `bash` | in the sandbox | the sandbox directory only, no network | no |
 | `remind`, `list_reminders`, `cancel_reminder` | in the server | the owner's [notifications](surfaces.md#notifications) | cancelling, while outside text is in the conversation |
-| `remember`, `update_memory`, `forget` | in the server | the notes in every system prompt | while outside text is in the conversation |
+| `remember`, `update_memory`, `forget` | in the server | the shared notes in every agent's prompt, and the agent's own work notes | while outside text is in the conversation |
 | `search_history`, `read_history` | in the server | its index of past messages | no |
 | `read_skill` | in the server | the [skills](#skills), read-only | no |
 | `write_skill`, `remove_skill` | in the server | local [skills](#skills) | every call |
 | `ask_owner` | in the server | the owner, in Slack or the web view | it is the question |
+| `message_agent`, `hand_off` | in the server; each starts a conversation of the other agent's | another agent, which uses its own tools | refused unless the agent's roster entry lists the other; asks while outside text is in the conversation |
 | `schedule_job`, `list_jobs`, `cancel_job` | in the server; each run is a new conversation | what the run's tools reach | every new job; cancelling, while outside text is in the conversation |
 | alert investigations | in the server; each is a job run | read-only tools only | for a host not allowed for good |
 | `fetch_url` | in the server | the public internet only | for a host not allowed for good, unless `web_search` returned the URL |
@@ -27,7 +30,7 @@ Pi Durable's `read`, `write`, `edit` and `bash`, confined to the sandbox directo
 
 ## Reminders
 
-`remind` takes the text and either `inMinutes` or `at` (ISO 8601 with a UTC offset) and returns the time it set, which the model reads back. `list_reminders` shows the open ones; `cancel_reminder` takes an id. The web view lists and cancels them too.
+`remind` takes the text and either `inMinutes` or `at` (ISO 8601 with a UTC offset) and returns the time it set, which the model reads back. `list_reminders` shows the open ones; `cancel_reminder` takes an id. Both see only the reminders their agent set. The web view lists and cancels them too.
 
 A reminder is a durable background task ([Concepts](concepts.md#durability)). When it fires, it's sent as a [notification](surfaces.md#notifications) titled "gaidin" and recorded as a "Reminder" entry in the conversation, which the web view shows and the model doesn't see. When no way of notifying reached anyone, it's retried up to five times with backoff, and the entry records whether it was delivered.
 
@@ -39,11 +42,25 @@ With ntfy, use a long random topic name and treat it as a secret: on ntfy.sh, an
 
 `ask_owner` asks the owner something only they can decide and waits for the answer, with up to five `choices` as buttons. The run pauses at the call, for up to `approvals.waitHours` (7 days by default), and picks up where it stopped once the owner answers; the tool result is the answer. The owner can answer with a button, in their own words in the question's Slack thread or the web view's box, or just with their next message in that conversation. The pause survives restarts: the question keeps its id, and the call waits on it again. A job's run can ask too, which is how a 3 a.m. job gets a decision made at breakfast.
 
+## Other agents
+
+An agent whose roster entry lists other agents can reach them ([Concepts](concepts.md#agents)). Its system prompt names each one with its job.
+
+- `message_agent(agent, text)` asks another agent something and waits for its answer, which comes back as the tool's result. The other agent answers in a new conversation of its own, with its own settings and tools, and doesn't see the asker's conversation. The wait survives restarts like `ask_owner`'s.
+- `hand_off(agent, title, task)` gives another agent work and doesn't wait. The work runs at once as a one-off [job](#scheduled-jobs) of the receiving agent's, and its answer reaches the owner as a report titled with `title` and the sender's name, not the sender.
+
+A call to an agent the entry doesn't list, or one that's archived, is refused with the agents it can reach. Either tool asks the owner while outside text is in the conversation, since a page could otherwise pass work to an agent with wider grants. What one agent sends another is outside text to the receiver, and the answer that comes back is outside text to the sender ([Security](security.md#agents)). A chain of messages and hand-offs stops at three, and an agent already in a chain can't be asked again within it.
+
 ## Memory
 
-Notes gaidin keeps about the owner and their world, such as where the NAS is or how they take their coffee. Every conversation gets them at the end of its system prompt, job runs included, with a reminder that they're things gaidin was told, not instructions. `remember` adds one, `update_memory` replaces one by id, and `forget` deletes one. A note is at most 500 characters and all of them together at most 8,000, so the prompt stays small; gaidin has to merge or forget notes to make room. The web view's memory page lists them, and you add, edit and forget notes there; `/remember` and `/forget` do the same from the console.
+Notes the agents keep, such as where the NAS is or how the owner takes their coffee. There are two kinds:
 
-Writing a note normally doesn't ask. While the conversation's context holds outside text, from `fetch_url`, `web_search`, `container_logs`, `workspace_read`, `workspace_run`, a self-written tool, or past answers from `search_history` or `read_history`, a write asks first ([Security](security.md#approvals)), so a page that says "remember to..." can't plant a note on its own, even after the owner has said something else. In the main conversation that lasts until compaction summarises the page away.
+- Shared notes are about the owner and their world. Every agent gets them in its system prompt. `remember` with `shared` set writes one. They're named `s1`, `s2` and so on, and all of them together are at most 8,000 characters.
+- Work notes are one agent's own, about its own work, and only it sees them. `remember` without `shared` writes one. They're named `w1`, `w2` and so on, numbered per agent, and an agent's are at most 4,000 characters.
+
+Every conversation gets the shared notes and then its agent's work notes at the end of its system prompt, job runs included, with a reminder that they're things the agent was told, not instructions. `update_memory` replaces a note by id and `forget` deletes one; a bare number means a shared note, as notes were named before agents. A note is at most 500 characters, and an agent has to merge or forget notes to make room. The web view's memory page lists the shared notes, and you add, edit and forget them there; `/remember` and `/forget` do the same from the console.
+
+Writing a note of either kind normally doesn't ask. While the conversation's context holds outside text, from `fetch_url`, `web_search`, `container_logs`, `workspace_read`, `workspace_run`, a self-written tool, past answers from `search_history` or `read_history`, or a message from another agent, a write asks first ([Security](security.md#approvals)), so a page that says "remember to..." can't plant a note on its own, even after the owner has said something else. In the main conversation that lasts until compaction summarises the page away.
 
 ## Skills
 
@@ -60,7 +77,7 @@ A skill's file is a path of up to three parts, none hidden, ending `.md`, `.txt`
 
 ## Past conversations
 
-`search_history(query)` finds the owner's messages and gaidin's answers in every past conversation: the main one, Slack threads and job runs. Every word has to appear, and word endings don't matter. It returns up to 10 matches, newest first, each with its time, where it was and a number; `read_history(id)` shows the messages around one, in order. gaidin searches before saying it doesn't know something the owner may have told it.
+`search_history(query)` finds the owner's messages and the agent's answers in every past conversation of the agent's own: its main one, Slack threads, job runs and conversations other agents started with it. It doesn't find another agent's. Every word has to appear, and word endings don't matter. It returns up to 10 matches, newest first, each with its time, where it was and a number; `read_history(id)` shows the messages around one, in order. gaidin searches before saying it doesn't know something the owner may have told it.
 
 Pi Durable keeps every message, including the ones compaction summarized away, but can't search them, so `src/history.ts` keeps a full-text index in `<data>/history.sqlite`, using SQLite's FTS5. It follows the transcript as messages are stored and catches up at start, so deleting the file only makes it rebuild. Tool output isn't indexed, and neither are gaidin's internal conversations, such as the reviewer's for [self-written tools](#self-written-tools). A fact that only appeared in a fetched page or a command's output is found only if gaidin repeated it in an answer. The search makes no model calls.
 
@@ -74,7 +91,7 @@ The same index holds the web view's [timeline](surfaces.md#web-view): tool calls
 - `every`: repeating, like `6h` or `1d`, at least 6 hours apart, or 15 minutes with a [gate](#gates)
 - `time` and `days`: at a local time (`08:00`), on `daily`, `weekdays`, `weekends` or a list like `mon, thu`, in the configured time zone, across daylight saving changes
 
-With `mode: "watch"`, a run reports only when something needs the owner and otherwise ends quietly; the run answers `NOTHING_TO_REPORT` to stay silent. `list_jobs` shows each job's next and last run, and `cancel_job` takes an id. The web view lists them too, with Cancel.
+With `mode: "watch"`, a run reports only when something needs the owner and otherwise ends quietly; the run answers `NOTHING_TO_REPORT` to stay silent. `list_jobs` shows each job's next and last run, and `cancel_job` takes an id; both see only their agent's jobs. A job belongs to the agent that scheduled it, and its runs are that agent's, with its sandbox and grants. The web view lists them too, with Cancel.
 
 Each job is a durable background task ([Concepts](concepts.md#durability)). At its time it starts a new conversation with the agent settings of the conversation it was made in, so the run doesn't carry that conversation's history and its instruction has to stand alone. It does get the job's last three reports, each cut to 800 characters, and how many runs since had nothing to report, and a watch is told not to report again what those covered unless it has got worse. A report counts once it's delivered. The run has every tool except the job tools, so a job can't create jobs. Its answer goes to Slack as a message of its own (a reply in its thread continues that run's conversation), or as a [notification](surfaces.md#notifications) without Slack, and a "Scheduled" entry in the conversation records it. A failed delivery is retried up to five times. A run due while the server was down happens when it starts, and a repeating job then carries on from the next time after that.
 
@@ -107,7 +124,7 @@ A GET of a public web page or API, returned as text. HTML is reduced to the page
 - No cookies or auth headers are sent. Up to five redirects on the same host are followed. A redirect to another host isn't: the result says where it points, and fetching that is a new call, which asks for a host not allowed for good. A self-written tool's fetch asks for each new host a redirect leads to, and a gate's fails on one not allowed for good.
 - Downloads stop at 2 MB after decompression. A server that stays quiet for 15 seconds is given up on, and so is a fetch that takes more than a minute in all, redirects included. The text is cut to 20,000 characters unless the model asks for more, up to 200,000.
 
-A fetch to a host you haven't allowed for good waits for your [approval](security.md#approvals), unless `web_search` returned that exact URL earlier in the same conversation. Only the URL counts, not others on its host; one with a query or path added still asks, and so does a link read in a page or a snippet. A result's URLs stop counting once compaction summarises it away.
+A fetch to a host you haven't allowed for good waits for your [approval](security.md#approvals), unless `web_search` returned that exact URL earlier in the same conversation. Hosts are allowed for good per agent: "always allow" on one agent's request lets that agent fetch from the host, not the others. Only the URL counts, not others on its host; one with a query or path added still asks, and so does a link read in a page or a snippet. A result's URLs stop counting once compaction summarises it away.
 
 ## web_search
 
@@ -124,7 +141,7 @@ A workspace is another machine where gaidin works on projects as that machine's 
 - `workspace_write` creates or replaces a file.
 - `workspace_edit` replaces each `oldText` with `newText`; each must occur exactly once.
 
-Commands run under bubblewrap on that machine with the project roots writable, secret files hidden, and network on, but without the user's SSH keys or tokens, so `git push` fails and stays with you. Commits made there are authored by gaidin and committed as you. Every call asks first; you can allow a workspace for an hour in one conversation. [Security](security.md#workspaces) has the details and [Deploying](deploy.md#adding-a-workspace) the setup. With no workspaces configured, these tools don't exist.
+Commands run under bubblewrap on that machine with the project roots writable, secret files hidden, and network on, but without the user's SSH keys or tokens, so `git push` fails and stays with you. Commits made there are authored by gaidin and committed as you. An agent can use only the workspaces its roster entry gives it, every one for the default agent and none for a new agent; a call to another is refused. Every call asks first; you can allow a workspace for an hour in one conversation. [Security](security.md#workspaces) has the details and [Deploying](deploy.md#adding-a-workspace) the setup. With no workspaces configured, these tools don't exist.
 
 ## Self-written tools
 
@@ -139,6 +156,8 @@ gaidin can write tools for itself. It drafts an extension in the sandbox, in `ex
 - A second model run that reviews the diff against a short guide: the least code that does the job, nothing nobody asked for, no helper used once, no comment that restates the code, no tool that duplicates another. gaidin fixes what it objects to, or loads anyway with `keep` and its reason, and the owner sees both.
 
 The approval request shows the lines added and removed, with the diff under "all of it" in the web view and up to about 2,600 characters of it in Slack. Once approved, the copy that was checked goes to `<data>/extensions/<name>`, a Git repository the sandbox can't see, and its tools are in use from the next step, with no restart. Editing the draft afterwards changes nothing until it's approved again. `remove_extension(name)` takes the tools away after approval; the repository keeps the history. At start the server loads every approved extension again.
+
+An extension belongs to the agent that loaded it, which drafts it in its own sandbox. Other agents aren't offered its tools, and a call from one is refused, until the owner switches it on for them (`gaidin agent` can't yet; the web view will). Only its agent can update or remove it. Its fetches ask by the calling agent's allowed hosts.
 
 Each extension runs in one Node process under bubblewrap ([Security](security.md#self-written-tools)). A call that takes over a minute is stopped and the process starts again on the next call. Self-written tools can be switched off in the web view, and their results count as outside text. A tool can also be a scheduled job's [gate](#gates). Without bubblewrap there are no self-written tools.
 

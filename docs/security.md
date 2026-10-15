@@ -39,6 +39,17 @@ The draft is copied out of the sandbox through the sandbox's own file operations
 
 A [skill](tools.md#skills) is instructions gaidin follows when a request matches it, so it's trusted as much as the system prompt. Skills come only from the app's `docs/` and from `skills/` in the data directory. The sandbox can't see either. The owner changes local skills from the web view; gaidin's only way to change one is `write_skill` or `remove_skill`, which always ask the owner first and show the lines added and removed, whatever the conversation has read. The built-in skill can't be changed by either. A write goes only to a plain file inside the skill's directory: the path is checked part by part, and nothing on the way may be a link. `read_skill` opens only the files a skill had when the list was last read, each checked again on every read so that one swapped for a link out of the skill is refused. A skill's text isn't outside text, so reading one doesn't make memory writes ask.
 
+## Agents
+
+[Agents](concepts.md#agents) share one server process, so what keeps them apart is the server's rules, which a steered model can't change:
+
+- Each agent's coding tools are confined to its own sandbox, with a lock of its own. Under bubblewrap a command sees only that directory, so no agent's shell can read another's files; the default agent's sandbox doesn't contain the others'. The file tools resolve every path and refuse one outside the agent's sandbox.
+- Work notes, reminders, jobs and past conversations are filtered by the calling conversation's agent, which the server records when it creates the conversation and the model can't name or change.
+- Hosts allowed for good, workspaces and self-written tools are granted per agent. "Always allow" grants the host to the agent that asked. A workspace or self-written tool an agent wasn't given is refused before anyone is asked.
+- `message_agent` and `hand_off` reach only the agents the sender's roster entry lists; anything else is refused. The receiver's conversation starts with a marker the approvals hook treats as outside text, so its note writes and cancels ask, and the answer that comes back is outside text to the sender. Either call asks while outside text is in the sender's context, so a page can't pass work to an agent allowed more than the one that read it. A chain stops at three.
+
+What they share: the shared notes, which reach every agent's prompt; the skills; the spend limits; and the server's own access, such as Slack and the push services. Approval requests name the agent they come from.
+
 ## Network access
 
 The sandbox has none. The server reaches the network for `fetch_url`, the homelab tools, the workspaces, Slack, ntfy, the push services and the model provider. `fetch_url` refuses every private, CGNAT, loopback, link-local and reserved address, checked at connect time and after each redirect ([Tools](tools.md#fetch_url)).
@@ -51,13 +62,14 @@ A URL can carry data out in its path or query, which is why a fetch to a new hos
 
 | Tool | Asks | The second button |
 |---|---|---|
-| `fetch_url` | for a host not allowed for good, unless `web_search` returned the URL in that conversation | always allow that host |
+| `fetch_url` | for a host not allowed for good for the agent, unless `web_search` returned the URL in that conversation | always allow that host, for that agent |
 | `workspace_*` | every call | allow that workspace for an hour, in that conversation only |
 | `schedule_job` | every new job | none |
 | `remember`, `update_memory` | while outside text is in the conversation's context | none |
 | `forget`, `cancel_job`, `cancel_reminder` | while outside text is in the conversation's context, naming the note, job or reminder | none |
+| `message_agent`, `hand_off` | while outside text is in the conversation's context; refused for an agent the roster entry doesn't list | none |
 | `load_extension`, `remove_extension` | every call, from inside the tool; loading shows the diff | none |
-| a self-written tool's fetch | from inside the tool, for a host not allowed for good, a redirect's included | always allow that host |
+| a self-written tool's fetch | from inside the tool, for a host not allowed for good for the calling agent, a redirect's included | always allow that host, for that agent |
 
 A request shows all of what it allows. What doesn't fit its one line goes under "all of it" in the web view, and up to about 2,600 characters of it in Slack, which says where it's cut: a long command or job instruction in full, the content a workspace write puts in a file, each edit's old and new text, and a self-written extension's diff. A note is shown as it will be stored, with its spaces collapsed. A request waits up to `approvals.waitHours` (7 days by default); the run is stored meanwhile and costs nothing. Deny, no answer in time, Stop, or a new message from the owner in that conversation blocks the call, and the model is told which. A new message closes the request as skipped, so the owner never has to answer an old request before saying something else. The request id comes from a memo on the tool task, so after a restart the same call waits on the same request without asking again. Only the configured Slack user's presses in the configured channel count, and the web view only answers its configured login. Requests, always-allowed hosts and hour grants are stored in a session document and survive restarts.
 
@@ -65,7 +77,7 @@ Before the guard is asked, the hook checks whether the call can succeed at all, 
 
 Each request's outcome (allowed once or always, denied, answered, no answer in time, stopped, skipped) and where it was given is also written into its conversation as an entry the model doesn't see. The web view's `/timeline` lists these outcomes with the tool calls, job reports and reminders around them, from the transcript index ([Tools](tools.md#past-conversations)), so the record outlives the request, which is dropped a week after it's decided. The timeline leaves out the sandbox's coding tools and the tools that only read gaidin's own state.
 
-A guard can also see which tools that return outside text (those whose guards say `outside`: `fetch_url`, `web_search`, `container_logs`, `workspace_read`, `workspace_run`, every self-written tool, and `search_history` and `read_history`, whose past answers can repeat any of those) have results in the conversation's context, and, in a job run a [gate](tools.md#gates) woke, what the gate found; the memory tools and the cancel tools use that. A built-in tool counts even when it's switched off or not set up, since its past results can still be in the context. It's the whole context, not just the current run: text the model has read can steer it for as long as it's there, whatever the owner says in between. If the context can't be read, that counts as outside text too. A tool that changes anything outside the sandbox should have a guard ([Extending](extending.md#tools-that-reach-outside)).
+A guard can also see which tools that return outside text (those whose guards say `outside`: `fetch_url`, `web_search`, `container_logs`, `workspace_read`, `workspace_run`, every self-written tool, `search_history` and `read_history`, whose past answers can repeat any of those, and `message_agent`, whose answer is another agent's) have results in the conversation's context, whether another agent started the conversation, and, in a job run a [gate](tools.md#gates) woke, what the gate found; the memory, cancel and messaging tools use that. A built-in tool counts even when it's switched off or not set up, since its past results can still be in the context. It's the whole context, not just the current run: text the model has read can steer it for as long as it's there, whatever the owner says in between. If the context can't be read, that counts as outside text too. A tool that changes anything outside the sandbox should have a guard ([Extending](extending.md#tools-that-reach-outside)).
 
 ## Workspaces
 
@@ -101,6 +113,9 @@ The web view trusts the identity header Tailscale Serve adds, and listens only o
 - Alert text comes from monitoring systems, and the run that investigates it has only read-only tools, so it can't write notes, set reminders or jobs, use a workspace or load tools. Its `fetch_url` calls still ask for a new host. Whoever can post to the alert topic can start investigations, each a model run, and shape what the report says, so on ntfy.sh the topic should need a token (`alerts.token`); the settings warn when it doesn't. The same goes for reading the reminder topic, which carries reminders and job reports.
 - An approved job runs its instruction later with the tools of an ordinary run. Its own calls to workspaces or new hosts still ask, but the instruction itself isn't checked again.
 - A job's runs see its last three reports, which can repeat text an earlier run read from outside. They're labelled as gaidin's own earlier answers, not instructions.
+- Agents are kept apart by the server's rules, not by separate processes or users: a flaw in those rules, or `GAIDIN_SANDBOX=none`, which runs every agent's commands unconfined, would let one reach another's files.
+- A shared note reaches every agent's prompt. One written after compaction has summarised outside text away doesn't ask, as with any note, and then reaches all of them.
+- An agent that may message another can ask it for anything that agent's tools do without asking, such as fetching from a host allowed for that agent alone, as long as no outside text is in the asker's context.
 
 ## Rules
 

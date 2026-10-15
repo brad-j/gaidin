@@ -298,3 +298,46 @@ test("a self-written tool is a gate, and its fetches reach only hosts allowed fo
 	await until(async () => (await job(redirected)).failures === 1);
 	await cancel(redirected);
 });
+
+test("an extension is the agent's that loaded it: the others don't get its tools until the owner switches them on", { skip, timeout: 120_000 }, async (t) => {
+	const say = (text: string): Step => () => fauxAssistantMessage(fauxText(text));
+	const steps = [
+		call("load_extension", { name: "kit" }), say("Loaded."),
+		call("add_numbers", { a: 2, b: 3 }), say("Added."),
+		call("add_numbers", { a: 1, b: 1 }), say("Tried."),
+		call("remove_extension", { name: "kit" }), say("Tried."),
+		call("add_numbers", { a: 4, b: 4 }), say("Added."),
+	];
+	const { host, dir } = await start(t, steps);
+	host.approvals.onChange((request) => void (request.status === "pending" && host.approvals.decide(request.id, "once", "test")));
+	await host.agents.add({ id: "scout", name: "Scout", job: "" });
+	const scout = await host.agents.home("scout");
+	// The draft is in scout's own sandbox.
+	const at = join(dir, "agents", "scout", "sandbox", "extensions", "kit");
+	mkdirSync(at, { recursive: true });
+	writeFileSync(join(at, "index.ts"), INDEX);
+	writeFileSync(join(at, "test.ts"), TEST);
+	const results = async (conversation: typeof scout) =>
+		(await conversation.context(context)).messages.flatMap((m) => (m.role === "toolResult" ? [m.content.map((c) => (c.type === "text" ? c.text : "")).join("")] : []));
+	const run = async (conversation: typeof scout, content: string) => (await (await conversation.submit({ type: "input", content }, context)).wait(context));
+	const offered = async (conversation: typeof scout) => (await conversation.agent(context)).tools.map((tool) => tool.name);
+
+	await run(scout, "load kit");
+	assert.match((await results(scout))[0]!, /Loaded kit/);
+	await run(scout, "add");
+	assert.equal((await results(scout))[1], "5");
+	assert.ok((await offered(scout)).includes("add_numbers"));
+
+	// gaidin isn't offered it, so a call is refused, and it can't remove scout's extension.
+	assert.ok(!(await offered(host.root)).includes("add_numbers"));
+	await run(host.root, "add");
+	assert.match((await results(host.root))[0]!, /add_numbers is not available/);
+	await run(host.root, "remove kit");
+	assert.match((await results(host.root))[1]!, /The extension kit is the agent scout's/);
+
+	// Switched on for gaidin by the owner, it's offered and works there.
+	await host.agents.update("gaidin", { extensions: ["kit"] });
+	assert.ok((await offered(host.root)).includes("add_numbers"));
+	await run(host.root, "add");
+	assert.equal((await results(host.root))[2], "8");
+});

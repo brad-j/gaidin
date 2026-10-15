@@ -11,7 +11,7 @@ import { applyEvent, newTranscript } from "./transcript.ts";
 type Listing = Gets["/api/conversations"];
 type Summary = Listing["items"][number];
 
-const PLACES = { thread: "Slack thread", job: "job run" } as const;
+const PLACES = { thread: "Slack thread", job: "job run", agent: "from another agent" } as const;
 
 let root: HTMLElement | undefined;
 let items: Summary[] = [];

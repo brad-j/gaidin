@@ -10,7 +10,7 @@
 //   go in the sandbox's .tmp so the model can still read them.
 //
 // A shell command could swap a directory for a symlink between a file tool's check and its use. Shell
-// commands share one lock and file operations take it alone, and nothing in the sandbox outlives its
+// commands in a sandbox share its lock and file operations take it alone, and nothing in the sandbox outlives its
 // command, so nothing can change the sandbox in that gap. The server also writes into two directories
 // while commands run, a long command's full output and files sent in Slack; commands see those read-only,
 // so none can swap one for a symlink that carries the server's writes outside. Redaction (redact.ts)
@@ -131,10 +131,16 @@ class SandboxLock {
 	}
 }
 
-/** One per process: environments are made per tool call, and every conversation shares the sandbox. */
-const lock = new SandboxLock();
+/** One per sandbox: environments are made per tool call, and every conversation of an agent shares its sandbox. */
+const locks = new Map<string, SandboxLock>();
 
-function inside(path: string, root: string): boolean {
+function lockFor(root: string): SandboxLock {
+	let lock = locks.get(root);
+	if (lock === undefined) locks.set(root, (lock = new SandboxLock()));
+	return lock;
+}
+
+export function inside(path: string, root: string): boolean {
 	return path === root || path.startsWith(root + sep);
 }
 
@@ -143,6 +149,7 @@ type FileResult<T> = Promise<Result<T, FileError>>;
 export class SandboxEnv extends RedactingEnv {
 	/** The sandbox directory, with symlinks resolved. */
 	readonly root: string;
+	readonly #lock: SandboxLock;
 	readonly #bwrap: string | undefined;
 	readonly #hide: readonly string[];
 
@@ -153,6 +160,7 @@ export class SandboxEnv extends RedactingEnv {
 		if (!inside(cwd, root)) throw new Error(`The working directory ${options.cwd} is outside the sandbox ${root}`);
 		super({ cwd, redactor: options.redactor });
 		this.root = root;
+		this.#lock = lockFor(root);
 		this.#bwrap = options.bwrap;
 		this.#hide = options.hide ?? [];
 	}
@@ -180,14 +188,14 @@ export class SandboxEnv extends RedactingEnv {
 	}
 
 	#at<T>(path: string, context: Context, run: (real: string) => FileResult<T>): FileResult<T> {
-		return lock.run(true, async () => {
+		return this.#lock.run(true, async () => {
 			const real = await this.#confine(path, context);
 			return real.ok ? run(real.value) : real;
 		});
 	}
 
 	override async exec(command: string | readonly string[], options: ShellExecOptions | undefined, context: Context): ReturnType<RedactingEnv["exec"]> {
-		return lock.run(false, async () => {
+		return this.#lock.run(false, async () => {
 			const cwd = await this.#confine(options?.cwd ?? this.cwd, context);
 			if (!cwd.ok) return err(new ExecutionError("spawn_error", cwd.error.message));
 			if (this.#bwrap === undefined) return super.exec(command, { ...options, cwd: cwd.value }, context);
@@ -236,7 +244,7 @@ export class SandboxEnv extends RedactingEnv {
 		return this.#at(path, context, (p) => super.flushFile(p, context));
 	}
 	override renameFile(source: string, destination: string, context: Context) {
-		return lock.run(true, async () => {
+		return this.#lock.run(true, async () => {
 			const from = await this.#confine(source, context);
 			if (!from.ok) return from;
 			const to = await this.#confine(destination, context);
@@ -265,7 +273,7 @@ export class SandboxEnv extends RedactingEnv {
 		return this.#at(path, context, (p) => super.remove(p, options, context));
 	}
 	override watch(targets: readonly WatchTarget[], onChange: (change: WatchChange) => void, context: Context) {
-		return lock.run(true, async () => {
+		return this.#lock.run(true, async () => {
 			const confined: WatchTarget[] = [];
 			for (const target of targets) {
 				const real = await this.#confine(target.path, context);

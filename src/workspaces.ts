@@ -12,8 +12,9 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
-import { defineExtension, defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
-import { type Ask, clip, guard, type Guard, type Situation, whole } from "./guards.ts";
+import type { Context } from "@earendil-works/chord";
+import { defineExtension, defineTool, type DocumentReader, type ToolRegistration } from "@earendil-works/pi-durable";
+import { type Ask, clip, guard, type Guard, type Situation, type Where, whole } from "./guards.ts";
 import { array, boolean, integer, object, optional, ParseError, type Parser, parseJson, string } from "./parse.ts";
 import { type Redactor, redactingStream } from "./redact.ts";
 
@@ -116,10 +117,17 @@ function editsDetail(edits: readonly { oldText: string; newText: string }[]): st
 
 /**
  * Every workspace call asks, showing all of what it allows, unless the owner allowed that workspace for an hour in this
- * conversation. A workspace taken out of the settings isn't put to the owner. Reads and runs return text from outside.
+ * conversation. A workspace taken out of the settings, or one the calling agent wasn't given, isn't put to the owner.
+ * Reads and runs return text from outside.
  */
 function workspaceGuards(names: readonly string[]): Guard[] {
-	const refuse = (a: { workspace: string }) => (names.includes(a.workspace) ? undefined : `No workspace ${a.workspace}; one of ${names.join(", ")}`);
+	const refuse = (a: { workspace: string }, _read: DocumentReader, _context: Context, where: Where) => {
+		const given = where.agent.workspaces;
+		const usable = given === undefined ? names : names.filter((n) => given.includes(n));
+		if (usable.includes(a.workspace)) return undefined;
+		if (names.includes(a.workspace)) return `${where.agent.name} hasn't been given the workspace ${a.workspace}; ${usable.length === 0 ? "it has none" : `it has ${usable.join(", ")}`}.`;
+		return `No workspace ${a.workspace}; one of ${usable.join(", ") || "none"}`;
+	};
 	const unlessAllowed = (a: { workspace: string }, situation: Situation, ask: Ask): Ask | undefined => {
 		const now = Date.now();
 		if (situation.grants.some((g) => g.workspace === a.workspace && g.conversationId === situation.conversationId && g.until > now)) return undefined;
@@ -233,6 +241,7 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 	const tools: ToolRegistration[] = workspaces.length === 0 || remote === undefined ? [] : [run, read, write, edit];
 	return {
 		tools,
+		names,
 		// With or without the tools: a workspace's past reads still count as outside text.
 		guards: workspaceGuards(names),
 		extension: defineExtension({

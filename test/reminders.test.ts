@@ -7,6 +7,7 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import type { Conversation } from "@earendil-works/pi-durable";
 import { context, startHost } from "../src/host.ts";
+import { defaultEntry } from "../src/agents.ts";
 import type { Situation } from "../src/guards.ts";
 import { createReminders, ReminderFired, type Reminder, Reminders } from "../src/reminders.ts";
 import type { Adapters } from "../src/notifications.ts";
@@ -149,7 +150,7 @@ test("cancelling a reminder asks while outside text is in the conversation, and 
 	const guard = createReminders(async () => {}, "Brad").guards.find((g) => g.tool === "cancel_reminder")!;
 	const reminders = { items: [{ taskId: 9, text: "stretch", at: 0 }] };
 	const ask = (id: number, read: string[]) => {
-		const situation: Situation = { fetchHosts: [], grants: [], conversationId: 1, outside: async () => read, searched: async () => [], snapshot: async (doc: object) => (doc === Reminders ? reminders : undefined) as never };
+		const situation: Situation = { fetchHosts: [], grants: [], conversationId: 1, agent: defaultEntry(), outside: async () => read, searched: async () => [], snapshot: async (doc: object) => (doc === Reminders ? reminders : undefined) as never };
 		return guard.ask({ id }, situation);
 	};
 	assert.equal(await ask(9, []), undefined);

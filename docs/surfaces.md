@@ -1,18 +1,29 @@
 # Surfaces
 
-All three surfaces talk to the same root conversation ([Concepts](concepts.md)). Slack and the web view are optional; each starts only when its settings are present.
+All three surfaces talk to the same root conversation ([Concepts](concepts.md)), the default agent's. The command line can talk to the other [agents](concepts.md#agents) too. Slack and the web view are optional; each starts only when its settings are present.
 
 ## Command line
 
-`gaidin ask` and `gaidin watch` (`src/cli.ts`) talk to the server over the Unix socket in the data directory, so it has to run on the same machine, as a user who can open the socket.
+`gaidin ask`, `gaidin watch` and `gaidin agent` (`src/cli.ts`) talk to the server over the Unix socket in the data directory, so it has to run on the same machine, as a user who can open the socket.
 
 ```sh
 gaidin ask "what's on my list?"
 gaidin ask --id oven-1 "..."    # rerunning the same id reattaches instead of asking twice
 gaidin watch                    # follow everything until Ctrl+C
+gaidin ask --agent scout "..."  # another agent's home conversation; watch takes --agent too
 ```
 
 On the VM, `setup.sh`'s `gaidin` command runs as the service's user. `gaidin ask` prints the request id it used, so you can reattach if the connection drops.
+
+`gaidin agent` lists and changes the [agents](concepts.md#agents) until the web view can:
+
+```sh
+gaidin agent list
+gaidin agent add scout --name Scout --job "Finds things out and reports back"
+gaidin agent set scout --workspaces egwene          # the workspaces it may use
+gaidin agent set gaidin --can-message scout         # the agents it may message and hand work to
+gaidin agent set scout --name Seeker --job "..."    # an id can't change; an empty list clears one
+```
 
 ## Slack
 

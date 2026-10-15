@@ -8,6 +8,7 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { context, startHost } from "../src/host.ts";
 import { findBwrap } from "../src/sandbox.ts";
+import { defaultEntry } from "../src/agents.ts";
 import type { Situation } from "../src/guards.ts";
 import { redactorFor } from "../src/redact.ts";
 import { createWorkspaces, readWorkspaces, type Remote } from "../src/workspaces.ts";
@@ -219,11 +220,11 @@ test("without workspaces there are no workspace tools", async (t) => {
 /** The guards of a workspace egwene, and what the approvals hook would give them. */
 function guarded(situation: Partial<Situation> = {}) {
 	const { guards } = createWorkspaces({ workspaces: [{ name: "egwene", target: "me@egwene" }], remote: undefined, redactor: redactorFor({}), owner: "Brad" });
-	const full: Situation = { fetchHosts: [], grants: [], conversationId: 1, outside: async () => [], searched: async () => [], snapshot: async () => undefined, ...situation };
+	const full: Situation = { fetchHosts: [], grants: [], conversationId: 1, outside: async () => [], searched: async () => [], snapshot: async () => undefined, ...situation, agent: situation.agent ?? defaultEntry() };
 	const guard = (name: string) => guards.find((g) => g.tool === name)!;
 	return {
 		ask: (name: string, args: Record<string, any>) => guard(name).ask(args, full),
-		refuse: (name: string, args: Record<string, any>) => guard(name).refuse(args, { snapshot: async () => undefined } as never, context),
+		refuse: (name: string, args: Record<string, any>) => guard(name).refuse(args, { snapshot: async () => undefined } as never, context, { conversationId: 1, agent: full.agent, roster: { agents: [], owners: {} } }),
 		outside: guards.filter((g) => g.outside).map((g) => g.tool),
 	};
 }

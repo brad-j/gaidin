@@ -6,7 +6,7 @@
 
 | File | Extension |
 |---|---|
-| `host.ts` | the persona prompt |
+| `agents.ts` | the agent's prompt (its name, job and the agents it can reach), `message_agent` and `hand_off`; also the roster and which agent each conversation belongs to |
 | Pi Durable's `CodingTools` | `read`, `write`, `edit`, `bash` |
 | `reminders.ts` | reminders and their background task |
 | `fetch.ts` | `fetch_url` |
@@ -23,6 +23,8 @@ The surfaces are separate: `server.ts` wires the socket, Slack and the web view 
 Everything gaidin tells the owner unprompted, a fired reminder, a job's report, a paused job, a budget warning or a request for approval, is a notice handed to `notifications.ts`, which holds the table of which ways each kind goes: Slack, Web Push (`push.ts`) and ntfy (`ntfy.ts`), one adapter each. A new kind of notice is a case there and in each adapter. Tests give `openHost` fake adapters with the `adapters` option, and `startHost` opens and starts a host for callers with no Slack to attach first.
 
 Input from outside the process, such as a request body, a button's value, a service's JSON answer, a line from a self-written tool's box or the settings file, goes through `parse.ts` where it comes in: small parsers like `object({ id: integer, text: optional(string) })` that throw a `ParseError` saying what's wrong and where. It's the one module the lint rules let look at values of unknown shape; elsewhere a type assertion needs a `SAFETY:` comment saying why it holds. `ids.ts` turns the numbers gaidin stores back into Pi Durable's ids.
+
+A tool that keeps anything per agent finds the calling agent with `agentIdOf(api, api.conversationId, context)` from `agents.ts`, and a guard gets it as `situation.agent` when asking and `where.agent` when refusing. A record without an agent is the default agent's, so records written before agents existed still count.
 
 ## Adding a tool
 

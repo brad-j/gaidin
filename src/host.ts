@@ -1,12 +1,13 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels, type Models } from "@earendil-works/pi-ai/models";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { AssistantEntry, createRegistry, defineEntry, defineExtension, type EntryRecord, Harness, type ModelRef, section } from "@earendil-works/pi-durable";
+import { AssistantEntry, type Conversation, createRegistry, defineEntry, defineExtension, type EntryRecord, Harness, type ModelRef } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { agentIdOf, createAgents, createRoster, sandboxOf } from "./agents.ts";
 import { ApprovalService, approvalExtension } from "./approvals.ts";
 import { createBudget } from "./budget.ts";
 import { type Config, configFor, secretsOf, SETTINGS_DIR } from "./config.ts";
@@ -20,11 +21,11 @@ import { ntfyAdapter } from "./ntfy.ts";
 import { createPush, loadPushKeys, type Push, pushAdapter } from "./push.ts";
 import { type Redactor, redactionExtension, redactorFor } from "./redact.ts";
 import { createReminders } from "./reminders.ts";
-import { findBwrap, prepareServerDirs, SandboxEnv } from "./sandbox.ts";
+import { findBwrap, inside, prepareServerDirs, SandboxEnv } from "./sandbox.ts";
 import { backendFor, type SearchBackend, searchGuards, webSearchTool } from "./search.ts";
 import { createSelf } from "./self/index.ts";
 import { createSkills } from "./skills.ts";
-import { setTimeZone, timeZone } from "./time.ts";
+import { setTimeZone } from "./time.ts";
 import { createWorkspaces, readWorkspaces, type Remote, sshRemote, type Workspace } from "./workspaces.ts";
 
 export const context = BACKGROUND_CONTEXT;
@@ -63,29 +64,6 @@ function modelFor(config: Config): Chosen {
 	});
 	models.setProvider(anthropicProvider());
 	return { models, model: { provider: "anthropic", modelId: config.model.id } };
-}
-
-function persona(owner: string) {
-	return defineExtension({
-		name: "persona",
-		sections: [
-			section(
-				"preamble",
-				() =>
-					`You are gaidin, ${owner}'s personal agent. Be brief and direct. ` +
-					`Each of ${owner}'s messages starts with the local time in brackets, in the ${timeZone()} time zone. ` +
-					`Use the reminder tools for anything ${owner} wants to be reminded of, and read back the time the tool reports. ` +
-					`Use schedule_job for work to do later or on a schedule: briefings, regular checks, and watches. ` +
-					`When you tell ${owner} you'll check on something later, schedule it, so it happens. ` +
-					`When you need a decision only ${owner} can make, ask with ask_owner and wait for the answer rather than guessing. ` +
-					`Before saying you don't know something ${owner} may have told you, search past conversations with search_history. ` +
-					`When ${owner} asks for the same kind of thing again and load_extension is available, offer to write a tool for it, and write it only once ${owner} says yes. ` +
-					"The bash tool runs in a sandbox with no network: curl, package installs and git clone fail there. " +
-					"Reach the internet with fetch_url, and web_search when it's available. If a tool fails, say what failed rather than guessing a cause.",
-				{ tag: false },
-			),
-		],
-	});
 }
 
 /**
@@ -184,7 +162,9 @@ export async function openHost(options: HostOptions = {}) {
 	const hide = config.file === undefined ? [SETTINGS_DIR] : [config.file, SETTINGS_DIR];
 
 	const registry = createRegistry();
-	registry.install(persona(owner));
+	// The agents' prompt comes first. A hand-off is a job, made once the jobs exist below.
+	const agents = createAgents({ owner, handOff: (tx, id, work) => jobs.handOff(tx, id, work), handOffProblem: (read, ctx) => jobs.handOffProblem(read, ctx) });
+	registry.install(agents.extension);
 	registry.install(CodingTools);
 	registry.install(reminders.extension);
 	const memory = createMemory(owner);
@@ -221,7 +201,7 @@ export async function openHost(options: HostOptions = {}) {
 	// The service needs the Harness, which needs the registry; the hook reads it once calls start.
 	let approvals: ApprovalService | undefined;
 	// Each tool's approval rules, from the module that owns it; read per call, since self-written tools come and go.
-	const guards = [...memory.guards, ...reminders.guards, ...jobs.guards, ...homelabGuards, ...web.guards, ...searchGuards, ...workspaces.guards, ...history.guards, ...skills.guards];
+	const guards = [...agents.guards, ...memory.guards, ...reminders.guards, ...jobs.guards, ...homelabGuards, ...web.guards, ...searchGuards, ...workspaces.guards, ...history.guards, ...skills.guards];
 	registry.install(approvalExtension(() => approvals!, owner, () => [...guards, ...(self?.guards() ?? [])]));
 	// Last, so its afterTool sees what every other hook left.
 	registry.install(budget.extension);
@@ -234,7 +214,16 @@ export async function openHost(options: HostOptions = {}) {
 			models,
 			registry,
 			settings: { compaction: COMPACTION },
-			env: ({ cwd }) => new SandboxEnv({ root: sandbox, cwd: cwd ?? sandbox, redactor, bwrap, hide }),
+			// Each agent's tools are confined to its own sandbox; a working directory outside it starts at its top.
+			env: async ({ cwd, conversationId, read }) => {
+				const root = sandboxOf(dir, await agentIdOf(read, conversationId, context));
+				if (!existsSync(root)) {
+					mkdirSync(root, { recursive: true });
+					await prepareServerDirs(root);
+				}
+				const within = cwd !== undefined && existsSync(cwd) && inside(realpathSync(cwd), realpathSync(root));
+				return new SandboxEnv({ root, cwd: within ? cwd : root, redactor, bwrap, hide });
+			},
 			onReport: (error) => console.error("[report]", error),
 		},
 		context,
@@ -245,6 +234,14 @@ export async function openHost(options: HostOptions = {}) {
 	// Requests and questions wait on the owner, so the owner hears of each, and of how it ended.
 	approvals.onChange((request) => tell({ kind: "request", request }));
 	const root = await harness.root(context, { agent: { model, cwd: sandbox } });
+	const roster = createRoster({
+		harness,
+		root,
+		dataDir: dir,
+		workspaces: () => workspaces.names,
+		selfTools: () => self?.extensions() ?? [],
+	});
+	await roster.start();
 
 	/** Starts the tasks, with `slack` among the ways to reach the owner when the server has it. */
 	async function start(slack?: Adapter) {
@@ -258,15 +255,18 @@ export async function openHost(options: HostOptions = {}) {
 		harness.resume();
 	}
 
-	/** Stops the root conversation's run. Returns whether there was one; if so, a note tells the model the owner withdrew its request. */
-	async function stop(): Promise<boolean> {
+	/**
+	 * Stops a run in `conversation`, the root unless given, such as another agent's home. Returns whether there was one;
+	 * if so, a note tells the model the owner withdrew its request.
+	 */
+	async function stop(conversation: Conversation = root): Promise<boolean> {
 		// Stopping marks each task it aborts, so a newer marked task means something was running.
-		const lastStopped = () => root.commit(async (tx) => (await tx.scanTasks({ conversationId: root.id, abortRequested: true, order: "descending" }, 1)).items[0]?.id, context);
+		const lastStopped = () => conversation.commit(async (tx) => (await tx.scanTasks({ conversationId: conversation.id, abortRequested: true, order: "descending" }, 1)).items[0]?.id, context);
 		const before = await lastStopped();
-		await root.abort(context);
+		await conversation.abort(context);
 		if ((await lastStopped()) === before) return false;
 		const note = `[${owner} stopped the run above. Treat the request it was working on as withdrawn: don't continue or redo it unless ${owner} asks again.]`;
-		await root.commit((tx) => tx.appendEntry(RunStopped, root.id, { model: [{ role: "user", content: note, timestamp: Date.now() }] }), context);
+		await conversation.commit((tx) => tx.appendEntry(RunStopped, conversation.id, { model: [{ role: "user", content: note, timestamp: Date.now() }] }), context);
 		return true;
 	}
 
@@ -274,7 +274,7 @@ export async function openHost(options: HostOptions = {}) {
 	// and the self-written ones.
 	const builtIn = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...history.tools, ...workspaces.tools];
 	const switchable = () => [...builtIn, ...(self?.tools() ?? [])];
-	return { harness, root, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation }, skills, sandbox, push, start, stop };
+	return { harness, root, agents: roster, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation }, skills, sandbox, push, start, stop };
 }
 
 export type Host = Awaited<ReturnType<typeof openHost>>;

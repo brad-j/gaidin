@@ -1,7 +1,8 @@
 #!/usr/bin/env -S node --no-warnings
 // The gaidin command.
 import { parseArgs } from "node:util";
-import { ask, watch } from "./cli.ts";
+import type { AgentChange } from "./agents.ts";
+import { agents, ask, watch } from "./cli.ts";
 import { loadConfig, maskedConfig } from "./config.ts";
 import { printChecks, runChecks } from "./doctor.ts";
 import { serve } from "./server.ts";
@@ -9,8 +10,15 @@ import { serve } from "./server.ts";
 const USAGE = `usage: gaidin [--config FILE] COMMAND
 
   serve                     run the agent and its surfaces
-  ask [--id ID] "MESSAGE"   send a message and print the run; the same --id reattaches
-  watch                     print everything the agent does, until Ctrl+C
+  ask [--id ID] [--agent ID] "MESSAGE"
+                            send a message and print the run; the same --id reattaches
+  watch [--agent ID]        print everything the agent does, until Ctrl+C
+  agent list                list the agents
+  agent add ID --name NAME [--job TEXT]
+                            add an agent
+  agent set ID [--name NAME] [--job TEXT] [--channel SLACK_ID]
+               [--can-message ID,ID] [--workspaces NAME,NAME]
+                            change an agent; an empty list clears it
   doctor [--push]           check the settings and everything the server needs
   config                    print the settings in use, secrets shortened
 
@@ -21,6 +29,12 @@ const { values, positionals } = parseArgs({
 	options: {
 		config: { type: "string" },
 		id: { type: "string" },
+		agent: { type: "string" },
+		name: { type: "string" },
+		job: { type: "string" },
+		channel: { type: "string" },
+		"can-message": { type: "string" },
+		workspaces: { type: "string" },
 		push: { type: "boolean" },
 		help: { type: "boolean", short: "h" },
 	},
@@ -46,11 +60,30 @@ switch (command) {
 		break;
 	case "ask": {
 		const prompt = rest.join(" ");
-		if (prompt === "") fail(['usage: gaidin ask [--id ID] "MESSAGE"']);
-		process.exit(await ask(loaded.config, prompt, values.id));
+		if (prompt === "") fail(['usage: gaidin ask [--id ID] [--agent ID] "MESSAGE"']);
+		process.exit(await ask(loaded.config, prompt, values.id, values.agent));
 	}
 	case "watch":
-		process.exit(await watch(loaded.config));
+		process.exit(await watch(loaded.config, values.agent));
+	case "agent": {
+		const [action = "list", id] = rest;
+		const list = (text: string | undefined) => (text === undefined ? undefined : text.split(",").map((s) => s.trim()).filter((s) => s !== ""));
+		if (action === "list") process.exit(await agents(loaded.config, { type: "agent", action: "list" }));
+		if (id === undefined || (action !== "add" && action !== "set")) fail(["usage: gaidin agent list | add ID --name NAME [--job TEXT] | set ID [options]", "", USAGE]);
+		if (action === "add") {
+			if (values.name === undefined) fail(["usage: gaidin agent add ID --name NAME [--job TEXT]"]);
+			process.exit(await agents(loaded.config, { type: "agent", action: "add", id: id!, name: values.name!, job: values.job ?? "" }));
+		}
+		const change: AgentChange = {};
+		if (values.name !== undefined) change.name = values.name;
+		if (values.job !== undefined) change.job = values.job;
+		if (values.channel !== undefined) change.channel = values.channel;
+		const canMessage = list(values["can-message"]);
+		if (canMessage !== undefined) change.canMessage = canMessage;
+		const workspaces = list(values.workspaces);
+		if (workspaces !== undefined) change.workspaces = workspaces;
+		process.exit(await agents(loaded.config, { type: "agent", action: "set", id: id!, change }));
+	}
 	case "doctor":
 		process.exit(printChecks(await runChecks(loaded, { push: values.push === true })));
 	case "config":

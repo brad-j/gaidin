@@ -13,6 +13,7 @@ It can:
 - run commands and edit files in a sandbox on its own machine
 - work on projects on your other machines (workspaces), asking before each action
 - check on a homelab and read its container logs (an extension written for the original deployment)
+- run several named agents, each with its own job, notes, sandbox and grants, that ask each other things and hand work on
 
 Each message you post in the Slack channel starts a thread, answered there, with gaidin's settings and memory but not the main conversation's history.
 
@@ -34,7 +35,7 @@ pnpm check                                   # type check, lint and tests
 
 ## Documentation
 
-- [Concepts](docs/concepts.md): the durable conversation, Slack threads, and what survives a restart
+- [Concepts](docs/concepts.md): the durable conversation, Slack threads, agents, and what survives a restart
 - [Surfaces](docs/surfaces.md): the CLI, Slack and the web view, and how to set them up
 - [Tools](docs/tools.md): every tool, what it can reach, and what asks first
 - [Security](docs/security.md): the sandbox, redaction, approvals, and the known gaps

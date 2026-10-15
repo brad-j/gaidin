@@ -2,38 +2,82 @@
 // data directory, one JSON object per line. With Slack in the settings it also runs Slack (src/slack/),
 // and with `web` the web view (src/web.ts).
 //
-// client → server: {"type":"ask","content":"...","requestId":"..."} or {"type":"watch"}
-// server → client: {"type":"line","text":"..."} and, after an ask settles, {"type":"done","status":"..."}
+// client → server: {"type":"ask","content":"...","requestId":"...","agent":"..."}, {"type":"watch","agent":"..."}, or
+//                  {"type":"agent","action":"list"|"add"|"set",...} to see and change the roster (agents.ts)
+// server → client: {"type":"line","text":"..."} and, after an ask settles or an agent command ends, {"type":"done","status":"..."}
+// Without "agent", an ask or a watch goes to the default agent's conversation, the root.
 import { randomUUID } from "node:crypto";
 import { chmodSync, rmSync } from "node:fs";
 import { connect, createServer, type Socket } from "node:net";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { type AgentEvent, type EntryId, watchEvents } from "@earendil-works/pi-durable";
+import type { AgentChange, AgentEntry } from "./agents.ts";
 import type { Config } from "./config.ts";
 import { assistantText, context, openHost } from "./host.ts";
 import { ReminderFired } from "./reminders.ts";
 import { followAlerts } from "./alerts.ts";
 import { createSlack } from "./slack/index.ts";
-import { literal, object, optional, ParseError, parseJson, string } from "./parse.ts";
+import { array, literal, object, optional, ParseError, parseJson, string } from "./parse.ts";
 import { stamp } from "./time.ts";
 import { createWebServer } from "./web.ts";
 
 export const socketPathFor = (config: Config) => resolve(config.dataDir, "gaidin.sock");
 
-/** What a client sends: one request per connection. */
-export type ClientMessage = { type: "ask"; content: string; requestId?: string } | { type: "watch" };
+/** What a client sends: one request per connection. `agent` picks whose conversation; without it, the default agent's. */
+export type ClientMessage =
+	| { type: "ask"; content: string; requestId?: string; agent?: string }
+	| { type: "watch"; agent?: string }
+	| { type: "agent"; action: "list" }
+	| { type: "agent"; action: "add"; id: string; name: string; job: string }
+	| { type: "agent"; action: "set"; id: string; change: AgentChange };
 /** What the server sends back. */
 export type ServerMessage = { type: "line"; text: string } | { type: "done"; status: string };
 
-const clientMessage = object({ type: literal("ask", "watch"), content: optional(string), requestId: optional(string) });
+const clientMessage = object({
+	type: literal("ask", "watch", "agent"),
+	content: optional(string),
+	requestId: optional(string),
+	agent: optional(string),
+	action: optional(literal("list", "add", "set")),
+	id: optional(string),
+	name: optional(string),
+	job: optional(string),
+	change: optional(object({ name: optional(string), job: optional(string), channel: optional(string), canMessage: optional(array(string)), workspaces: optional(array(string)) })),
+});
 const serverMessage = object({ type: literal("line", "done"), text: optional(string), status: optional(string) });
 
 export function parseClientMessage(line: string): ClientMessage {
 	const message = parseJson(line, clientMessage, "the request");
-	if (message.type === "watch") return { type: "watch" };
+	if (message.type === "watch") {
+		const watch: ClientMessage = { type: "watch" };
+		if (message.agent !== undefined) watch.agent = message.agent;
+		return watch;
+	}
+	if (message.type === "agent") {
+		if (message.action === "list" || message.action === undefined) return { type: "agent", action: "list" };
+		if (message.id === undefined) throw new ParseError(`an agent ${message.action} needs an id`);
+		if (message.action === "set") return { type: "agent", action: "set", id: message.id, change: message.change ?? {} };
+		if (message.name === undefined) throw new ParseError("a new agent needs a name");
+		return { type: "agent", action: "add", id: message.id, name: message.name, job: message.job ?? "" };
+	}
 	if (message.content === undefined) throw new ParseError("an ask needs content");
-	return message.requestId === undefined ? { type: "ask", content: message.content } : { type: "ask", content: message.content, requestId: message.requestId };
+	const ask: ClientMessage = { type: "ask", content: message.content };
+	if (message.requestId !== undefined) ask.requestId = message.requestId;
+	if (message.agent !== undefined) ask.agent = message.agent;
+	return ask;
+}
+
+/** One line about an agent, for `gaidin agent list`. */
+export function describeAgent(agent: AgentEntry): string {
+	const parts = [
+		agent.job || "no job given",
+		agent.channel === undefined ? undefined : `Slack ${agent.channel}`,
+		`may message: ${agent.canMessage.join(", ") || "none"}`,
+		`workspaces: ${agent.workspaces === undefined ? "all" : agent.workspaces.join(", ") || "none"}`,
+		agent.archived === undefined ? undefined : "archived",
+	];
+	return `${agent.id} (${agent.name}): ${parts.filter((p) => p !== undefined).join(" · ")}`;
 }
 
 export function parseServerMessage(line: string): ServerMessage {
@@ -101,9 +145,9 @@ export async function serve(config: Config) {
 		if (!socket.destroyed) socket.write(`${JSON.stringify(message)}\n`);
 	};
 
-	async function follow(socket: Socket) {
+	async function follow(socket: Socket, conversation: typeof root) {
 		const shown = new Set<EntryId>();
-		const events = await watchEvents(harness, root.id, context);
+		const events = await watchEvents(harness, conversation.id, context);
 		events.start(async (batch) => {
 			for (const event of batch) {
 				const text = describe(event);
@@ -116,23 +160,37 @@ export async function serve(config: Config) {
 		return { events, shown };
 	}
 
+	/** Lists, adds or changes an agent, and says what it did. */
+	async function manage(socket: Socket, request: Extract<ClientMessage, { type: "agent" }>) {
+		if (request.action === "list") {
+			for (const agent of await host.agents.list()) send(socket, { type: "line", text: describeAgent(agent) });
+		} else {
+			const agent = request.action === "add" ? await host.agents.add(request) : await host.agents.update(request.id, request.change);
+			send(socket, { type: "line", text: describeAgent(agent) });
+		}
+		send(socket, { type: "done", status: "done" });
+		socket.end();
+	}
+
 	async function handle(socket: Socket, line: string) {
 		const request = parseClientMessage(line);
-		const { events, shown } = await follow(socket);
+		if (request.type === "agent") return manage(socket, request);
+		const conversation = await host.agents.home(request.agent);
+		const { events, shown } = await follow(socket, conversation);
 		if (request.type === "watch") return;
-		if ((await approvals.intercept(root.id, request.content, "cli")) === "answered") {
+		if ((await approvals.intercept(conversation.id, request.content, "cli")) === "answered") {
 			send(socket, { type: "line", text: "(taken as the answer to gaidin's question; the run goes on)" });
 			send(socket, { type: "done", status: "done" });
 			socket.end();
 			return;
 		}
-		const submission = await root.submit({ type: "input", content: stamp(request.content), requestId: request.requestId ?? randomUUID() }, context);
+		const submission = await conversation.submit({ type: "input", content: stamp(request.content), requestId: request.requestId ?? randomUUID() }, context);
 		// If the client goes away, the run continues; only this wait and its watch end.
 		const settled = await submission.wait(context);
 		await events.stop();
 		// A client reattaching to a run that finished without it still gets the answer.
 		if (settled.status === "done" && settled.type === "input" && !shown.has(settled.answer)) {
-			const text = assistantText(await root.commit((tx) => tx.entry(settled.answer), context));
+			const text = assistantText(await conversation.commit((tx) => tx.entry(settled.answer), context));
 			if (text !== undefined) send(socket, { type: "line", text });
 		}
 		if (settled.status === "unanswered") {
@@ -148,6 +206,7 @@ export async function serve(config: Config) {
 		lines.once("line", (line) => {
 			handle(socket, line).catch((error) => {
 				send(socket, { type: "line", text: `! ${error instanceof Error ? error.message : String(error)}` });
+				send(socket, { type: "done", status: "error" });
 				socket.end();
 			});
 		});

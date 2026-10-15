@@ -22,12 +22,13 @@ import type { Context } from "@earendil-works/chord";
 import { Type } from "@earendil-works/pi-ai";
 import { configure, defineExtension, defineTool, type Registry, type ToolExecutionApi, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import { agentIdOf, Agents, DEFAULT_AGENT, extensionOn, hideTools } from "../agents.ts";
 import { type ApprovalService, signalOf } from "../approvals.ts";
-import { outsideText } from "../guards.ts";
+import { guard } from "../guards.ts";
 import { type FetchOptions, fetchPublic } from "../fetch.ts";
 import { assistantText } from "../host.ts";
 import type { Gate, GateArgs, GateResult } from "../jobs.ts";
-import { boxArgs } from "../sandbox.ts";
+import { boxArgs, SandboxEnv } from "../sandbox.ts";
 import { array, boolean, integer, json, type Json, jsonObject, object, optional, parse, parseJson, ParseError, string, text } from "../parse.ts";
 import type { Fetched } from "./api.ts";
 import type { ToRunner } from "./runner.ts";
@@ -367,11 +368,11 @@ export function createSelf(options: {
 		return (await api.commit(async (tx) => assistantText(await tx.entry(settled.answer)), context))?.trim() ?? "";
 	}
 
-	/** A tool's fetch: a host the owner hasn't allowed for good asks, including one a redirect leads to. */
-	function fetchFor(url: string, tool: string, api: ToolExecutionApi, signal: AbortSignal): Promise<Fetched> {
+	/** A tool's fetch: a host the calling agent hasn't been allowed for good asks, including one a redirect leads to. */
+	function fetchFor(url: string, tool: string, agent: string, api: ToolExecutionApi, signal: AbortSignal): Promise<Fetched> {
 		return fetchPage(url, async (host, next) => {
 			const approvals = options.approvals();
-			if ((await approvals.state()).fetchHosts.includes(host)) return;
+			if ((await approvals.hostsFor(agent)).includes(host)) return;
 			const at = { conversationId: api.conversationId, taskId: api.taskId };
 			const request = await approvals.open(`self-fetch:${api.taskId}:${host}`, at, tool, {
 				summary: `fetch ${next}`,
@@ -382,10 +383,10 @@ export function createSelf(options: {
 		});
 	}
 
-	/** A gate's fetch, which can't ask: only hosts allowed for good, redirects included. */
-	function fetchAllowed(url: string): Promise<Fetched> {
+	/** A gate's fetch, which can't ask: only hosts allowed for good for the job's agent, redirects included. */
+	function fetchAllowed(url: string, agent: string): Promise<Fetched> {
 		return fetchPage(url, async (host) => {
-			if (!(await options.approvals().state()).fetchHosts.includes(host)) throw new Error(`${owner} hasn't allowed ${host} for good, and a gate can't ask`);
+			if (!(await options.approvals().hostsFor(agent)).includes(host)) throw new Error(`${owner} hasn't allowed ${host} for good, and a gate can't ask`);
 		});
 	}
 
@@ -408,7 +409,8 @@ export function createSelf(options: {
 			parameters: Type.Unsafe<{ readonly [name: string]: Json }>(described.parameters),
 			execute: async (args, api, context) => {
 				const signal = signalOf(api, context);
-				const reply = await runner.call(described.name, args, (url) => fetchFor(url, described.name, api, signal), signal, options.callTimeoutMs ?? 60_000);
+				const agent = await agentIdOf(api, api.conversationId, context);
+				const reply = await runner.call(described.name, args, (url) => fetchFor(url, described.name, agent, api, signal), signal, options.callTimeoutMs ?? 60_000);
 				return "result" in reply ? { content: [{ type: "text", text: reply.result }] } : { content: [{ type: "text", text: reply.error }], isError: true };
 			},
 		});
@@ -427,6 +429,13 @@ export function createSelf(options: {
 	}
 
 	const fail = (text: string) => ({ content: [{ type: "text" as const, text }], isError: true });
+
+	/** Why `agent` can't change extension `name`: it's loaded and another agent's. */
+	async function ownedElsewhere(name: string, agent: string, api: ToolExecutionApi, context: Context): Promise<string | undefined> {
+		if (!runners.has(name)) return undefined;
+		const holder = (await api.snapshot(Agents, context))?.owners[name] ?? DEFAULT_AGENT;
+		return holder === agent ? undefined : `The extension ${name} is the agent ${holder}'s; only it can change or remove it. Pick another name.`;
+	}
 
 	const load = defineTool({
 		name: "load_extension",
@@ -452,13 +461,18 @@ export function createSelf(options: {
 		execute: async (args, api, context) => {
 			if (!NAME.test(args.name)) return fail("The name is lowercase letters, digits and -, up to 31 characters, starting with a letter.");
 			if (api.env === undefined) return fail("There's no sandbox to read the draft from.");
+			const agent = await agentIdOf(api, api.conversationId, context);
+			const taker = await ownedElsewhere(args.name, agent, api, context);
+			if (taker !== undefined) return fail(taker);
+			// The draft is in the calling agent's own sandbox.
+			const sandbox = api.env instanceof SandboxEnv ? api.env.root : options.sandbox;
 			const stage = join(staging, String(api.taskId));
 			const staged = join(stage, "ext");
 			rmSync(stage, { recursive: true, force: true });
 			mkdirSync(staged, { recursive: true });
 			mkdirSync(join(stage, "none"));
 			try {
-				const copied = await copyDraft(api.env, join(options.sandbox, "extensions", args.name), staged, context);
+				const copied = await copyDraft(api.env, join(sandbox, "extensions", args.name), staged, context);
 				writeFileSync(join(stage, "tsconfig.json"), JSON.stringify({ extends: join(SELF, "tsconfig.json"), include: ["ext"] }));
 				const failures = [...copied, ...scan(staged), ...(await check(stage))];
 				if (failures.length > 0) return fail(`The checks failed, so ${owner} wasn't asked.\n\n${failures.join("\n\n")}`);
@@ -495,6 +509,12 @@ export function createSelf(options: {
 				renameSync(staged, current);
 				await commit(`${update ? "update" : "add"} ${args.name}`);
 				install(args.name, tools, runnerFor(current));
+				// It belongs to the agent that loaded it, and the others don't get its tools until the owner switches them on.
+				await api.commit(async (tx) => {
+					const roster = await tx.doc(Agents);
+					if (agent !== DEFAULT_AGENT) roster.owners[args.name] ??= agent;
+					await hideTools(tx, roster, tools.map((t) => t.name), (a) => extensionOn(roster, args.name, a.id));
+				}, context);
 				return { content: [{ type: "text", text: `Loaded ${args.name}. ${names} can be used from the next step.` }] };
 			} finally {
 				rmSync(stage, { recursive: true, force: true });
@@ -509,6 +529,8 @@ export function createSelf(options: {
 		execute: async (args, api, context) => {
 			const extension = registry.snapshot().extension(`self-${args.name}`);
 			if (extension === undefined) return fail(`There's no extension ${args.name}. Loaded: ${[...runners.keys()].join(", ") || "none"}.`);
+			const taker = await ownedElsewhere(args.name, await agentIdOf(api, api.conversationId, context), api, context);
+			if (taker !== undefined) return fail(taker);
 			const names = (extension.tools ?? []).map((t) => t.name);
 			const approvals = options.approvals();
 			const request = await approvals.open(`self:${api.taskId}`, { conversationId: api.conversationId, taskId: api.taskId }, "remove_extension", {
@@ -554,7 +576,18 @@ export function createSelf(options: {
 		 * What a self-written tool returns counts as outside text, so a note written after it asks first. Asking is the
 		 * exception here: load_extension, remove_extension and a tool's fetches (fetchFor) ask from inside the tool.
 		 */
-		guards: () => loaded().map((tool) => outsideText(tool.name)),
+		guards: () =>
+			[...runners.keys()].flatMap((name) =>
+				(registry.snapshot().extension(`self-${name}`)?.tools ?? []).map((tool) =>
+					// A tool is for the agent that loaded it, and the ones the owner switched it on for.
+					guard(tool.name, jsonObject, {
+						outside: true,
+						refuse: (_args, _read, _context, where) => (extensionOn(where.roster, name, where.agent.id) ? undefined : `${tool.name} isn't switched on for ${where.agent.name}.`),
+					}),
+				),
+			),
+		/** The self-written tools by extension, for the roster: a new agent starts without them. */
+		extensions: () => [...runners.keys()].map((name) => ({ extension: name, tools: (registry.snapshot().extension(`self-${name}`)?.tools ?? []).map((t) => t.name) })),
 		/** The self-written tools as gates for scheduled jobs. */
 		gates: (): Gate[] =>
 			[...runners].flatMap(([name, runner]) =>
@@ -562,7 +595,7 @@ export function createSelf(options: {
 					name: tool.name,
 					description: tool.description,
 					tool: true,
-					check: async (args: GateArgs, signal: AbortSignal) => gateResult(await runner.call(tool.name, args, fetchAllowed, signal, GATE_CALL_MS), tool.name),
+					check: async (args: GateArgs, signal: AbortSignal, agent = DEFAULT_AGENT) => gateResult(await runner.call(tool.name, args, (url) => fetchAllowed(url, agent), signal, GATE_CALL_MS), tool.name),
 				})),
 			),
 	};

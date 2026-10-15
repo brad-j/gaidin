@@ -4,7 +4,7 @@
 
 `gaidin serve` (`src/server.ts`) is the only process that opens the SQLite file. It runs the agent and serves every surface: the Unix socket the CLI uses, Slack over Socket Mode, and the web view. Pi Durable allows one process per storage, so nothing else may open the file while the server runs.
 
-Everything you say from the CLI or the web view goes to the root conversation, so both see the same history, live in `gaidin watch` too. Slack is the exception: each thread there is a [conversation of its own](#slack-threads).
+Everything you say from the CLI or the web view goes to the root conversation, so both see the same history, live in `gaidin watch` too. Slack is the exception: each thread there is a [conversation of its own](#slack-threads). The root is the default agent's home; other [agents](#agents) have homes of their own, which `gaidin ask --agent` talks to.
 
 ## Durability
 
@@ -30,6 +30,21 @@ Each top-level message in the Slack channel starts a new conversation, answered 
 
 A reply in the thread of something gaidin posted on its own, such as a job's report, forks that run's conversation at the report: the thread sees the run up to there and continues on its own. Answers posted in the channel before threads were separate work the same way, forking the root conversation at that answer.
 
+## Agents
+
+gaidin can run several named agents, each doing one kind of work for you. The original gaidin is the default agent; you add others with `gaidin agent add` ([Surfaces](surfaces.md#command-line)). Each agent has:
+
+- a name and a one-line job, which its system prompt opens with
+- a home conversation, whose settings are its model, thinking level, tools and standing instructions; a new agent starts with the default agent's model, thinking and built-in tools, and no instructions
+- its own sandbox, `<data>/agents/<id>/sandbox` (the default agent's stays `<data>/sandbox`)
+- its own work notes, beside the shared notes about you that every agent sees ([Tools](tools.md#memory))
+- its own reminders, jobs and past conversations, which no other agent can list, cancel or search
+- the hosts it fetches from without asking, the workspaces it may use (all for the default agent, none for a new one), and the agents it may message
+
+They share the skills, the self-written tools you switch on for them, and the spend limits. Every conversation belongs to one agent: a thread or job run is the agent's whose conversation it came from, and one from before agents existed is the default agent's. An agent reaches another only with `message_agent` and `hand_off`, and only those its entry lists ([Tools](tools.md#other-agents)). The roster is stored in the SQLite file, with the rest of gaidin's state; the settings file doesn't list agents.
+
+Slack and the web view talk to the default agent for now. An agent's id is fixed once made; its name, job and grants can change.
+
 ## Time
 
 The server puts the local time in brackets at the start of each message, for example `[Sat 2026-10-10 13:29 GMT-4]`. Keeping the time out of the system prompt keeps the provider's prompt cache valid between messages. `GAIDIN_TZ` sets the time zone.
@@ -44,7 +59,8 @@ The model, thinking level, standing instructions and which tools are switched on
 
 - `gaidin.sqlite`: the conversation, tasks and documents, kept forever, compaction included
 - `gaidin.sock`: the socket the CLI talks to
-- `sandbox/`: the only directory the agent's own tools can touch
+- `sandbox/`: the only directory the default agent's own tools can touch
+- `agents/<id>/sandbox/`: the same for each other [agent](#agents)
 - `skills/`: local [skills](tools.md#skills), one directory each, in a Git repository that keeps every change
 
 Back up the SQLite file to back up gaidin. Copy it while the server is stopped, or snapshot the whole machine.

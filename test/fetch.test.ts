@@ -8,6 +8,7 @@ import test, { type TestContext } from "node:test";
 import { createGzip, gzipSync } from "node:zlib";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import { defaultEntry } from "../src/agents.ts";
 import type { Situation } from "../src/guards.ts";
 import { blockedRanges, createFetch, fetchPublic, type FetchOptions, htmlToText, render } from "../src/fetch.ts";
 import { context, startHost } from "../src/host.ts";
@@ -201,7 +202,7 @@ test("htmlToText leaves an entity it doesn't know as it is, even one named like 
 test("a fetch asks unless its host is allowed for good, offers to allow the host, and what it returns is outside text", async () => {
 	const [guard] = createFetch().guards;
 	const ask = (url: unknown, fetchHosts: string[] = [], searched: string[] = []) => {
-		const situation: Situation = { fetchHosts, grants: [], conversationId: 1, outside: async () => [], searched: async () => searched, snapshot: async () => undefined };
+		const situation: Situation = { fetchHosts, grants: [], conversationId: 1, agent: defaultEntry(), outside: async () => [], searched: async () => searched, snapshot: async () => undefined };
 		return guard!.ask({ url } as never, situation);
 	};
 	assert.equal(guard!.tool, "fetch_url");
