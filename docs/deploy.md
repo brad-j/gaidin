@@ -97,6 +97,7 @@ The settings file is JSON: the first of `--config`, `GAIDIN_CONFIG`, `./gaidin.j
 | `web.user` | `GAIDIN_WEB_USER` | | Tailscale login allowed into the web view. Without it there's no web view. |
 | `web.port` | `GAIDIN_WEB_PORT` | `8410` | Loopback port for the web view. |
 | `web.url` | | | The web view's address on the tailnet, such as `https://gaidin.<tailnet>.ts.net`. With it, devices can sign up for [notifications](surfaces.md#notifications) from the web view, and tapping an ntfy reminder opens the web view and has buttons to snooze it. |
+| `web.app` | | | The directory of [moiraine](surfaces.md#the-app)'s build, served at `/app/`. Relative to the settings file. |
 | `sandbox` | `GAIDIN_SANDBOX` | `bwrap` | `none` runs tools without bubblewrap. |
 | `search.provider` | | | `tavily`; without it there's no `web_search`. |
 | `search.apiKey` | `TAVILY_API_KEY` | | A Tavily key, `tvly-...`. Setting the variable alone also turns search on. |

@@ -92,6 +92,10 @@ Without `web.user` there's no web view. The page is `web/index.html`, `web/app.t
 
 The page works through an HTTP API under `/api`, and `/events` for a conversation's live events, behind the same checks. `Gets` and `Posts` in `src/web.ts` say what each route takes and answers, and moiraine, the app that will replace the web view ([Plan](plan.md#design-the-app)), is typed from them. A request names an agent with `?agent=` or `agent` in its body, and a conversation with `?conversation=` or `conversation`; without them, it's the default agent and its home conversation. Through it you also start [threads](concepts.md#threads) and continue any conversation, and add, change, archive and restore [agents](concepts.md#agents). `/api/version` gives the protocol's version, raised whenever an answer or a body changes shape.
 
+### The app
+
+moiraine, the app that will replace the web view ([Plan](plan.md#design-the-app)), is a project of its own, built on the owner's machine. With `web.app` naming the directory of its build, gaidin serves it at `/app/` behind the same checks: its files, and its shell for every other path there, so its addresses survive a reload. Built files have hashed names and are cached; the shell isn't. The shell's inline scripts change with each build, so gaidin reads it as it's asked for and allows each of them in the Content-Security-Policy by its hash, and a new build needs no restart. `gaidin doctor` says when `web.app` has no build in it.
+
 ### As an app
 
 The web view installs as an app: on an iPhone or iPad, Share, then Add to Home Screen; in Chrome or Edge, Install from the address bar or menu. It opens in its own window, without the browser's bars, and keeps clear of the notch and the home bar. Its service worker (`web/sw.js`) shows notifications and, when the server can't be reached, such as from a phone off the tailnet, a page that says so with a button to try again. It caches nothing, so what you see is always the server's.

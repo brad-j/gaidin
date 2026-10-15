@@ -7,11 +7,14 @@
 // The page is web/index.html, web/app.ts and the modules it imports, with their types stripped as they're served. Its icon is assets/logo.svg,
 // and the header shows assets/logo-transparent.svg. The PNG icons, for phone home screens and ntfy.icon, are
 // renders of the same two files. web/sw.js is the service worker that shows notifications (push.ts).
-import { randomUUID } from "node:crypto";
+//
+// With `web.app`, moiraine's build is served at /app/ beside it: its files, and its shell for every other path there.
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
-import { resolve } from "node:path";
+import { extname, resolve, sep } from "node:path";
 import { type AgentEvent, type Conversation, type Harness, type ModelRef, type SnapshotEvent, type ToolRegistration, type Tx, type UsageState, watchEvents } from "@earendil-works/pi-durable";
 import { type AgentEntry, agentIdOf, DEFAULT_AGENT, type RosterService } from "./agents.ts";
 import type { ApprovalRequest, ApprovalService, Decision } from "./approvals.ts";
@@ -35,13 +38,36 @@ const WEB_DIR = resolve(import.meta.dirname, "../web");
  * click onto Allow; and the page runs only its own script, so text that got past the Markdown renderer couldn't run.
  */
 const SECURITY_HEADERS = {
-	"Content-Security-Policy":
-		"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; " +
-		"object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+	"Content-Security-Policy": policy(),
 	"X-Frame-Options": "DENY",
 	"X-Content-Type-Options": "nosniff",
 	"Referrer-Policy": "no-referrer",
 };
+
+/** The Content-Security-Policy, with `scripts` the sources allowed besides the page's own files. */
+function policy(scripts: readonly string[] = []): string {
+	return (
+		`default-src 'self'; script-src ${["'self'", ...scripts].join(" ")}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; ` +
+		"object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+	);
+}
+
+/** Where moiraine's build is served. Its own paths start here too: it's built with this base. */
+const APP_PATH = "/app";
+/** The page moiraine's build gives for every path that isn't one of its files. */
+const APP_SHELL = "_shell.html";
+const APP_TYPES = new Map([
+	[".js", "text/javascript; charset=utf-8"],
+	[".css", "text/css; charset=utf-8"],
+	[".html", "text/html; charset=utf-8"],
+	[".json", "application/json"],
+	[".webmanifest", "application/manifest+json"],
+	[".svg", "image/svg+xml"],
+	[".png", "image/png"],
+	[".ico", "image/x-icon"],
+	[".woff2", "font/woff2"],
+	[".txt", "text/plain; charset=utf-8"],
+]);
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
@@ -111,7 +137,7 @@ const listed = ({ name, description, source, files }: Skill): ListedSkill => ({ 
 /** What each GET route answers. */
 export type Gets = {
 	"/api/version": { protocol: number };
-	/** Every agent, archived ones included. */
+	/** Every agent, archived ones included, the default agent first. */
 	"/api/agents": AgentEntry[];
 	/** `?agent=` for each of these: that agent's, the default agent's without it. */
 	"/api/settings": Settings;
@@ -181,6 +207,8 @@ export function createWebServer(options: {
 	agents: RosterService;
 	threads: Threads;
 	user: string;
+	/** The directory of moiraine's build, served at /app/. */
+	app?: string;
 	/** Tools the page can switch off, as of now. The reminder and homelab tools stay on. */
 	switchable: () => readonly ToolRegistration[];
 	approvals: ApprovalService;
@@ -522,6 +550,7 @@ export function createWebServer(options: {
 		const path = url.pathname;
 		if (request.method === "GET") {
 			if (path === "/") return reply(response, 200, page, "text/html; charset=utf-8");
+			if (options.app !== undefined && (path === APP_PATH || path.startsWith(`${APP_PATH}/`))) return serveApp(options.app, path.slice(APP_PATH.length), response);
 			const code = scripts.get(path);
 			if (code !== undefined) return reply(response, 200, code, "text/javascript; charset=utf-8");
 			const file = files.get(path);
@@ -547,6 +576,46 @@ export function createWebServer(options: {
 			else response.end();
 		});
 	});
+}
+
+/**
+ * One of the app's files, or its shell for any other path, so the router's URLs survive a reload. Built files have
+ * hashed names and are cached for good; the shell isn't cached. The shell's inline scripts change with each build, so
+ * each is read as it's asked for and its scripts' hashes go in its policy, and a new build needs no restart.
+ */
+async function serveApp(dir: string, path: string, response: ServerResponse) {
+	const root = resolve(dir);
+	let decoded: string;
+	try {
+		decoded = decodeURIComponent(path);
+	} catch {
+		throw new HttpError(400, "Malformed path");
+	}
+	const file = resolve(root, `.${decoded}`);
+	const inside = file.startsWith(root + sep) && !file.slice(root.length + 1).split(sep).some((part) => part.startsWith("."));
+	if (inside && extname(file) !== ".html" && (await stat(file).catch(() => undefined))?.isFile()) {
+		const cached = file.startsWith(resolve(root, "assets") + sep);
+		response.writeHead(200, {
+			...SECURITY_HEADERS,
+			"Content-Type": APP_TYPES.get(extname(file)) ?? "application/octet-stream",
+			"Cache-Control": cached ? "public, max-age=31536000, immutable" : "no-store",
+		});
+		return response.end(await readFile(file));
+	}
+	const shell = await readFile(resolve(root, APP_SHELL), "utf8").catch(() => undefined);
+	if (shell === undefined) throw new HttpError(404, `The app isn't built: there's no ${APP_SHELL} in web.app's directory`);
+	response.writeHead(200, {
+		...SECURITY_HEADERS,
+		"Content-Security-Policy": policy(inlineScripts(shell).map((code) => `'sha256-${createHash("sha256").update(code).digest("base64")}'`)),
+		"Content-Type": "text/html; charset=utf-8",
+		"Cache-Control": "no-store",
+	});
+	response.end(shell);
+}
+
+/** The text of each inline script in a page, as the browser hashes it. */
+function inlineScripts(html: string): string[] {
+	return [...html.matchAll(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)].map((match) => match[1]!);
 }
 
 /** Runs `work`, turning what it throws into an answer with `status` and its message: the request asked for what can't be. */

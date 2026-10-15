@@ -36,8 +36,11 @@ export type Config = {
 	/** `icon` is the URL of a PNG or JPEG the ntfy app shows beside each push. */
 	ntfy?: { url: string; token?: string; icon?: string };
 	slack?: SlackConfig;
-	/** `url` is where the owner reaches the web view, for links and buttons in pushes. */
-	web?: { user: string; port: number; url?: string };
+	/**
+	 * `url` is where the owner reaches the web view, for links and buttons in pushes. `app` is the directory of
+	 * moiraine's build, served at /app/.
+	 */
+	web?: { user: string; port: number; url?: string; app?: string };
 	sandbox: "bwrap" | "none";
 	/** Spend limits in dollars; 0 is no limit. */
 	budget: { daily: number; monthly: number };
@@ -222,6 +225,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	if (!Number.isInteger(port) || port < 1 || port > 65535) errors.push(`web.port must be a port number, not ${JSON.stringify(portValue)}`);
 	const webUrl = text("web.url", webSection.url)?.replace(/\/+$/, "");
 	if (webUrl !== undefined && !/^https?:\/\/[^/]+$/.test(webUrl)) errors.push("web.url must be the web view's address, like https://gaidin.example.ts.net");
+	const webApp = text("web.app", webSection.app);
 	if (ntfyUrl === undefined && (webUser === undefined || webUrl === undefined)) {
 		warnings.push("Neither ntfy.url nor web.url: reminders print to the server's output instead of reaching a phone");
 	}
@@ -321,6 +325,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	if (webUser !== undefined) {
 		config.web = { user: webUser, port };
 		if (webUrl !== undefined) config.web.url = webUrl;
+		if (webApp !== undefined) config.web.app = path(webApp);
 	}
 	if (search !== undefined) config.search = search;
 	if (homelab !== undefined) config.homelab = homelab;

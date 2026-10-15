@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +13,7 @@ import { createWebServer, type Settings } from "../src/web.ts";
 
 const BRAD = "brad@example.com";
 
-async function start(t: TestContext) {
+async function start(t: TestContext, app?: string) {
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
 	const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
@@ -20,7 +21,7 @@ async function start(t: TestContext) {
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const host = await startHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, adapters: { push: { send: async () => true } } });
-	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: BRAD, switchable: host.switchable, approvals: host.approvals, snooze: host.reminders.snooze });
+	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: BRAD, app, switchable: host.switchable, approvals: host.approvals, snooze: host.reminders.snooze });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(async () => {
 		server.closeAllConnections();
@@ -78,6 +79,48 @@ test("every response forbids framing and runs only the page's own script", async
 		assert.equal(response.headers.get("x-frame-options"), "DENY");
 		assert.equal(response.headers.get("x-content-type-options"), "nosniff");
 	}
+});
+
+test("the app's files are served at /app/, and its shell for every other path there, with its inline scripts allowed by hash", async (t) => {
+	const app = mkdtempSync(join(tmpdir(), "gaidin-app-"));
+	t.after(() => rmSync(app, { recursive: true, force: true }));
+	const inline = ["document.currentScript.remove()", "self.$_TSR={};"];
+	writeFileSync(join(app, "_shell.html"), `<html><body><script>${inline[0]}</script><script data-part="">${inline[1]}</script><script type="module" src="/app/assets/index-abc.js"></script></body></html>`);
+	mkdirSync(join(app, "assets"));
+	writeFileSync(join(app, "assets", "index-abc.js"), "console.log(1)");
+	writeFileSync(join(app, "robots.txt"), "no");
+	writeFileSync(join(app, ".hidden"), "not served");
+	const { call } = await start(t, app);
+
+	const script = await call("/app/assets/index-abc.js");
+	assert.equal(await script.text(), "console.log(1)");
+	assert.match(script.headers.get("content-type")!, /^text\/javascript/);
+	assert.match(script.headers.get("cache-control")!, /immutable/);
+	assert.equal((await call("/app/robots.txt")).headers.get("cache-control"), "no-store");
+
+	// Any other path, a dotfile and a way out of the directory included, gets the shell, which isn't cached.
+	const hashes = inline.map((code) => `'sha256-${createHash("sha256").update(code).digest("base64")}'`);
+	for (const path of ["/app", "/app/", "/app/gaidin/t/12", "/app/.hidden", "/app/..%2fpackage.json", "/app/_shell.html", "/app/assets/missing.js"]) {
+		const shell = await call(path);
+		assert.equal(shell.status, 200, path);
+		assert.match(await shell.text(), /^<html>/, path);
+		assert.equal(shell.headers.get("cache-control"), "no-store", path);
+		assert.ok(shell.headers.get("content-security-policy")!.includes(`script-src 'self' ${hashes.join(" ")};`), path);
+		assert.match(shell.headers.get("content-security-policy")!, /frame-ancestors 'none'/, path);
+	}
+	assert.equal((await call("/app/%E0%A4%A")).status, 400);
+	assert.equal((await call("/app/", { as: "someone@example.com" })).status, 403);
+	// Other pages keep the policy without the hashes.
+	assert.match((await call("/")).headers.get("content-security-policy")!, /script-src 'self';/);
+});
+
+test("without web.app there's no app, and a missing build says so", async (t) => {
+	assert.equal((await (await start(t)).call("/app/")).status, 404);
+	const empty = mkdtempSync(join(tmpdir(), "gaidin-app-"));
+	t.after(() => rmSync(empty, { recursive: true, force: true }));
+	const missing = await (await start(t, empty)).call("/app/");
+	assert.equal(missing.status, 404);
+	assert.match(await missing.text(), /The app isn't built/);
 });
 
 test("a post from another site is refused", async (t) => {

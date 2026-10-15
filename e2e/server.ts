@@ -1,7 +1,7 @@
 // The web view on a scripted model, for the browser tests: a fresh data directory, a page at
 // site.test to fetch, and a model that picks its tool call from the owner's message. Lets in the
-// tailnet login given as its argument, prints the port once it listens, and removes the data
-// directory when stopped.
+// tailnet login given as its first argument, prints the port once it listens, and removes the data
+// directory when stopped. A second argument is a directory of moiraine's build to serve at /app/, for moiraine's tests.
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -15,6 +15,7 @@ import { context, startHost } from "../src/host.ts";
 import { createWebServer } from "../src/web.ts";
 
 const user = process.argv[2] ?? "brad@example.com";
+const app = process.argv[3];
 
 const site = createServer((_request, response) => {
 	response.writeHead(200, { "Content-Type": "text/plain" });
@@ -89,6 +90,7 @@ const web = createWebServer({
 	agents: host.agents,
 	threads: host.threads,
 	user,
+	app,
 	switchable: host.switchable,
 	approvals: host.approvals,
 	budget: host.budget,

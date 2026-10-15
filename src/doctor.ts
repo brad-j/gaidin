@@ -1,7 +1,7 @@
 // `gaidin doctor`: checks the settings and everything the server depends on, without starting it and
 // without spending tokens. Only `--push` sends anything a person would see (one ntfy notification).
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Config, Loaded } from "./config.ts";
@@ -155,14 +155,22 @@ async function slack(config: Config): Promise<Check[]> {
 
 async function web(config: Config): Promise<Check[]> {
 	if (config.web === undefined) return [{ status: "skip", area: "web", detail: "not set up" }];
+	const checks: Check[] = [];
 	const result = spawnSync("tailscale", ["serve", "status", "--json"], { encoding: "utf8", timeout: 10_000 });
-	if (result.error !== undefined) return [{ status: "warn", area: "web", detail: `tailscale isn't installed; the web view on 127.0.0.1:${config.web.port} has no way in` }];
-	const served = result.stdout.includes(`127.0.0.1:${config.web.port}`);
-	return [{
-		status: served ? "ok" : "warn",
-		area: "web",
-		detail: served ? `tailscale serve proxies to 127.0.0.1:${config.web.port}, for ${config.web.user}` : `tailscale serve isn't proxying to port ${config.web.port}; run: sudo tailscale serve --bg --yes ${config.web.port}`,
-	}];
+	if (result.error !== undefined) checks.push({ status: "warn", area: "web", detail: `tailscale isn't installed; the web view on 127.0.0.1:${config.web.port} has no way in` });
+	else {
+		const served = result.stdout.includes(`127.0.0.1:${config.web.port}`);
+		checks.push({
+			status: served ? "ok" : "warn",
+			area: "web",
+			detail: served ? `tailscale serve proxies to 127.0.0.1:${config.web.port}, for ${config.web.user}` : `tailscale serve isn't proxying to port ${config.web.port}; run: sudo tailscale serve --bg --yes ${config.web.port}`,
+		});
+	}
+	if (config.web.app !== undefined) {
+		const built = existsSync(join(config.web.app, "_shell.html"));
+		checks.push({ status: built ? "ok" : "fail", area: "web", detail: built ? `the app is in ${config.web.app}` : `web.app is ${config.web.app}, which has no _shell.html; deploy moiraine's build there` });
+	}
+	return checks;
 }
 
 async function search(config: Config): Promise<Check[]> {
