@@ -21,7 +21,7 @@ It matches the values as they are, so an encoded copy would get through. The san
 
 Shell commands run under bubblewrap. The sandbox is the only writable directory; `/usr`, `/etc` and `/opt` are read-only, and nothing else is mounted, so the data directory, the SQLite file, the Unix socket and the app's code aren't there. Commands get their own process tree, which hides the server's `/proc/<pid>/environ`, and no network, which keeps them off the app's loopback port and the LAN. Background processes end with the command.
 
-Two directories in the sandbox are written by the server while commands run: `.tmp`, where a long command's full output goes, and `uploads`, where files sent in Slack go. Commands see both read-only, so none can swap one for a symlink that would carry the server's writes outside the sandbox, and before each command the server replaces anything left in their place with a real directory. A file in a Slack message is downloaded with the bot token, so the server sends it only to `https://files.slack.com`, whatever URL the event names.
+Three directories in the sandbox are written by the server while commands run: `.tmp`, where a long command's full output goes, `uploads`, where files sent in Slack, from the app or by another agent go, and `downloads`, where the browser's downloads go. Commands see them read-only, so none can swap one for a symlink that would carry the server's writes outside the sandbox, and before each command the server replaces anything left in their place with a real directory. A file in a Slack message is downloaded with the bot token, so the server sends it only to `https://files.slack.com`, whatever URL the event names.
 
 The file tools run inside the server, so each path is resolved through its symlinks and refused if it lands outside the sandbox. Commands share a lock that each file operation takes alone, and nothing in the sandbox outlives its command, so no command can swap a directory for a symlink between a file tool's check and its use. A long command makes file tools in other conversations wait for it.
 
@@ -64,6 +64,8 @@ A URL can carry data out in its path or query, which is why a fetch to a new hos
 |---|---|---|
 | `fetch_url` | for a host not allowed for good for the agent, unless `web_search` returned the URL in that conversation | always allow that host, for that agent |
 | `browser_open` | for a host not allowed for good for the agent, unless `web_search` returned the URL in that conversation; refused for a profile the agent wasn't given | always allow that host, for that agent |
+| `browser_click`, `browser_type`, `browser_select` | while outside text is in the conversation's context, unless the agent acts on that site in that profile without asking; typing into a password field is refused | act on that site without asking, for that agent and profile |
+| `browser_upload` | every call, naming the files | none |
 | `workspace_*` | every call | allow that workspace for an hour, in that conversation only |
 | `schedule_job` | every new job | none |
 | `remember`, `update_memory` | while outside text is in the conversation's context | none |
@@ -100,8 +102,10 @@ A browser profile holds live sign-ins, so the browser is checked in these layers
 - Only agents whose roster entry lists a profile can use it; a call with another is refused, and an agent without one isn't offered the tools.
 - Chromium keeps its own sandbox, with the renderers in their own user and PID namespaces under seccomp; it's never started with `--no-sandbox`. It runs as the service's user under the unit's limits rather than in bubblewrap, since it needs the network. On Ubuntu 24.04 its sandbox needs `deploy/vm/chromium.apparmor`, which `setup.sh` installs with Chromium in `/opt/gaidin/browsers`, a directory only root can change, because that profile lets the binary it names make user namespaces. `gaidin doctor` starts Chromium to check.
 - Opening a page asks as a fetch does. Every request a page makes is routed through the server first: one to a private, CGNAT, loopback, link-local or reserved address is refused, so a page can't reach your LAN, your tailnet or gaidin's own port, and a navigation of the page itself to a host that isn't its own or allowed for good is stopped. Routing turns off Chromium's HTTP cache.
-- What a page shows is outside text, labelled as from the web and redacted like any result, so note writes and cancels after it ask.
-- The model never types a password; a page that needs signing in is yours to sign in to.
+- What a page shows is outside text, labelled as from the web and redacted like any result, so note writes and cancels after it ask, and so do clicks, typing and choosing, until you let the agent act on a site without asking. That's per agent, profile and site, and removable on the settings page.
+- An approved action happens only if the page is still on the site and the ref still the element the request named, since an answer can come days later and another conversation can use the profile meanwhile.
+- The model never types a password: `browser_type` refuses a field whose type or autocomplete says password, before anyone is asked and again before typing. A page that needs signing in is yours to sign in to.
+- An upload sends files from the agent's own sandbox only, read through its file tools, and asks every time, naming them. A download lands in the agent's `downloads/`, which its commands see read-only, so none can swap it for a symlink that carries the server's write elsewhere.
 
 ## Container logs
 
@@ -127,7 +131,10 @@ The app trusts the identity header Tailscale Serve adds, and listens only on loo
 - A job's runs see its last three reports, which can repeat text an earlier run read from outside. They're labelled as gaidin's own earlier answers, not instructions.
 - Agents are kept apart by the server's rules, not by separate processes or users: a flaw in those rules, or `GAIDIN_SANDBOX=none`, which runs every agent's commands unconfined, would let one reach another's files.
 - A shared note reaches every agent's prompt. One written after compaction has summarised outside text away doesn't ask, as with any note, and then reaches all of them.
-- An agent given a browser profile can read anything the profile is signed in to, and once acting tools exist, do what those sites allow. Giving an agent a profile is the real decision.
+- An agent given a browser profile can read anything the profile is signed in to, and with your approval of each action, or none on a site it may act on without asking, do what those sites allow. Giving an agent a profile is the real decision.
+- On a site an agent acts on without asking, a page there can steer what it clicks and types there, including typing text from the conversation into a form.
+- A file the browser downloads is read with the sandbox's file tools, which don't count as outside text. The page that offered it already does, until compaction summarises it away.
+- A password field is recognised by its `type` and `autocomplete` attributes; a page that hides one behind a plain text field isn't caught.
 - A page can send what it shows, or what's in its own storage, to its own servers, and its scripts and images go to any public host; only its own navigations are checked. A page on a host you've allowed for good can steer what the agent reads there.
 - The browser's address check resolves a name itself, before Chromium does, so a second DNS answer could still point Chromium at a private address. WebSockets aren't routed and aren't checked.
 - A page that exploited Chromium would run as gaidin's user, outside bubblewrap, with Chromium's own sandbox the only layer between it and gaidin's data.

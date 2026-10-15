@@ -67,6 +67,8 @@ export type AgentEntry = {
 	workspaces?: string[];
 	/** The browser profiles it may use (src/browser/). Absent: none, the default agent's included. */
 	profiles?: string[];
+	/** By profile, the hosts it clicks and types on without asking. */
+	actHosts?: Record<string, string[]>;
 	/** The agents it may message and hand work to, by id. */
 	canMessage: string[];
 	/** Self-written extensions switched on for it besides the ones it loaded. */
@@ -414,7 +416,7 @@ export function createAgents(options: {
 
 /** What the owner can change about an agent. */
 /** `avatar: ""` takes the picture away. */
-export type AgentChange = Partial<Pick<AgentEntry, "name" | "job" | "channel" | "canMessage" | "workspaces" | "profiles" | "hosts" | "extensions" | "avatar">>;
+export type AgentChange = Partial<Pick<AgentEntry, "name" | "job" | "channel" | "canMessage" | "workspaces" | "profiles" | "actHosts" | "hosts" | "extensions" | "avatar">>;
 
 /** The roster as the server manages it: the default agent's entry, adding and changing agents, and their home conversations. */
 export function createRoster(options: {
@@ -530,6 +532,12 @@ export function createRoster(options: {
 				if (change.profiles.length === 0) delete agent.profiles;
 				else agent.profiles = [...new Set(change.profiles)];
 				await offerBrowser(tx, agent);
+			}
+			if (change.actHosts !== undefined) {
+				const kept: Record<string, string[]> = {};
+				for (const [profile, hosts] of Object.entries(change.actHosts)) if (hosts.length > 0) kept[profile] = [...new Set(hosts)];
+				if (Object.keys(kept).length === 0) delete agent.actHosts;
+				else agent.actHosts = kept;
 			}
 			// SAFETY: a roster entry is plain JSON data, so a JSON round trip gives back the same entry.
 			return JSON.parse(JSON.stringify(agent)) as AgentEntry;

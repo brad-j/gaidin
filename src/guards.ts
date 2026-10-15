@@ -32,6 +32,8 @@ export type Situation = {
 	grants: readonly Grant[];
 	/** The conversation the call is in. */
 	conversationId: number;
+	/** The call's id, which its tool's execution sees as `api.callId`. */
+	callId: string;
 	/** The agent making the call. */
 	agent: AgentEntry;
 	/** The outside-text tools whose results are in the conversation's context. It reads the context, so call it only when it matters. */

@@ -44,7 +44,7 @@ export type ApprovalRequest = {
 	/** The owner's answer to a question. */
 	answer?: string;
 	/** The wider grant the second button gives, when one is offered. `label` is the button, `done` the outcome. */
-	always?: { kind: "fetch-host" | "workspace-hour"; value: string; label: string; done: string };
+	always?: { kind: "fetch-host" | "workspace-hour" | "act-host"; value: string; label: string; done: string };
 	createdAt: number;
 	expiresAt: number;
 	status: ApprovalStatus;
@@ -223,6 +223,18 @@ export class ApprovalService {
 				const other = request.agent === undefined ? undefined : (await tx.doc(Agents)).agents.find((a) => a.id === request.agent);
 				const hosts = other === undefined ? doc.fetchHosts : other.hosts;
 				if (!hosts.includes(host)) hosts.push(host);
+			}
+			// Acting without asking is allowed for the agent that asked, on that host in that profile only: value is <profile>/<host>.
+			if (decision === "always" && request.always?.kind === "act-host") {
+				const [profile = "", host = ""] = request.always.value.split("/");
+				const agent = (await tx.doc(Agents)).agents.find((a) => a.id === (request.agent ?? DEFAULT_AGENT));
+				const hosts = agent?.actHosts?.[profile] ?? [];
+				if (agent !== undefined && !hosts.includes(host)) {
+					// SAFETY: actHosts is plain JSON data, so a JSON round trip gives back the same lists.
+					const acts = JSON.parse(JSON.stringify(agent.actHosts ?? {})) as Record<string, string[]>;
+					acts[profile] = [...hosts, host];
+					agent.actHosts = acts;
+				}
 			}
 			if (decision === "always" && request.always?.kind === "workspace-hour") {
 				const now = Date.now();
@@ -433,6 +445,7 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 						fetchHosts: hostsOf(agent, fetchHosts),
 						grants,
 						conversationId: api.conversationId,
+						callId: call.id,
 						agent,
 						outside: () => outsideTextIn(api, context, (tool) => all.some((g) => g.tool === tool && g.outside), call.id),
 						searched: () => searchedIn(api, context),

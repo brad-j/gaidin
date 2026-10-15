@@ -251,7 +251,7 @@ test("a call whose arguments its guard can't read is asked about, showing all of
 		...createMemory("Brad").guards,
 		...createWorkspaces({ workspaces: [{ name: "egwene", target: "me@egwene" }], remote: undefined, redactor: redactorFor({}), owner: "Brad" }).guards,
 	];
-	const situation: Situation = { fetchHosts: [], grants: [], conversationId: 1, agent: defaultEntry(), outside: async () => ["fetch_url"], searched: async () => [], snapshot: async () => undefined };
+	const situation: Situation = { fetchHosts: [], grants: [], conversationId: 1, callId: "c1", agent: defaultEntry(), outside: async () => ["fetch_url"], searched: async () => [], snapshot: async () => undefined };
 	const ask = (name: string, args: Record<string, any>) => askFor(guards.find((g) => g.tool === name)!, { type: "toolCall", id: "c1", name, arguments: args }, situation);
 	const run = await ask("workspace_run", { workspace: 3, command: "rm -rf ~" });
 	assert.equal(run!.summary, "workspace_run with arguments that don't read right (workspace_run's arguments.workspace should be a string)");

@@ -66,7 +66,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 7;
+export const PROTOCOL = 8;
 
 /** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
 export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
@@ -93,6 +93,8 @@ const agentSave = object({
 	canMessage: optional(array(string)),
 	workspaces: optional(array(string)),
 	profiles: optional(array(string)),
+	/** By profile, the hosts it acts on without asking: each profile's whole list, the profiles not named left as they are. */
+	actHosts: optional(array(object({ profile: string, hosts: array(string) }))),
 	hosts: optional(array(string)),
 	extensions: optional(array(string)),
 	/** A file sent to /api/files, to be its picture, or "" to take its picture away. */
@@ -518,13 +520,17 @@ export function createWebServer(options: {
 		},
 		"/api/agents/save": {
 			body: agentSave,
-			handle: ({ id, name, job, hosts, avatar, ...change }) =>
+			handle: ({ id, name, job, hosts, avatar, actHosts, ...change }) =>
 				refused(async () => {
 					if (!(await agents.list()).some((a) => a.id === id)) {
 						if (name === undefined) throw new HttpError(400, "A new agent needs a name.");
 						await agents.add({ id, name, job: job ?? "" });
 					}
 					const entryChange: Parameters<typeof agents.update>[1] = { name, job, ...change };
+					if (actHosts !== undefined) {
+						const current = (await agents.list()).find((a) => a.id === id)?.actHosts ?? {};
+						entryChange.actHosts = { ...current, ...Object.fromEntries(actHosts.map((a) => [a.profile, a.hosts])) };
+					}
 					if (avatar !== undefined) entryChange.avatar = await picture(id, avatar);
 					// The default agent's hosts are kept with the approvals, where its fetches are checked against them.
 					if (id === DEFAULT_AGENT && hosts !== undefined) await approvals.setFetchHosts(hosts);

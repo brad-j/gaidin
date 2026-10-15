@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -10,7 +10,8 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@ear
 import type { Conversation } from "@earendil-works/pi-durable";
 import { chromium } from "playwright-core";
 import type { ApprovalRequest } from "../src/approvals.ts";
-import { BrowserState, capSnapshot } from "../src/browser/index.ts";
+import { BrowserState, capSnapshot, partOf } from "../src/browser/index.ts";
+import { sandboxOf } from "../src/agents.ts";
 import { Chromium } from "../src/browser/chromium.ts";
 import { configFor, loadConfig } from "../src/config.ts";
 import { blockedRanges, type FetchOptions } from "../src/fetch.ts";
@@ -55,6 +56,8 @@ const CALL = (name: string, args: Record<string, unknown>) => `CALL ${JSON.strin
 /** Pages for every host, which Chromium reaches on loopback. `hits` counts the paths asked for. */
 async function site(t: TestContext) {
 	const hits = new Map<string, number>();
+	/** The bodies of the forms posted to /uploaded. */
+	const posted: string[] = [];
 	const big = Array.from({ length: 400 }, (_, i) => `<p>Paragraph ${i} with some words in it to fill the page</p>`).join("");
 	const pages = new Map(Object.entries({
 		"/": `<title>Home</title><h1>Welcome</h1><a href="/landing">Landing</a>`,
@@ -64,11 +67,31 @@ async function site(t: TestContext) {
 		"/lan-image": `<title>Picture</title><img src="http://lan.test:PORT/pixel">`,
 		"/popup": `<title>Opener</title><script>window.open("/landing")</script>`,
 		"/big": `<title>Big</title><nav aria-label="Menu"><a href="/">Home</a><a href="/landing">Landing</a></nav><main>${big}</main>`,
+		"/form": `<title>Form</title><form action="/done"><label>Query <input name="q"></label><select name="size" aria-label="Size"><option value="s">Small</option><option value="m">Medium</option></select><button>Go</button></form>`,
+		"/login": `<title>Login</title><label>User <input name="u"></label><label>Pass <input name="p" type="password"></label>`,
+		"/file": `<title>File</title><a href="/report.csv" download>Report</a>`,
+		"/upload": `<title>Upload</title><form method="post" enctype="multipart/form-data" action="/uploaded"><input type="file" name="f" aria-label="Attachment"><button>Send</button></form>`,
+		"/uploaded": `<title>Uploaded</title><p>Thanks</p>`,
+		"/confirm": `<title>Confirm</title><button onclick="document.title = confirm('Sure?') ? 'Yes' : 'No'">Delete</button>`,
 		"/cookie": `<title>Cookie</title><p id="c"></p><script>const before = document.cookie; document.cookie = "kept=1; max-age=3600"; document.getElementById("c").textContent = "before: " + (before || "none");</script>`,
 	}));
-	const server = createServer((req, res) => {
-		const path = new URL(req.url ?? "/", "http://x").pathname;
+	const server = createServer(async (req, res) => {
+		const url = new URL(req.url ?? "/", "http://x");
+		const path = url.pathname;
 		hits.set(path, (hits.get(path) ?? 0) + 1);
+		if (req.method === "POST") {
+			const chunks: Buffer[] = [];
+			for await (const chunk of req) chunks.push(chunk as Buffer);
+			posted.push(Buffer.concat(chunks).toString());
+		}
+		if (path === "/done") {
+			res.writeHead(200, { "Content-Type": "text/html" });
+			return res.end(`<title>Done</title><p>You searched ${url.searchParams.get("q")} in size ${url.searchParams.get("size")}</p>`);
+		}
+		if (path === "/report.csv") {
+			res.writeHead(200, { "Content-Type": "text/csv", "Content-Disposition": 'attachment; filename="report.csv"' });
+			return res.end("a,b\n1,2\n");
+		}
 		const page = pages.get(path);
 		res.writeHead(page === undefined ? 404 : 200, { "Content-Type": "text/html" });
 		res.end((page ?? "<title>Missing</title>").replaceAll("PORT", String((server.address() as AddressInfo).port)));
@@ -85,11 +108,11 @@ async function site(t: TestContext) {
 			return [{ address, family: 4 }];
 		},
 	};
-	return { hits, port, fetch, url: (host: string, path = "/") => `http://${host}.test:${port}${path}` };
+	return { hits, posted, port, fetch, url: (host: string, path = "/") => `http://${host}.test:${port}${path}` };
 }
 
-/** gaidin with profiles personal and work, and scout, given personal; approvals answered by `decide` (default: once). */
-async function start(t: TestContext, options: { decide?: (r: ApprovalRequest) => "once" | "always" | "deny"; idleMs?: number } = {}) {
+/** gaidin with profiles personal and work, and scout, given personal; approvals answered by `decide` (default: once), or left waiting. */
+async function start(t: TestContext, options: { decide?: (r: ApprovalRequest) => "once" | "always" | "deny" | "wait"; idleMs?: number } = {}) {
 	const web = await site(t);
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -107,12 +130,13 @@ async function start(t: TestContext, options: { decide?: (r: ApprovalRequest) =>
 	host.approvals.onChange((r) => {
 		if (r.status !== "pending") return;
 		asked.push(r);
-		void host.approvals.decide(r.id, options.decide?.(r) ?? "once", "test");
+		const decision = options.decide?.(r) ?? "once";
+		if (decision !== "wait") void host.approvals.decide(r.id, decision, "test");
 	});
 	await host.agents.add({ id: "scout", name: "Scout", job: "Reads the web" });
 	await host.agents.update("scout", { profiles: ["personal"] });
 	const scout = await host.agents.home("scout");
-	return { host, scout, asked, ...web };
+	return { host, dir, scout, asked, ...web };
 }
 
 async function say(conversation: Conversation, text: string): Promise<string> {
@@ -121,6 +145,7 @@ async function say(conversation: Conversation, text: string): Promise<string> {
 	return assistantText(await conversation.commit((tx) => tx.entry(settled.answer), context)) ?? "";
 }
 
+const TOOLS = ["browser_open", "browser_snapshot", "browser_screenshot", "browser_tabs", "browser_click", "browser_type", "browser_select", "browser_back", "browser_upload"];
 const offered = async (conversation: Conversation) => (await conversation.agent(context)).tools.map((tool) => tool.name).filter((name) => name.startsWith("browser_"));
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -152,9 +177,9 @@ test("a snapshot is cut at a line's end, saying how long it was", () => {
 test("a profile goes only to agents given it: another is refused, not asked, and the tools are offered only with one", { skip }, async (t) => {
 	const { host, scout, asked, url } = await start(t);
 	assert.deepEqual(await offered(host.root), []);
-	assert.deepEqual(await offered(scout), ["browser_open", "browser_snapshot", "browser_screenshot", "browser_tabs"]);
+	assert.deepEqual(await offered(scout), TOOLS);
 	// A thread starts with its agent's home settings, browser or not.
-	assert.deepEqual(await offered(await host.threads.start({ agent: "scout", origin: "app" })), ["browser_open", "browser_snapshot", "browser_screenshot", "browser_tabs"]);
+	assert.deepEqual(await offered(await host.threads.start({ agent: "scout", origin: "app" })), TOOLS);
 	assert.deepEqual(await offered(await host.threads.start({ origin: "app" })), []);
 	const refused = await say(scout, CALL("browser_open", { profile: "work", url: url("public") }));
 	assert.match(refused, /Scout hasn't been given the browser profile work; it has personal\./);
@@ -166,7 +191,7 @@ test("a profile goes only to agents given it: another is refused, not asked, and
 	assert.deepEqual(await offered(scout), []);
 	assert.equal((await host.agents.list()).find((a) => a.id === "scout")!.profiles, undefined);
 	await host.agents.update("gaidin", { profiles: ["work"] });
-	assert.deepEqual(await offered(host.root), ["browser_open", "browser_snapshot", "browser_screenshot", "browser_tabs"]);
+	assert.deepEqual(await offered(host.root), TOOLS);
 });
 
 test("browser_open asks for a host that isn't allowed for good, and gives the page with refs as outside text", { skip }, async (t) => {
@@ -212,7 +237,7 @@ test("a page's own navigation goes ahead on its host and to hosts allowed for go
 test("private addresses are refused, for a page and for what a page loads", { skip }, async (t) => {
 	const { scout, url, hits } = await start(t);
 	const lan = await say(scout, CALL("browser_open", { profile: "personal", url: url("lan") }));
-	assert.match(lan, new RegExp(`Couldn't open ${url("lan")}: stopped, ${url("lan")} \\(lan.test resolves to 192.168.3.177, a private or reserved address\\)`));
+	assert.match(lan, new RegExp(`Couldn't open ${url("lan")}: the page tried to go to ${url("lan")}, which was refused: lan.test resolves to 192.168.3.177, a private or reserved address`));
 	assert.match(await say(scout, CALL("browser_open", { profile: "personal", url: "http://10.1.2.3/" })), /10\.1\.2\.3 is a private or reserved address/);
 	await say(scout, CALL("browser_open", { profile: "personal", url: url("public", "/lan-image") }));
 	assert.equal(hits.get("/lan-image"), 1);
@@ -279,3 +304,113 @@ test("at most maxOpen profiles are open, the least recently used idle one closin
 	assert.deepEqual(["a", "b", "c"].map((n) => browsers.isOpen(n)), [true, false, true]);
 });
 
+
+const ref = (text: string, line: RegExp) => new RegExp(`${line.source} \\[ref=(\\w+)\\]`).exec(text.replaceAll('\\"', '"'))?.[1] ?? "none";
+
+test("a ref's part is cut from the snapshot by indentation", () => {
+	const snapshot = ["- main [ref=e1]:", "  - list [ref=e2]:", "    - listitem [ref=e3]: one", "    - listitem [ref=e4]: two", "  - button \"Go\" [ref=e5]"].join("\n");
+	assert.equal(partOf(snapshot, "e2"), ["- list [ref=e2]:", "  - listitem [ref=e3]: one", "  - listitem [ref=e4]: two"].join("\n"));
+	assert.equal(partOf(snapshot, "e5"), "- button \"Go\" [ref=e5]");
+	assert.equal(partOf(snapshot, "e9"), undefined);
+});
+
+test("acting asks after a page, naming the element and host, and acting without asking lets later actions through", { skip }, async (t) => {
+	const { host, scout, asked, url } = await start(t, { decide: (r) => (r.tool === "browser_click" ? "always" : "once") });
+	await host.agents.update("scout", { hosts: ["public.test"] });
+	const page = await say(scout, CALL("browser_open", { profile: "personal", url: url("public", "/form") }));
+	assert.equal(asked.length, 0);
+	// Looking closer at a part keeps the page's refs.
+	await say(scout, CALL("browser_snapshot", { profile: "personal", ref: ref(page, /combobox "Size"/) }));
+	const box = ref(page, /textbox "Query"/);
+	const clicked = await say(scout, CALL("browser_click", { profile: "personal", ref: box }));
+	assert.match(clicked, /Profile personal, tab 1 of 1: \\"Form\\"/);
+	assert.deepEqual(asked.map((r) => [r.tool, r.summary, r.always?.kind, r.always?.value]), [
+		["browser_click", `click textbox "Query" [ref=${box}] on public.test in browser profile personal, after reading outside text (browser_open, browser_snapshot)`, "act-host", "personal/public.test"],
+	]);
+	assert.deepEqual((await host.agents.list()).find((a) => a.id === "scout")?.actHosts, { personal: ["public.test"] });
+	// Allowed for that host now: these don't ask.
+	await say(scout, CALL("browser_select", { profile: "personal", ref: ref(page, /combobox "Size"/), values: ["Medium"] }));
+	const done = await say(scout, CALL("browser_type", { profile: "personal", ref: box, text: "lanterns", submit: true }));
+	assert.match(done, /You searched lanterns in size m/);
+	assert.equal(asked.length, 1);
+	// Another agent with the profile still asks.
+	await host.agents.update("gaidin", { profiles: ["personal"] });
+	await host.approvals.setFetchHosts(["public.test"]);
+	const theirs = await say(host.root, CALL("browser_open", { profile: "personal", url: url("public", "/form") }));
+	await say(host.root, CALL("browser_click", { profile: "personal", ref: ref(theirs, /button "Go"/) }));
+	assert.deepEqual(asked.map((r) => r.agent), ["scout", undefined]);
+});
+
+test("a password field is refused, not asked, and a ref that isn't in the last snapshot isn't acted on", { skip }, async (t) => {
+	const { host, scout, asked, url } = await start(t);
+	await host.agents.update("scout", { hosts: ["public.test"] });
+	const page = await say(scout, CALL("browser_open", { profile: "personal", url: url("public", "/login") }));
+	const refused = await say(scout, CALL("browser_type", { profile: "personal", ref: ref(page, /textbox "Pass"/), text: "hunter2" }));
+	assert.match(refused, /That's a password field\. Passwords aren't typed by the model; tell Brad the page needs signing in\./);
+	assert.equal(asked.length, 0);
+	assert.match(await say(scout, CALL("browser_click", { profile: "personal", ref: "e999" })), /No element e999 in the page's last snapshot; take a new snapshot/);
+	assert.equal(asked.length, 0);
+});
+
+test("a page that changes while the owner is asked isn't acted on", { skip }, async (t) => {
+	const { host, scout, asked, url } = await start(t, { decide: (r) => (r.agent === "scout" && r.tool === "browser_click" ? "wait" : "once") });
+	await host.agents.update("scout", { hosts: ["public.test"] });
+	await host.agents.update("gaidin", { profiles: ["personal"] });
+	const page = await say(scout, CALL("browser_open", { profile: "personal", url: url("public", "/form") }));
+	const answer = say(scout, CALL("browser_click", { profile: "personal", ref: ref(page, /button "Go"/) }));
+	const waiting = await until(() => asked.find((r) => r.tool === "browser_click"));
+	// Meanwhile gaidin takes the profile to the same form on another host.
+	await say(host.root, CALL("browser_open", { profile: "personal", url: url("other", "/form") }));
+	await host.approvals.decide(waiting.id, "once", "test");
+	assert.match(await answer, /The page changed while Brad was asked: it was button \\"Go\\" \[ref=\w+\] on public\.test, and now .* on other\.test\. Take a new snapshot and try again\./);
+});
+
+test("a download lands read-only in the agent's downloads/, and a dialog is dismissed and reported", { skip }, async (t) => {
+	const { host, dir, scout, url } = await start(t);
+	await host.agents.update("scout", { hosts: ["public.test"], actHosts: { personal: ["public.test"] } });
+	const page = await say(scout, CALL("browser_open", { profile: "personal", url: url("public", "/file") }));
+	const clicked = await say(scout, CALL("browser_click", { profile: "personal", ref: ref(page, /link "Report"/) }));
+	const saved = /saved as (downloads\/[\w-]+-report\.csv) \(1 KB\); it's from the web/.exec(clicked)?.[1];
+	assert.ok(saved !== undefined, clicked);
+	assert.equal(readFileSync(join(sandboxOf(dir, "scout"), saved), "utf8"), "a,b\n1,2\n");
+	assert.equal(existsSync(join(sandboxOf(dir, "gaidin"), "downloads")) && readdirSync(join(sandboxOf(dir, "gaidin"), "downloads")).length, 0);
+
+	const confirm = await say(scout, CALL("browser_open", { profile: "personal", url: url("public", "/confirm") }));
+	const answered = await say(scout, CALL("browser_click", { profile: "personal", ref: ref(confirm, /button "Delete"/) }));
+	assert.match(answered, /Note: the page showed a confirm dialog, \\"Sure\?\\", which was dismissed\./);
+	assert.match(answered, /tab 1 of 1: \\"No\\"/);
+});
+
+test("an upload asks every time, naming the files, and only the agent's own files go", { skip }, async (t) => {
+	const { host, dir, scout, asked, posted, url } = await start(t);
+	await host.agents.update("scout", { hosts: ["public.test"], actHosts: { personal: ["public.test"] } });
+	writeFileSync(join(sandboxOf(dir, "scout"), "notes.txt"), "lantern notes");
+	const page = await say(scout, CALL("browser_open", { profile: "personal", url: url("public", "/upload") }));
+	const field = ref(page, /button "Attachment"/);
+	await say(scout, CALL("browser_upload", { profile: "personal", ref: field, files: ["notes.txt"] }));
+	assert.deepEqual(asked.map((r) => [r.summary, r.always]), [[`upload notes.txt from the sandbox into button "Attachment" [ref=${field}] on public.test in browser profile personal, after reading outside text (browser_open)`, undefined]]);
+	await say(scout, CALL("browser_click", { profile: "personal", ref: ref(page, /button "Send"/) }));
+	assert.match(posted.join(), /filename="notes\.txt"[\s\S]*lantern notes/);
+	assert.match(await say(scout, CALL("browser_upload", { profile: "personal", ref: field, files: ["/etc/hostname"] })), /Can't upload \/etc\/hostname/);
+});
+
+test("browser_back returns to the page before, and says when there's none", { skip }, async (t) => {
+	const { host, scout, url } = await start(t);
+	await host.agents.update("scout", { hosts: ["public.test"], actHosts: { personal: ["public.test"] } });
+	const page = await say(scout, CALL("browser_open", { profile: "personal", url: url("public") }));
+	assert.match(await say(scout, CALL("browser_click", { profile: "personal", ref: ref(page, /link "Landing"/) })), new RegExp(`URL: ${url("public", "/landing")}`));
+	assert.match(await say(scout, CALL("browser_back", { profile: "personal" })), new RegExp(`URL: ${url("public")}\\\\n`));
+	// A profile that hasn't opened anything has nowhere to go back to.
+	await host.agents.update("gaidin", { profiles: ["work"] });
+	assert.match(await say(host.root, CALL("browser_back", { profile: "work" })), /There's no earlier page in this tab\./);
+});
+
+async function until<T>(get: () => T | undefined, timeoutMs = 10_000): Promise<T> {
+	const end = Date.now() + timeoutMs;
+	for (;;) {
+		const value = get();
+		if (value !== undefined) return value;
+		if (Date.now() > end) throw new Error("timed out");
+		await pause(20);
+	}
+}

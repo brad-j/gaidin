@@ -52,11 +52,11 @@ export async function withFiles(text: string, files: readonly Attached[], sandbo
 
 /**
  * Saves `data` in the sandbox's uploads/, which commands see read-only, as `<prefix>-<name>`, and gives its path there.
- * Whatever had that name goes first, so a symlink left in its place isn't followed.
+ * Whatever had that name goes first, so a symlink left in its place isn't followed. `dir` is downloads/ for the browser's.
  */
-export function saveUpload(sandbox: string, prefix: string, name: string, data: Uint8Array): string {
-	const path = `uploads/${prefix}-${name.replace(/[^\w.-]+/g, "_")}`;
-	mkdirSync(join(sandbox, "uploads"), { recursive: true });
+export function saveUpload(sandbox: string, prefix: string, name: string, data: Uint8Array, dir: "uploads" | "downloads" = "uploads"): string {
+	const path = `${dir}/${prefix}-${name.replace(/[^\w.-]+/g, "_")}`;
+	mkdirSync(join(sandbox, dir), { recursive: true });
 	rmSync(join(sandbox, path), { force: true });
 	writeFileSync(join(sandbox, path), data);
 	return path;

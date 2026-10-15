@@ -202,6 +202,13 @@ test("an agent's browser profiles are listed, given and taken away through the r
 	assert.equal((await post("/api/agents/save", { id: "scout", profiles: ["bank"] })).status, 400);
 	const taken = (await (await post("/api/agents/save", { id: "scout", profiles: [] })).json()) as Entry;
 	assert.equal(taken.profiles, undefined);
+
+	// The hosts it acts on without asking: each profile named gets its whole list, and the others stay.
+	type Acting = { actHosts?: Record<string, string[]> };
+	const save = async (actHosts: unknown) => ((await (await post("/api/agents/save", { id: "scout", actHosts })).json()) as Acting).actHosts;
+	assert.deepEqual(await save([{ profile: "work", hosts: ["a.example", "b.example"] }, { profile: "personal", hosts: ["c.example"] }]), { work: ["a.example", "b.example"], personal: ["c.example"] });
+	assert.deepEqual(await save([{ profile: "work", hosts: ["b.example"] }]), { work: ["b.example"], personal: ["c.example"] });
+	assert.equal(await save([{ profile: "work", hosts: [] }, { profile: "personal", hosts: [] }]), undefined);
 });
 
 test("files sent from the app: an image goes to the model, another file to the agent's sandbox, and a cross-site upload is refused", async (t) => {

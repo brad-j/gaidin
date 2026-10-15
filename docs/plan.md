@@ -47,12 +47,13 @@
 33. The switch: the app is served at `/`, with the service worker, manifest and icons its own at the paths they had, so installed apps and devices signed up for notifications carry over; the app's old `/app/` addresses redirect, a notification opens the conversation it came from, and the web view and its tests are gone (protocol 4) ([Surfaces](surfaces.md#the-app)).
 34. Files between agents: `message_agent` and `hand_off` take up to 10 files from the sender's sandbox, read through its confined file tools, and the receiver gets copies in its `uploads/`, read-only to its commands, with a note of where they are, as for Slack's and the app's files. An approval for either names the files ([Tools](tools.md#other-agents)).
 35. The browser's reading tools: profiles named in the settings and given per agent in its roster entry, a Chromium per profile with its own sandbox and its cookies in `<data>/browser/`, and `browser_open`, `browser_snapshot`, `browser_screenshot` and `browser_tabs`, offered only to agents with a profile. Opening a page asks as a fetch does, a page's own navigations to other hosts are stopped, and private addresses are refused for everything a page loads. `setup.sh` installs Chromium with its AppArmor profile (protocol 7) ([Tools](tools.md#browser), [Security](security.md#the-browser)).
+36. The browser's acting tools: `browser_click`, `browser_type`, `browser_select`, `browser_back` and `browser_upload`. Acting asks while outside text is in the conversation, naming the element as the snapshot showed it, unless the owner let the agent act on that site in that profile without asking (a new second button, kept in the roster entry and removable on the settings page), and happens only if the page is still what was asked about. Typing into a password field is refused, and uploads ask every time. Downloads land in the agent's read-only `downloads/`, and dialogs are dismissed and reported. Refs now come only from whole-page snapshots, since snapshotting one element renumbered the page's refs (protocol 8) ([Tools](tools.md#browser)).
 
 ## Next
 
 Candidates:
 
-- Several named agents, designed below: Slack's channel per agent, the one step left now the app (designed below) has replaced the web view and holds the agents' pages. Then connectors (MCP servers with OAuth, tokens held by the server, granted per agent), the rest of the browser (designed below: acting, downloads and the take-over view), and owner-written allow and ask-first rules, in that order.
+- Several named agents, designed below: Slack's channel per agent, the one step left now the app (designed below) has replaced the web view and holds the agents' pages. Then connectors (MCP servers with OAuth, tokens held by the server, granted per agent), the rest of the browser (designed below: the take-over view), and owner-written allow and ask-first rules, in that order.
 - Release polish: a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
 
 Not planned: branching from any message in the web view, since each thread is already a conversation of its own; push-to-talk, since the owner dictates with superwhisper; and projects or image generation in the app.
@@ -159,7 +160,7 @@ Each step ends with `pnpm check` passing and is a commit of its own.
 
 ## Design: the browser
 
-Steps 1 and 2 are done (item 35). An agent that's been given a browser profile can open pages, read them, click and type, and stay signed in across conversations and restarts. The owner can watch that browser from the app and take it over to sign in, solve a CAPTCHA or confirm something. Today gaidin reads only public pages and APIs through `fetch_url`.
+Steps 1 to 3 are done (items 35 and 36). An agent that's been given a browser profile can open pages, read them, click and type, and stay signed in across conversations and restarts. The owner can watch that browser from the app and take it over to sign in, solve a CAPTCHA or confirm something. Today gaidin reads only public pages and APIs through `fetch_url`.
 
 It also makes handoffs easier on purpose. Grok Bot's bots share one computer, so every sign-in reaches every bot. Here a profile is granted like a workspace, so two agents that need the same sign-ins share a profile and nothing else.
 
@@ -197,14 +198,14 @@ One extension, `browser`, on only for agents with a profile:
 
 - `browser_open(profile, url)` loads a page in the profile's tab and returns its title, URL and an accessibility snapshot with a ref for each control, built from Playwright's accessibility tree as Playwright MCP's snapshots are. It's much cheaper than a screenshot.
 - `browser_snapshot(profile)` and `browser_screenshot(profile)`. A screenshot comes back as an image in the tool result, which Pi Durable 1.1.0 supports.
-- `browser_click(profile, ref)`, `browser_type(profile, ref, text, submit?)`, `browser_select`, `browser_back` and `browser_tabs`.
+- `browser_click(profile, ref)`, `browser_type(profile, ref, text, submit?)`, `browser_select`, `browser_back`, `browser_tabs` and `browser_upload(profile, ref, files)`.
 - `browser_hand_over(profile, reason)` asks the owner to take over and waits, durably as `ask_owner` does, until the owner presses Done in the app. It then returns a fresh snapshot.
 
 ### Rules
 
 - **Navigation follows `fetch_url`'s rule.** The host must be allowed for good for that agent or be a search result in the conversation; otherwise `browser_open` asks. A navigation that a click or a page's script starts in the main frame is checked the same way: it's stopped, and the model is told to open the URL with `browser_open`, which asks. Subresources such as scripts, images and a site's own API calls aren't checked for their host. A page can already send what it shows to its own servers. A page's own host is allowed, so following links on a site needs no new approval, and a redirect of an allowed navigation goes ahead.
 - **Private addresses are refused** for every request a page makes, as `fetch_url` refuses them, so a page can't reach the LAN, the tailnet or gaidin's own port. Added while building step 2.
-- **Acting** (click, type, select) asks while outside text is in the conversation, unless the host is allowed for acting without asking (above). The request names the agent, the profile, the host and what it's about to do.
+- **Acting** (click, type, select) asks while outside text is in the conversation, unless the host is allowed for acting without asking (above). The request names the agent, the profile, the host and what it's about to do, and the action happens only if the page is still on that host and the ref still that element. Uploads ask every time, without the second button, since they send the sandbox's files away; that was decided while building step 3.
 - **Take-over.** While the owner holds a profile, the agent's browser tools for it wait. The owner's input goes to the browser and never through the model.
 
 ### The take-over view
@@ -228,7 +229,7 @@ One extension, `browser`, on only for agents with a profile:
 
 1. Done: a spike on the VM: Playwright's Chromium under the service's systemd limits and AppArmor, memory with two profiles open, and a screencast to a test page (spike results above).
 2. Done: profiles in the roster and settings, plus the read tools (open, snapshot, screenshot, tabs) with the navigation rule (item 35). Tests use a site the test serves on loopback, with no network. The app's settings page gives an agent profiles.
-3. The acting tools and their approvals, then downloads and file inputs.
+3. Done: the acting tools and their approvals, then downloads and file inputs (item 36).
 4. Hand-over and the take-over view in moiraine, with Playwright e2e tests there.
 
 Each step ends with `pnpm check` passing and is a commit of its own.

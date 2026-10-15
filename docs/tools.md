@@ -16,7 +16,9 @@ Every [agent](concepts.md#agents) has these tools, and each works on that agent'
 | alert investigations | in the server; each is a job run | read-only tools only | for a host not allowed for good |
 | `fetch_url` | in the server | the public internet only | for a host not allowed for good, unless `web_search` returned the URL |
 | `web_search` | in the server | the configured search backend | no |
-| `browser_open`, `browser_snapshot`, `browser_screenshot`, `browser_tabs` | in the server, in a Chromium per profile | the public internet, signed in to sites | opening a page, for a host not allowed for good, unless `web_search` returned the URL; refused for a profile the agent wasn't given |
+| `browser_open`, `browser_snapshot`, `browser_screenshot`, `browser_tabs`, `browser_back` | in the server, in a Chromium per profile | the public internet, signed in to sites | opening a page, for a host not allowed for good, unless `web_search` returned the URL; refused for a profile the agent wasn't given |
+| `browser_click`, `browser_type`, `browser_select` | the same | what the signed-in sites allow | while outside text is in the conversation, unless the agent may act on that site without asking; typing into a password field is refused |
+| `browser_upload` | the same | sends files from the agent's sandbox to a site | every call |
 | `load_extension`, `remove_extension` | in the server | the sandbox's `extensions/`, the owner | every load and removal |
 | tools gaidin wrote | in a box of their own | their fetches, through the server | for a host not allowed for good |
 | `workspace_run`, `workspace_read`, `workspace_write`, `workspace_edit` | on a workspace, under bubblewrap | that machine's project roots, and the network | every call |
@@ -143,12 +145,19 @@ A Chromium that stays signed in to sites, for agents you've given a browser prof
 - `browser_snapshot` gives the current page's snapshot again, or with a `ref` only the part under that element, in full. A snapshot is cut at about 4,000 tokens (16,000 characters), and the result says so; a busy page's whole snapshot is three or four times that.
 - `browser_screenshot` returns a JPEG of the page at 1280 by 800, as an image the model sees. A snapshot is cheaper; a screenshot shows layout and images.
 - `browser_tabs` lists the profile's tabs, and with `select` or `close` switches to or closes one. A tab a page opens becomes the current one.
+- `browser_click`, `browser_type` and `browser_select` act on an element by its ref in the page's latest snapshot: click it, type into it (replacing what's there, and pressing Enter with `submit`), or choose options in a select box by value or label. Each returns the page as the action left it.
+- `browser_back` goes back a page in the current tab.
+- `browser_upload` puts up to 10 files from the agent's sandbox, up to 20 MB each, in a file field; they go to the site when the page sends its form.
 
 Opening a page asks as `fetch_url` does: unless the host is allowed for good for that agent, or `web_search` returned that exact URL in the conversation, it waits for your [approval](security.md#approvals), whose second button allows the host for good for the agent, for its fetches too. A page's own navigations, from a link it follows or its script, go ahead on its own host and to hosts allowed for good; any other is stopped, the page stays as it was, and the next result names the URL so the model can open it with `browser_open`, which asks. A redirect of an allowed navigation goes ahead. Private, LAN, tailnet and loopback addresses are refused as `fetch_url` refuses them, for a page and for everything a page loads ([Security](security.md#the-browser)). What a page shows is outside text and is labelled as coming from the web.
 
-Each profile is its own Chromium, started when a tool first uses it and closed after 15 minutes unused; at most two are open at once, and the least recently used idle one closes to make room. A profile's directory, `<data>/browser/<profile>/`, keeps its cookies and site storage, so sign-ins outlast closing and restarts. Open pages don't: a profile that opens again goes back to the last page it was on. Downloads are refused. The browser's tools aren't rerun after a restart; a call a restart cut off is reported as interrupted.
+Clicking, typing and choosing ask while outside text is in the conversation, which after reading any page it is, so in practice each one asks, naming the element as the snapshot showed it and the site: `click button "Delete" [ref=e12] on mail.example.com in browser profile personal`. The approval's second button lets that agent act on that site in that profile without asking from then on; the app's settings page lists those sites under "acts on", where you remove them. An answer can come days later, so the action happens only if the page is still on that site and the ref is still that element; otherwise the model is told the page changed and takes a new snapshot. `browser_type` refuses a password field, whatever's been allowed. `browser_upload` asks every time, naming the files, even on a site the agent acts on without asking, since it sends your files away. `browser_back` doesn't ask: the page it goes back to was allowed when it was opened.
 
-These tools only read. Signing in is yours to do: the model never types a password, and until the take-over view exists ([Plan](plan.md#design-the-browser)), there's no way to sign a profile in from the app.
+A download a page starts is saved in the agent's sandbox under `downloads/`, which its commands see read-only, as `<id>-<name>`, up to 20 MB; the action's result says where, after waiting up to a minute for it. A page's dialogs are dismissed (a confirm answers cancel) and the result says what they said; leaving a page goes ahead.
+
+Each profile is its own Chromium, started when a tool first uses it and closed after 15 minutes unused; at most two are open at once, and the least recently used idle one closes to make room. A profile's directory, `<data>/browser/<profile>/`, keeps its cookies and site storage, so sign-ins outlast closing and restarts. Open pages don't: a profile that opens again goes back to the last page it was on, and the refs of the pages before are gone. The browser's tools aren't rerun after a restart; a call a restart cut off is reported as interrupted.
+
+Signing in is yours to do: the model never types a password, and until the take-over view exists ([Plan](plan.md#design-the-browser)), there's no way to sign a profile in from the app.
 
 ## Workspaces
 

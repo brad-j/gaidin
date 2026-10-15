@@ -11,8 +11,8 @@
 //
 // A shell command could swap a directory for a symlink between a file tool's check and its use. Shell
 // commands in a sandbox share its lock and file operations take it alone, and nothing in the sandbox outlives its
-// command, so nothing can change the sandbox in that gap. The server also writes into two directories
-// while commands run, a long command's full output and files sent in Slack; commands see those read-only,
+// command, so nothing can change the sandbox in that gap. The server also writes into three directories
+// while commands run, a long command's full output, files sent in, and the browser's downloads; commands see those read-only,
 // so none can swap one for a symlink that carries the server's writes outside. Redaction (redact.ts)
 // still applies on top.
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -24,7 +24,7 @@ import { err, ExecutionError, FileError, ok, type Result, type ShellExecOptions,
 import { RedactingEnv, type Redactor } from "./redact.ts";
 
 /** Directories in the sandbox the server writes into while commands run. Commands see them read-only. */
-export const SERVER_DIRS = [".tmp", "uploads"];
+export const SERVER_DIRS = [".tmp", "uploads", "downloads"];
 
 /** Makes each of SERVER_DIRS a real directory, replacing a symlink or file left in its place. */
 export async function prepareServerDirs(root: string): Promise<void> {
