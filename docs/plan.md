@@ -55,7 +55,7 @@ Proposed, not built. A roster of named agents, each with its own job, standing i
 Decided with the owner:
 
 - Slack has a channel per agent, all on the one Slack app.
-- Memory has shared notes about the owner, which every agent sees, and work notes per agent. An agent's write to a shared note always asks.
+- Memory has shared notes about the owner, which every agent sees, and work notes per agent. Both ask as notes do today: a write asks while outside text is in the conversation's context, and a message from another agent counts as outside text.
 - The current gaidin becomes the default agent and keeps everything it has.
 - The roster lives in the database and is edited from the web view, not the settings file.
 
@@ -81,7 +81,7 @@ New agents' sandboxes are `<data>/agents/<id>/sandbox`, outside the default agen
 ### What each agent sees and can do
 
 - Its system prompt opens with its name and job ("You are Scout, one of Brad's agents. Your job: ...") and lists the other agents it may message, with their jobs. The default agent's preamble stays as it is.
-- Notes: the shared notes, then its own work notes. `remember` writes a work note unless asked for a shared one. Note ids in the prompt and tools read `s12` (shared) or `w4` (work); the stored numbers don't change. Writing, changing or forgetting a shared note always asks, from any agent. That includes the default agent, which today writes a note without asking when nothing from outside is in the conversation. Work notes ask as notes do today, after outside text.
+- Notes: the shared notes, then its own work notes. `remember` writes a work note unless asked for a shared one. Note ids in the prompt and tools read `s12` (shared) or `w4` (work); the stored numbers don't change. Writing, changing or forgetting either kind asks as notes do today, after outside text. A shared note reaches every agent, so a bad one left by a write after compaction (the gap in [Security](security.md#known-gaps)) would reach them all; the memory page shows who wrote each note, and deleting it takes it out of every prompt.
 - Reminders and jobs: it lists, cancels and is told about only its own. A job runs as the agent that made it, with that agent's tools, sandbox and grants. The limit of 20 jobs stays a total across agents.
 - `search_history` and `read_history` find only its own conversations. The history index gains an agent column and is rebuilt from the transcript at start, as it already can be.
 - Fetches: hosts the owner always allowed for that agent, plus search results in the same conversation as today. "Always allow" adds the host for that agent only.
