@@ -1,0 +1,11 @@
+# Lets the browser's Chromium (src/browser/) create the user namespaces its own sandbox needs, as bwrap.apparmor does for
+# bubblewrap; without it Ubuntu 24.04 confines them and Chromium won't start with its sandbox. setup.sh installs Chromium
+# under /opt/gaidin/browsers, which only root can change: the profile is unconfined, so the service mustn't be able to
+# put another program at this path. Installed as /etc/apparmor.d/gaidin-chromium by setup.sh.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile gaidin-chromium /opt/gaidin/browsers/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell flags=(unconfined) {
+  userns,
+  include if exists <local/gaidin-chromium>
+}

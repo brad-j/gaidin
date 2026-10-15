@@ -43,7 +43,7 @@ const clientMessage = object({
 	id: optional(string),
 	name: optional(string),
 	job: optional(string),
-	change: optional(object({ name: optional(string), job: optional(string), channel: optional(string), canMessage: optional(array(string)), workspaces: optional(array(string)) })),
+	change: optional(object({ name: optional(string), job: optional(string), channel: optional(string), canMessage: optional(array(string)), workspaces: optional(array(string)), profiles: optional(array(string)) })),
 });
 const serverMessage = object({ type: literal("line", "done"), text: optional(string), status: optional(string) });
 
@@ -75,6 +75,7 @@ export function describeAgent(agent: AgentEntry): string {
 		agent.channel === undefined ? undefined : `Slack ${agent.channel}`,
 		`may message: ${agent.canMessage.join(", ") || "none"}`,
 		`workspaces: ${agent.workspaces === undefined ? "all" : agent.workspaces.join(", ") || "none"}`,
+		agent.profiles === undefined ? undefined : `browser profiles: ${agent.profiles.join(", ")}`,
 		agent.archived === undefined ? undefined : "archived",
 	];
 	return `${agent.id} (${agent.name}): ${parts.filter((p) => p !== undefined).join(" · ")}`;
@@ -134,7 +135,7 @@ export async function serve(config: Config) {
 
 	const web = config.web === undefined
 		? undefined
-		: createWebServer({ harness, root, agents: host.agents, workspaces: host.workspaces, uploads: host.uploads, avatars: host.avatars, mirror: slack?.mirror, threads: host.threads, user: config.web.user, app: config.web.app, switchable, approvals, models: config.model.choices, budget, timeline, history, skills, stop, snooze: reminders.snooze, push });
+		: createWebServer({ harness, root, agents: host.agents, workspaces: host.workspaces, profiles: host.profiles, uploads: host.uploads, avatars: host.avatars, mirror: slack?.mirror, threads: host.threads, user: config.web.user, app: config.web.app, switchable, approvals, models: config.model.choices, budget, timeline, history, skills, stop, snooze: reminders.snooze, push });
 	if (web !== undefined) {
 		const port = config.web!.port;
 		// Loopback only: tailscale serve is the way in, and it vouches for who's asking.
@@ -225,7 +226,7 @@ export async function serve(config: Config) {
 		web?.closeAllConnections();
 		web?.close();
 		server.close();
-		await harness.close(context);
+		await host.close();
 		process.exit(0);
 	}
 	process.once("SIGINT", shutdown);

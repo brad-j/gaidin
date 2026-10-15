@@ -17,7 +17,7 @@ const USAGE = `usage: gaidin [--config FILE] COMMAND
   agent add ID --name NAME [--job TEXT]
                             add an agent
   agent set ID [--name NAME] [--job TEXT] [--channel SLACK_ID]
-               [--can-message ID,ID] [--workspaces NAME,NAME]
+               [--can-message ID,ID] [--workspaces NAME,NAME] [--profiles NAME,NAME]
                             change an agent; an empty list clears it
   doctor [--push]           check the settings and everything the server needs
   config                    print the settings in use, secrets shortened
@@ -35,6 +35,7 @@ const { values, positionals } = parseArgs({
 		channel: { type: "string" },
 		"can-message": { type: "string" },
 		workspaces: { type: "string" },
+		profiles: { type: "string" },
 		push: { type: "boolean" },
 		help: { type: "boolean", short: "h" },
 	},
@@ -82,6 +83,8 @@ switch (command) {
 		if (canMessage !== undefined) change.canMessage = canMessage;
 		const workspaces = list(values.workspaces);
 		if (workspaces !== undefined) change.workspaces = workspaces;
+		const profiles = list(values.profiles);
+		if (profiles !== undefined) change.profiles = profiles;
 		process.exit(await agents(loaded.config, { type: "agent", action: "set", id: id!, change }));
 	}
 	case "doctor":

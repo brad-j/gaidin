@@ -16,6 +16,7 @@ Every [agent](concepts.md#agents) has these tools, and each works on that agent'
 | alert investigations | in the server; each is a job run | read-only tools only | for a host not allowed for good |
 | `fetch_url` | in the server | the public internet only | for a host not allowed for good, unless `web_search` returned the URL |
 | `web_search` | in the server | the configured search backend | no |
+| `browser_open`, `browser_snapshot`, `browser_screenshot`, `browser_tabs` | in the server, in a Chromium per profile | the public internet, signed in to sites | opening a page, for a host not allowed for good, unless `web_search` returned the URL; refused for a profile the agent wasn't given |
 | `load_extension`, `remove_extension` | in the server | the sandbox's `extensions/`, the owner | every load and removal |
 | tools gaidin wrote | in a box of their own | their fetches, through the server | for a host not allowed for good |
 | `workspace_run`, `workspace_read`, `workspace_write`, `workspace_edit` | on a workspace, under bubblewrap | that machine's project roots, and the network | every call |
@@ -133,6 +134,21 @@ A fetch to a host you haven't allowed for good waits for your [approval](securit
 Finds pages for `fetch_url` to read: titles, URLs and snippets, best first, up to 10 (default 5). `topic: "news"` searches current events, and `timeRange` keeps results from the last day, week, month or year. Results are labelled as text from the web, and count as outside text for the [memory guard](#memory). Each result also records its URLs where the model can't write, so `fetch_url` reads one without asking ([fetch_url](#fetch_url)).
 
 The backend is a setting ([Deploying](deploy.md#settings)). Tavily is the one implemented: a search API with a free tier, called from the server with `search.apiKey`. The query goes only to the backend, so a search doesn't ask first, but whatever the model puts in a query reaches Tavily. Without a backend there's no `web_search`, and gaidin can only fetch URLs it already knows. A self-hosted engine such as SearXNG can be added as another backend; `src/search.ts` has one function per backend.
+
+## Browser
+
+A Chromium that stays signed in to sites, for agents you've given a browser profile. The settings name the profiles (`browser.profiles`, [Deploying](deploy.md#settings)), and each agent's roster entry lists the ones it may use: none for a new agent or the default agent until you give it one, on the app's settings page or with `gaidin agent set ID --profiles NAME`. Agents given the same profile share its sign-ins and nothing else. An agent with no profile isn't offered the browser's tools, and a call with a profile it wasn't given is refused.
+
+- `browser_open` loads a page in the profile's current tab and returns its title, its URL and an accessibility snapshot: the page's text, links and controls, each with a ref such as `e12`. It waits for the page to load, up to 30 seconds, and a few seconds more for it to settle.
+- `browser_snapshot` gives the current page's snapshot again, or with a `ref` only the part under that element, in full. A snapshot is cut at about 4,000 tokens (16,000 characters), and the result says so; a busy page's whole snapshot is three or four times that.
+- `browser_screenshot` returns a JPEG of the page at 1280 by 800, as an image the model sees. A snapshot is cheaper; a screenshot shows layout and images.
+- `browser_tabs` lists the profile's tabs, and with `select` or `close` switches to or closes one. A tab a page opens becomes the current one.
+
+Opening a page asks as `fetch_url` does: unless the host is allowed for good for that agent, or `web_search` returned that exact URL in the conversation, it waits for your [approval](security.md#approvals), whose second button allows the host for good for the agent, for its fetches too. A page's own navigations, from a link it follows or its script, go ahead on its own host and to hosts allowed for good; any other is stopped, the page stays as it was, and the next result names the URL so the model can open it with `browser_open`, which asks. A redirect of an allowed navigation goes ahead. Private, LAN, tailnet and loopback addresses are refused as `fetch_url` refuses them, for a page and for everything a page loads ([Security](security.md#the-browser)). What a page shows is outside text and is labelled as coming from the web.
+
+Each profile is its own Chromium, started when a tool first uses it and closed after 15 minutes unused; at most two are open at once, and the least recently used idle one closes to make room. A profile's directory, `<data>/browser/<profile>/`, keeps its cookies and site storage, so sign-ins outlast closing and restarts. Open pages don't: a profile that opens again goes back to the last page it was on. Downloads are refused. The browser's tools aren't rerun after a restart; a call a restart cut off is reported as interrupted.
+
+These tools only read. Signing in is yours to do: the model never types a password, and until the take-over view exists ([Plan](plan.md#design-the-browser)), there's no way to sign a profile in from the app.
 
 ## Workspaces
 

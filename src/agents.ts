@@ -65,6 +65,8 @@ export type AgentEntry = {
 	hosts: string[];
 	/** The workspaces it may use. Absent: every one, as for the default agent. */
 	workspaces?: string[];
+	/** The browser profiles it may use (src/browser/). Absent: none, the default agent's included. */
+	profiles?: string[];
 	/** The agents it may message and hand work to, by id. */
 	canMessage: string[];
 	/** Self-written extensions switched on for it besides the ones it loaded. */
@@ -167,6 +169,26 @@ export async function hideTools(tx: Tx, roster: Readonly<Roster>, names: readonl
 		const removed = doc.tools?.remove ?? [];
 		doc.tools = { remove: [...new Set([...removed, ...names])] };
 	}
+}
+
+/** The extension of the browser's tools (src/browser/). */
+export const BROWSER_EXTENSION = "browser";
+
+/** Selects the browser's extension in `agent`'s home conversation when it has a profile, and leaves it out when it has none. */
+async function offerBrowser(tx: Tx, agent: AgentEntry): Promise<void> {
+	const doc = await tx.doc(AgentDoc, toConversationId(agent.home));
+	if (Array.isArray(doc.extensions)) return; // a list of extensions selects only those already
+	const removed = (doc.extensions?.remove ?? []).filter((name) => name !== BROWSER_EXTENSION);
+	if ((agent.profiles ?? []).length === 0) removed.push(BROWSER_EXTENSION);
+	const add = doc.extensions?.add;
+	if (removed.length === 0 && add === undefined) {
+		delete doc.extensions;
+		return;
+	}
+	const selection: Exclude<NonNullable<AgentState["extensions"]>, string[]> = {};
+	if (add !== undefined) selection.add = [...add];
+	if (removed.length > 0) selection.remove = removed;
+	doc.extensions = selection;
 }
 
 /** Offers `agent` the self-written tools of the extensions on for it, and takes away the others', in its home conversation. */
@@ -392,7 +414,7 @@ export function createAgents(options: {
 
 /** What the owner can change about an agent. */
 /** `avatar: ""` takes the picture away. */
-export type AgentChange = Partial<Pick<AgentEntry, "name" | "job" | "channel" | "canMessage" | "workspaces" | "hosts" | "extensions" | "avatar">>;
+export type AgentChange = Partial<Pick<AgentEntry, "name" | "job" | "channel" | "canMessage" | "workspaces" | "profiles" | "hosts" | "extensions" | "avatar">>;
 
 /** The roster as the server manages it: the default agent's entry, adding and changing agents, and their home conversations. */
 export function createRoster(options: {
@@ -401,19 +423,26 @@ export function createRoster(options: {
 	dataDir: string;
 	/** Workspace names, which an agent may be given. */
 	workspaces: () => readonly string[];
+	/** Browser profile names, which an agent may be given. Default: none. */
+	profiles?: () => readonly string[];
 	/** The self-written tools, by extension name, which a new agent starts without. */
 	selfTools: () => { extension: string; tools: string[] }[];
 	/** Stops what an agent being archived has going: its jobs and reminders. Runs in the commit that archives it. */
 	archiving?: (tx: Tx, id: string) => Promise<void>;
 }) {
 	const { harness, root, dataDir } = options;
+	const profiles = options.profiles ?? (() => []);
 	const read = async () => rosterOf(harness, background);
 
-	/** Writes the default agent's entry if the roster has none, as on the first start with agents. */
+	/**
+	 * Writes the default agent's entry if the roster has none, as on the first start with agents, and leaves the browser's
+	 * tools out of the homes of agents without a profile, which matters once the settings give it profiles.
+	 */
 	async function start(): Promise<void> {
 		await root.commit(async (tx) => {
 			const doc = await tx.doc(Agents);
 			if (!doc.agents.some((a) => a.id === DEFAULT_AGENT)) doc.agents.unshift({ ...defaultEntry(), home: root.id, createdAt: Date.now() });
+			if (profiles().length > 0) for (const agent of doc.agents) await offerBrowser(tx, agent);
 		}, background);
 		for (const agent of (await read()).agents) await sandbox(agent.id);
 	}
@@ -435,6 +464,7 @@ export function createRoster(options: {
 		}
 		const known = options.workspaces();
 		for (const workspace of change.workspaces ?? []) if (!known.includes(workspace)) throw new Error(`There's no workspace ${workspace}.`);
+		for (const profile of change.profiles ?? []) if (!profiles().includes(profile)) throw new Error(`There's no browser profile ${profile}.`);
 	}
 
 	/** A new agent, with the default agent's model, thinking and built-in tools, and no instructions, grants or self-written tools. */
@@ -459,6 +489,8 @@ export function createRoster(options: {
 				if (base.thinkingLevel !== undefined) settings.thinkingLevel = base.thinkingLevel;
 				const removed = Array.isArray(base.tools) ? [] : (base.tools?.remove ?? []);
 				if (removed.length + hidden.length > 0) settings.tools = { remove: [...new Set([...removed, ...hidden])] };
+				// No profiles yet, so no browser.
+				if (profiles().length > 0) settings.extensions = { remove: [BROWSER_EXTENSION] };
 				(await tx.doc(AgentOf, home)).agent = id;
 				made = { id, name: fields.name.trim(), job: fields.job.trim(), home, hosts: [], workspaces: [], canMessage: [], extensions: [], createdAt: Date.now() };
 				doc.agents.push(JSON.parse(JSON.stringify(made)));
@@ -493,6 +525,11 @@ export function createRoster(options: {
 			if (change.workspaces !== undefined) {
 				if (id === DEFAULT_AGENT && change.workspaces.length === options.workspaces().length) delete agent.workspaces;
 				else agent.workspaces = [...new Set(change.workspaces)];
+			}
+			if (change.profiles !== undefined) {
+				if (change.profiles.length === 0) delete agent.profiles;
+				else agent.profiles = [...new Set(change.profiles)];
+				await offerBrowser(tx, agent);
 			}
 			// SAFETY: a roster entry is plain JSON data, so a JSON round trip gives back the same entry.
 			return JSON.parse(JSON.stringify(agent)) as AgentEntry;

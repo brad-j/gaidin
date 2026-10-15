@@ -66,7 +66,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 6;
+export const PROTOCOL = 7;
 
 /** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
 export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
@@ -92,6 +92,7 @@ const agentSave = object({
 	channel: optional(string),
 	canMessage: optional(array(string)),
 	workspaces: optional(array(string)),
+	profiles: optional(array(string)),
 	hosts: optional(array(string)),
 	extensions: optional(array(string)),
 	/** A file sent to /api/files, to be its picture, or "" to take its picture away. */
@@ -146,6 +147,8 @@ export type Gets = {
 	"/api/agents/activity": AgentActivity[];
 	/** The workspaces an agent can be given, by name. */
 	"/api/workspaces": { names: string[] };
+	/** The browser profiles an agent can be given, by name. */
+	"/api/profiles": { names: string[] };
 	/** `?agent=` for each of these: that agent's, the default agent's without it. */
 	"/api/settings": Settings;
 	"/api/reminders": Reminder[];
@@ -227,6 +230,8 @@ export function createWebServer(options: {
 	agents: RosterService;
 	/** The workspaces' names, which an agent's entry gives it. Default: none. */
 	workspaces?: () => readonly string[];
+	/** The browser profiles' names, which an agent's entry gives it. Default: none. */
+	profiles?: () => readonly string[];
 	threads: Threads;
 	user: string;
 	/** The directory of moiraine's build, the app, served at /. */
@@ -398,6 +403,7 @@ export function createWebServer(options: {
 		"/api/version": async () => ({ protocol: PROTOCOL }),
 		"/api/agents": async () => Promise.all((await agents.list()).map(shown)),
 		"/api/workspaces": async () => ({ names: [...(options.workspaces?.() ?? [])] }),
+		"/api/profiles": async () => ({ names: [...(options.profiles?.() ?? [])] }),
 		"/api/agents/activity": async () => {
 			// Each conversation with a message waiting or being answered, as its agent's.
 			const busy = new Set<string>();

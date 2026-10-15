@@ -338,6 +338,8 @@ test("the CLI's agent commands read right", () => {
 	assert.deepEqual(parseClientMessage('{"type":"watch"}'), { type: "watch" });
 	assert.throws(() => parseClientMessage('{"type":"agent","action":"add","id":"scout"}'), /needs a name/);
 	assert.equal(describeAgent({ ...defaultEntry(), channel: "C1", canMessage: ["scout"] }), "gaidin (gaidin): no job given · Slack C1 · may message: scout · workspaces: all");
+	assert.equal(describeAgent({ ...defaultEntry(), profiles: ["personal"] }), "gaidin (gaidin): no job given · may message: none · workspaces: all · browser profiles: personal");
+	assert.deepEqual(parseClientMessage('{"type":"agent","action":"set","id":"scout","change":{"profiles":["personal"]}}'), { type: "agent", action: "set", id: "scout", change: { profiles: ["personal"] } });
 });
 
 test("a new agent's settings start from the default agent's, without its instructions or self-written tools", async (t) => {

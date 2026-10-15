@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { Config, Loaded } from "./config.ts";
 import { fetchFeeds } from "./extensions/homelab/status.ts";
 import { sshRunner } from "./extensions/homelab/logs.ts";
+import { chromium } from "playwright-core";
 import { bwrapArgs, findBwrap, prepareServerDirs } from "./sandbox.ts";
 import { tavilyUsage } from "./search.ts";
 import { isListening, socketPathFor } from "./server.ts";
@@ -42,6 +43,7 @@ export async function runChecks(loaded: Loaded, options: { push?: boolean } = {}
 		web(config),
 		search(config),
 		workspaces(config),
+		browser(config),
 		homelab(config),
 	];
 	return (await Promise.all(groups.map((group) => group.catch((error): Check[] => [{ status: "fail", area: "doctor", detail: message(error) }])))).flat();
@@ -88,6 +90,23 @@ async function sandbox(config: Config): Promise<Check[]> {
 		if (result.status === 0) return [{ status: "ok", area: "sandbox", detail: `bubblewrap works (${bwrap})` }];
 		const why = (result.stderr || result.error?.message || `exit ${result.status}`).trim();
 		return [{ status: "fail", area: "sandbox", detail: `bubblewrap can't start a sandbox: ${why}. On Ubuntu, install deploy/vm/bwrap.apparmor` }];
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+/** Starts Chromium with its sandbox in a throwaway profile, as the browser does for a real one. */
+async function browser(config: Config): Promise<Check[]> {
+	if (config.browser === undefined) return [{ status: "skip", area: "browser", detail: "no browser.profiles" }];
+	const dir = mkdtempSync(join(tmpdir(), "gaidin-doctor-"));
+	try {
+		const context = await chromium.launchPersistentContext(dir, { headless: true, chromiumSandbox: true, timeout: 20_000 });
+		const version = context.browser()?.version() ?? "";
+		await context.close();
+		return [{ status: "ok", area: "browser", detail: `Chromium ${version} starts with its sandbox; profiles ${config.browser.profiles.join(", ")}` }];
+	} catch (error) {
+		const why = message(error).split("\n").filter((line) => line.trim() !== "").slice(0, 3).join(" ");
+		return [{ status: "fail", area: "browser", detail: `Chromium won't start with its sandbox: ${why}. On the VM, setup.sh installs it with its libraries and AppArmor profile` }];
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

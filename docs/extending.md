@@ -11,6 +11,7 @@
 | `reminders.ts` | reminders and their background task |
 | `fetch.ts` | `fetch_url` |
 | `workspaces.ts` | the workspace tools |
+| `browser/` | the browser's tools, and a Chromium per profile (`chromium.ts`), when the settings name profiles |
 | `history.ts` | `search_history` and `read_history`, over its own index of past messages |
 | `skills.ts` | the skills list in the system prompt and `read_skill`; `docs/` is the built-in skill, and a test checks that `docs/SKILL.md` lists every file in it |
 | `self/` | `load_extension`, `remove_extension`, and one extension `self-<name>` per tool set gaidin wrote |

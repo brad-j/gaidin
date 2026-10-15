@@ -45,14 +45,14 @@ A [skill](tools.md#skills) is instructions gaidin follows when a request matches
 
 - Each agent's coding tools are confined to its own sandbox, with a lock of its own. Under bubblewrap a command sees only that directory, so no agent's shell can read another's files; the default agent's sandbox doesn't contain the others'. The file tools resolve every path and refuse one outside the agent's sandbox.
 - Work notes, reminders, jobs and past conversations are filtered by the calling conversation's agent, which the server records when it creates the conversation and the model can't name or change.
-- Hosts allowed for good, workspaces and self-written tools are granted per agent. "Always allow" grants the host to the agent that asked. A workspace or self-written tool an agent wasn't given is refused before anyone is asked.
+- Hosts allowed for good, workspaces, browser profiles and self-written tools are granted per agent. "Always allow" grants the host to the agent that asked. A workspace, browser profile or self-written tool an agent wasn't given is refused before anyone is asked.
 - `message_agent` and `hand_off` reach only the agents the sender's roster entry lists; anything else is refused. The receiver's conversation starts with a marker the approvals hook treats as outside text, so its note writes and cancels ask, and the answer that comes back is outside text to the sender. Either call asks while outside text is in the sender's context, so a page can't pass work to an agent allowed more than the one that read it, and the request names any files it carries. Files are read through the sender's file tools, so only its own sandbox's can go, and land read-only in the receiver's `uploads/`; nothing else of either sandbox is shared. A chain stops at three.
 
-What they share: the shared notes, which reach every agent's prompt; the skills; the spend limits; and the server's own access, such as Slack and the push services. Approval requests name the agent they come from.
+What they share: the shared notes, which reach every agent's prompt; a browser profile's sign-ins, among the agents given it; the skills; the spend limits; and the server's own access, such as Slack and the push services. Approval requests name the agent they come from.
 
 ## Network access
 
-The sandbox has none. The server reaches the network for `fetch_url`, the homelab tools, the workspaces, Slack, ntfy, the push services and the model provider. `fetch_url` refuses every private, CGNAT, loopback, link-local and reserved address, checked at connect time and after each redirect ([Tools](tools.md#fetch_url)).
+The sandbox has none. The server reaches the network for `fetch_url`, the browser, the homelab tools, the workspaces, Slack, ntfy, the push services and the model provider. `fetch_url` refuses every private, CGNAT, loopback, link-local and reserved address, checked at connect time and after each redirect ([Tools](tools.md#fetch_url)).
 
 A URL can carry data out in its path or query, which is why a fetch to a new host asks first. A URL `web_search` returned in the same conversation doesn't ask: the backend chose it, and the model couldn't put anything in it. The guard reads those URLs from the search results' details, which only `web_search` writes and the model never sees, not from their text, so a URL a snippet mentions still asks. Links in a fetched page ask too, since a page can list many and tell the model which to pick. Redirects are followed only on the same host, so an open redirect on a host you've allowed can't carry a URL on to one you haven't.
 
@@ -63,6 +63,7 @@ A URL can carry data out in its path or query, which is why a fetch to a new hos
 | Tool | Asks | The second button |
 |---|---|---|
 | `fetch_url` | for a host not allowed for good for the agent, unless `web_search` returned the URL in that conversation | always allow that host, for that agent |
+| `browser_open` | for a host not allowed for good for the agent, unless `web_search` returned the URL in that conversation; refused for a profile the agent wasn't given | always allow that host, for that agent |
 | `workspace_*` | every call | allow that workspace for an hour, in that conversation only |
 | `schedule_job` | every new job | none |
 | `remember`, `update_memory` | while outside text is in the conversation's context | none |
@@ -77,7 +78,7 @@ Before the guard is asked, the hook checks whether the call can succeed at all, 
 
 Each request's outcome (allowed once or always, denied, answered, no answer in time, stopped, skipped) and where it was given is also written into its conversation as an entry the model doesn't see. The app's `/timeline` lists these outcomes with the tool calls, job reports and reminders around them, from the transcript index ([Tools](tools.md#past-conversations)), so the record outlives the request, which is dropped a week after it's decided. The timeline leaves out the sandbox's coding tools and the tools that only read gaidin's own state.
 
-A guard can also see which tools that return outside text (those whose guards say `outside`: `fetch_url`, `web_search`, `container_logs`, `workspace_read`, `workspace_run`, every self-written tool, `search_history` and `read_history`, whose past answers can repeat any of those, and `message_agent`, whose answer is another agent's) have results in the conversation's context, whether another agent started the conversation, and, in a job run a [gate](tools.md#gates) woke, what the gate found; the memory, cancel and messaging tools use that. A built-in tool counts even when it's switched off or not set up, since its past results can still be in the context. It's the whole context, not just the current run: text the model has read can steer it for as long as it's there, whatever the owner says in between. If the context can't be read, that counts as outside text too. A tool that changes anything outside the sandbox should have a guard ([Extending](extending.md#tools-that-reach-outside)).
+A guard can also see which tools that return outside text (those whose guards say `outside`: `fetch_url`, `web_search`, the browser's tools, `container_logs`, `workspace_read`, `workspace_run`, every self-written tool, `search_history` and `read_history`, whose past answers can repeat any of those, and `message_agent`, whose answer is another agent's) have results in the conversation's context, whether another agent started the conversation, and, in a job run a [gate](tools.md#gates) woke, what the gate found; the memory, cancel and messaging tools use that. A built-in tool counts even when it's switched off or not set up, since its past results can still be in the context. It's the whole context, not just the current run: text the model has read can steer it for as long as it's there, whatever the owner says in between. If the context can't be read, that counts as outside text too. A tool that changes anything outside the sandbox should have a guard ([Extending](extending.md#tools-that-reach-outside)).
 
 ## Workspaces
 
@@ -90,6 +91,17 @@ A workspace runs commands as a real user on another machine, so it's the widest 
 - Every call needs approval.
 
 What gaidin changes in a project can still run later as the user: a script in `package.json`, a test, an alias in tracked files. Approvals and `git diff` are the check on that. Secret files are recognised by name only.
+
+## The browser
+
+A browser profile holds live sign-ins, so the browser is checked in these layers:
+
+- Its directory, `<data>/browser/<profile>/`, is outside every sandbox, so no agent's commands can read its cookies. The VM's nightly backup holds them, though, so treat those backups as secrets.
+- Only agents whose roster entry lists a profile can use it; a call with another is refused, and an agent without one isn't offered the tools.
+- Chromium keeps its own sandbox, with the renderers in their own user and PID namespaces under seccomp; it's never started with `--no-sandbox`. It runs as the service's user under the unit's limits rather than in bubblewrap, since it needs the network. On Ubuntu 24.04 its sandbox needs `deploy/vm/chromium.apparmor`, which `setup.sh` installs with Chromium in `/opt/gaidin/browsers`, a directory only root can change, because that profile lets the binary it names make user namespaces. `gaidin doctor` starts Chromium to check.
+- Opening a page asks as a fetch does. Every request a page makes is routed through the server first: one to a private, CGNAT, loopback, link-local or reserved address is refused, so a page can't reach your LAN, your tailnet or gaidin's own port, and a navigation of the page itself to a host that isn't its own or allowed for good is stopped. Routing turns off Chromium's HTTP cache.
+- What a page shows is outside text, labelled as from the web and redacted like any result, so note writes and cancels after it ask.
+- The model never types a password; a page that needs signing in is yours to sign in to.
 
 ## Container logs
 
@@ -115,6 +127,10 @@ The app trusts the identity header Tailscale Serve adds, and listens only on loo
 - A job's runs see its last three reports, which can repeat text an earlier run read from outside. They're labelled as gaidin's own earlier answers, not instructions.
 - Agents are kept apart by the server's rules, not by separate processes or users: a flaw in those rules, or `GAIDIN_SANDBOX=none`, which runs every agent's commands unconfined, would let one reach another's files.
 - A shared note reaches every agent's prompt. One written after compaction has summarised outside text away doesn't ask, as with any note, and then reaches all of them.
+- An agent given a browser profile can read anything the profile is signed in to, and once acting tools exist, do what those sites allow. Giving an agent a profile is the real decision.
+- A page can send what it shows, or what's in its own storage, to its own servers, and its scripts and images go to any public host; only its own navigations are checked. A page on a host you've allowed for good can steer what the agent reads there.
+- The browser's address check resolves a name itself, before Chromium does, so a second DNS answer could still point Chromium at a private address. WebSockets aren't routed and aren't checked.
+- A page that exploited Chromium would run as gaidin's user, outside bubblewrap, with Chromium's own sandbox the only layer between it and gaidin's data.
 - An agent that may message another can ask it for anything that agent's tools do without asking, such as fetching from a host allowed for that agent alone, as long as no outside text is in the asker's context.
 
 ## Rules

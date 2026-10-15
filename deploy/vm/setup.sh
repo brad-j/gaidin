@@ -50,6 +50,20 @@ command -v pdftotext >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get instal
 install -m 644 "$app/deploy/vm/bwrap.apparmor" /etc/apparmor.d/bwrap
 apparmor_parser -r /etc/apparmor.d/bwrap
 
+# The browser (src/browser/), when the settings give it profiles: Playwright's Chromium headless shell in a directory only
+# root can change, the libraries it needs and a font, and the AppArmor profile that lets it keep its own sandbox. The unit
+# and the gaidin command point Playwright at the directory.
+browsers=/opt/gaidin/browsers
+if [ -f /etc/gaidin/config.json ] && python3 -c 'import json, sys; sys.exit("browser" not in json.load(open(sys.argv[1])))' /etc/gaidin/config.json; then
+	DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+		libatk1.0-0t64 libatk-bridge2.0-0t64 libatspi2.0-0t64 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+		libgbm1 libasound2t64 fontconfig fonts-liberation >/dev/null
+	install -d -m 755 /opt/gaidin "$browsers"
+	PLAYWRIGHT_BROWSERS_PATH="$browsers" /usr/local/bin/node "$app/node_modules/playwright-core/cli.js" install --only-shell --no-progress chromium >/dev/null
+	install -m 644 "$app/deploy/vm/chromium.apparmor" /etc/apparmor.d/gaidin-chromium
+	apparmor_parser -r /etc/apparmor.d/gaidin-chromium
+fi
+
 # Oxlint, which checks self-written tools (src/self/), reserves 4 GiB of address space per thread for its
 # JavaScript plugins. The default overcommit rule refuses a reservation larger than memory and swap, which
 # this VM has less of, so allow it. Only the part Oxlint fills is ever used.
@@ -60,7 +74,7 @@ sysctl -q -p /etc/sysctl.d/90-gaidin-overcommit.conf
 cat > /usr/local/bin/gaidin <<'EOF'
 #!/bin/sh
 # The directory change happens as gaidin; other users can't enter its home.
-exec sudo -u gaidin sh -c 'cd /var/lib/gaidin/app && exec env GAIDIN_CONFIG=/etc/gaidin/config.json /usr/local/bin/node --no-warnings src/main.ts "$@"' gaidin "$@"
+exec sudo -u gaidin sh -c 'cd /var/lib/gaidin/app && exec env GAIDIN_CONFIG=/etc/gaidin/config.json PLAYWRIGHT_BROWSERS_PATH=/opt/gaidin/browsers /usr/local/bin/node --no-warnings src/main.ts "$@"' gaidin "$@"
 EOF
 chmod 755 /usr/local/bin/gaidin
 

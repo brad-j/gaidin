@@ -8,26 +8,27 @@ import test, { type TestContext } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai/providers/faux";
 import { watchEvents } from "@earendil-works/pi-durable";
+import { type Config, configFor } from "../src/config.ts";
 import { context, startHost } from "../src/host.ts";
 import { Reminders } from "../src/reminders.ts";
 import { createWebServer, type Settings } from "../src/web.ts";
 
 const BRAD = "brad@example.com";
 
-async function start(t: TestContext, app?: string) {
+async function start(t: TestContext, app?: string, config?: Config) {
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
 	const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
 	faux.setResponses(Array.from({ length: 10 }, () => fauxAssistantMessage(fauxText("Hello, Brad."))));
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const host = await startHost({ dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, adapters: { push: { send: async () => true } } });
-	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: BRAD, app, uploads: host.uploads, avatars: host.avatars, history: host.history, switchable: host.switchable, approvals: host.approvals, snooze: host.reminders.snooze });
+	const host = await startHost({ config, dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, adapters: { push: { send: async () => true } } });
+	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, profiles: host.profiles, threads: host.threads, user: BRAD, app, uploads: host.uploads, avatars: host.avatars, history: host.history, switchable: host.switchable, approvals: host.approvals, snooze: host.reminders.snooze });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(async () => {
 		server.closeAllConnections();
 		await new Promise((resolve) => server.close(resolve));
-		await host.harness.close(context);
+		await host.close();
 	});
 	const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 	const call = (path: string, init: RequestInit & { as?: string } = {}) =>
@@ -188,6 +189,19 @@ test("the default agent's hosts are the approvals' fetch hosts, read and saved t
 	assert.deepEqual(await host.approvals.hostsFor("scout"), ["scout.example"]);
 	assert.deepEqual(await host.approvals.hostsFor("gaidin"), ["example.org"]);
 	assert.deepEqual(await (await call("/api/workspaces")).json(), { names: [] });
+});
+
+test("an agent's browser profiles are listed, given and taken away through the roster routes", async (t) => {
+	const { call, post } = await start(t, undefined, configFor({ browser: { profiles: ["personal", "work"] } }));
+	type Entry = { id: string; profiles?: string[] };
+	assert.deepEqual(await (await call("/api/profiles")).json(), { names: ["personal", "work"] });
+	await post("/api/agents/save", { id: "scout", name: "Scout", job: "" });
+	assert.equal((await (await call("/api/agents")).json() as Entry[]).find((a) => a.id === "scout")?.profiles, undefined);
+	const given = (await (await post("/api/agents/save", { id: "scout", profiles: ["work"] })).json()) as Entry;
+	assert.deepEqual(given.profiles, ["work"]);
+	assert.equal((await post("/api/agents/save", { id: "scout", profiles: ["bank"] })).status, 400);
+	const taken = (await (await post("/api/agents/save", { id: "scout", profiles: [] })).json()) as Entry;
+	assert.equal(taken.profiles, undefined);
 });
 
 test("files sent from the app: an image goes to the model, another file to the agent's sandbox, and a cross-site upload is refused", async (t) => {

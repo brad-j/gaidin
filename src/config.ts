@@ -20,6 +20,9 @@ export type HomelabConfig = {
 /** The search backend web_search uses. */
 export type SearchConfig = { provider: "tavily"; apiKey: string };
 
+/** The browser profiles agents can be given (src/browser/). */
+export type BrowserConfig = { profiles: string[] };
+
 /** The Slack app's two tokens, the gaidin channel, and the owner's Slack user. */
 export type SlackConfig = { botToken: string; appToken: string; channelId: string; userId: string };
 
@@ -50,13 +53,17 @@ export type Config = {
 	approvals: { waitHours: number };
 	/** SSH keys for workspaces and container logs, and the workspace list. */
 	keysDir: string;
+	/** Without it there's no browser. */
+	browser?: BrowserConfig;
 	homelab?: HomelabConfig;
 };
 
 export type Loaded = { config: Config; errors: string[]; warnings: string[] };
 
 const DEFAULT_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
-const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "alerts", "slack", "web", "sandbox", "budget", "approvals", "search", "keys", "extensions"];
+const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "alerts", "slack", "web", "sandbox", "budget", "approvals", "search", "keys", "browser", "extensions"];
+/** A browser profile's name, as an agent's id. */
+const PROFILE = /^[a-z][a-z0-9-]{0,30}$/;
 
 /** An ntfy topic URL: a server, maybe a path, then the topic, which ntfy limits to these characters. */
 const TOPIC_URL = /^https?:\/\/[^/\s]+(\/[^/\s]+)*\/[-\w]{1,64}\/?$/;
@@ -268,6 +275,22 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 		else if (searchProvider === "tavily") search = { provider: "tavily", apiKey: key };
 	}
 
+	// Browser
+	const browserSection = section("browser");
+	let browser: BrowserConfig | undefined;
+	if (raw.browser !== undefined) {
+		for (const key of Object.keys(browserSection)) {
+			if (key !== "profiles") errors.push(`Unknown setting "browser.${key}"`);
+		}
+		const profiles = read("browser.profiles", browserSection.profiles, optional(array(string))) ?? [];
+		for (const name of profiles) {
+			if (!PROFILE.test(name)) errors.push(`browser.profiles: "${name}" isn't a profile name: lowercase letters, digits and -, up to 31 characters, starting with a letter`);
+		}
+		if (new Set(profiles).size !== profiles.length) errors.push("browser.profiles names a profile twice");
+		if (profiles.length === 0) warnings.push("browser.profiles is empty, so there's no browser");
+		else browser = { profiles };
+	}
+
 	// Extensions
 	const extensions = section("extensions");
 	for (const key of Object.keys(extensions)) {
@@ -328,6 +351,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 		if (webApp !== undefined) config.web.app = path(webApp);
 	}
 	if (search !== undefined) config.search = search;
+	if (browser !== undefined) config.browser = browser;
 	if (homelab !== undefined) config.homelab = homelab;
 	return { config, errors, warnings };
 }

@@ -39,7 +39,7 @@ gaidin can run several named agents, each doing one kind of work for you. The or
 - its own sandbox, `<data>/agents/<id>/sandbox` (the default agent's stays `<data>/sandbox`)
 - its own work notes, beside the shared notes about you that every agent sees ([Tools](tools.md#memory))
 - its own reminders, jobs and past conversations, which no other agent can list, cancel or search
-- the hosts it fetches from without asking, the workspaces it may use (all for the default agent, none for a new one), and the agents it may message
+- the hosts it fetches from without asking, the workspaces it may use (all for the default agent, none for a new one), the [browser profiles](tools.md#browser) it may use (none until given), and the agents it may message
 
 They share the skills, the self-written tools you switch on for them, and the spend limits. Every conversation belongs to one agent: a thread or job run is the agent's whose conversation it came from, and one from before agents existed is the default agent's. An agent reaches another only with `message_agent` and `hand_off`, and only those its entry lists ([Tools](tools.md#other-agents)). The roster is stored in the SQLite file, with the rest of gaidin's state; the settings file doesn't list agents.
 
@@ -64,5 +64,6 @@ The model, thinking level, standing instructions and which tools are switched on
 - `sandbox/`: the only directory the default agent's own tools can touch
 - `agents/<id>/sandbox/`: the same for each other [agent](#agents)
 - `skills/`: local [skills](tools.md#skills), one directory each, in a Git repository that keeps every change
+- `browser/<profile>/`: each [browser profile](tools.md#browser)'s cookies and site storage, outside every sandbox
 
 Back up the SQLite file to back up gaidin. Copy it while the server is stopped, or snapshot the whole machine.

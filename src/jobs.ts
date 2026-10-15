@@ -485,8 +485,12 @@ export function createJobs(options: {
 							if (home !== undefined) Object.assign(await tx.doc(AgentDoc, created.id), JSON.parse(JSON.stringify(await tx.doc(AgentDoc, toConversationId(home)))));
 						}
 						const tools = job.tools === undefined ? undefined : runtime.registry.tools().flatMap((t) => (job.tools!.includes(t.tool.name) ? [t.tool] : []));
-						if (tools === undefined) await configure(tx, created.id, { extensions: { remove: [extension] } });
-						else await configure(tx, created.id, { extensions: { remove: [extension] }, tools });
+						// Without the jobs' tools, and without the extensions the settings it started with leave out, such as the browser's.
+						const selected = (await tx.doc(AgentDoc, created.id)).extensions;
+						const left = Array.isArray(selected) ? [] : (selected?.remove ?? []).map((name) => runtime.registry.extension(name) ?? { name });
+						const extensions = { remove: [extension, ...left] };
+						if (tools === undefined) await configure(tx, created.id, { extensions });
+						else await configure(tx, created.id, { extensions, tools });
 						return { status: "running", checkpoint: { ...task.state.checkpoint, conversationId: created.id } };
 					}, context);
 					return;

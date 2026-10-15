@@ -29,6 +29,8 @@ import { createThreads } from "./threads.ts";
 import { setTimeZone } from "./time.ts";
 import { createWorkspaces, readWorkspaces, type Remote, sshRemote, type Workspace } from "./workspaces.ts";
 import { createAvatars, createUploads } from "./files.ts";
+import { createBrowser } from "./browser/index.ts";
+import type { ChromiumOptions } from "./browser/chromium.ts";
 
 export const context = BACKGROUND_CONTEXT;
 
@@ -125,6 +127,8 @@ export type HostOptions = {
 	sandbox?: "bwrap" | "none";
 	/** Replaces how Web Push reaches the push services; tests use it. */
 	pushFetch?: typeof fetch;
+	/** Chromium's arguments, and how long profiles stay open and how many may be; tests use it. */
+	chromium?: Pick<ChromiumOptions, "args" | "idleMs" | "maxOpen">;
 };
 
 export async function openHost(options: HostOptions = {}) {
@@ -194,6 +198,9 @@ export async function openHost(options: HostOptions = {}) {
 	registry.install(workspaces.extension);
 	const history = createHistory(resolve(dir, "history.sqlite"), owner);
 	registry.install(history.extension);
+	// Profiles are outside every sandbox, so no agent's commands can read their cookies.
+	const browser = config.browser === undefined ? undefined : createBrowser({ profiles: config.browser.profiles, dir: resolve(dir, "browser"), owner, fetch: options.fetch, chromium: options.chromium });
+	if (browser !== undefined) registry.install(browser.extension);
 	// Self-written tools only ever run in a box, so without bubblewrap there are none.
 	const self = bwrap === undefined ? undefined : createSelf({ dataDir: dir, sandbox, bwrap, hide, registry, approvals: () => approvals!, owner, fetch: options.fetch });
 	if (self !== undefined) {
@@ -203,7 +210,7 @@ export async function openHost(options: HostOptions = {}) {
 	// The service needs the Harness, which needs the registry; the hook reads it once calls start.
 	let approvals: ApprovalService | undefined;
 	// Each tool's approval rules, from the module that owns it; read per call, since self-written tools come and go.
-	const guards = [...agents.guards, ...memory.guards, ...reminders.guards, ...jobs.guards, ...homelabGuards, ...web.guards, ...searchGuards, ...workspaces.guards, ...history.guards, ...skills.guards];
+	const guards = [...agents.guards, ...memory.guards, ...reminders.guards, ...jobs.guards, ...homelabGuards, ...web.guards, ...searchGuards, ...workspaces.guards, ...history.guards, ...skills.guards, ...(browser?.guards ?? [])];
 	registry.install(approvalExtension(() => approvals!, owner, () => [...guards, ...(self?.guards() ?? [])]));
 	// Last, so its afterTool sees what every other hook left.
 	registry.install(budget.extension);
@@ -241,6 +248,7 @@ export async function openHost(options: HostOptions = {}) {
 		root,
 		dataDir: dir,
 		workspaces: () => workspaces.names,
+		profiles: () => config.browser?.profiles ?? [],
 		selfTools: () => self?.extensions() ?? [],
 		archiving: async (tx, agent) => {
 			for (const job of (await tx.doc(Jobs)).items.filter((j) => jobOf(j, agent))) await pauseJob(tx, job.taskId, "its agent was archived");
@@ -281,7 +289,13 @@ export async function openHost(options: HostOptions = {}) {
 	// and the self-written ones.
 	const builtIn = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...history.tools, ...workspaces.tools];
 	const switchable = () => [...builtIn, ...(self?.tools() ?? [])];
-	return { harness, root, agents: roster, workspaces: () => workspaces.names, uploads: createUploads(join(dir, "app-uploads")), avatars: createAvatars(join(dir, "avatars")), threads, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation, latest: history.latest }, skills, sandbox, push, start, stop };
+	/** Closes the browser's profiles, then the Harness. */
+	async function close() {
+		await browser?.close();
+		await harness.close(context);
+	}
+
+	return { harness, root, agents: roster, workspaces: () => workspaces.names, profiles: () => config.browser?.profiles ?? [], close, uploads: createUploads(join(dir, "app-uploads")), avatars: createAvatars(join(dir, "avatars")), threads, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation, latest: history.latest }, skills, sandbox, push, start, stop };
 }
 
 export type Host = Awaited<ReturnType<typeof openHost>>;

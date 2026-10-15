@@ -31,6 +31,7 @@
     "@oxlint/plugins": "1.87.0",
     "@types/node": "^26.6.4",
     "oxlint": "1.87.0",
+    "playwright-core": "1.64.0",
     "typescript": "^7.0.2"
   }
 }

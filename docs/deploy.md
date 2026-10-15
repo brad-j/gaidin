@@ -15,7 +15,7 @@ gaidin config                   # print the settings in use, secrets shortened
 
 From a checkout, `pnpm gaidin ...` runs it, and `pnpm serve`, `pnpm ask`, `pnpm watch` and `pnpm doctor` are shortcuts. On the VM, `setup.sh` installs `/usr/local/bin/gaidin`, which runs it as the service's user with the service's settings.
 
-`gaidin doctor` doesn't start the server and spends no tokens. It checks the settings, Node, the data directory, that bubblewrap can start a sandbox, the API key and model (by looking the model up), the ntfy topic, that the push services can be reached, both Slack tokens, the search key and its remaining credits, `tailscale serve`, each workspace, and the homelab feeds and log hosts, and says what to fix.
+`gaidin doctor` doesn't start the server and spends no tokens. It checks the settings, Node, the data directory, that bubblewrap can start a sandbox, that Chromium starts with its sandbox when there are browser profiles, the API key and model (by looking the model up), the ntfy topic, that the push services can be reached, both Slack tokens, the search key and its remaining credits, `tailscale serve`, each workspace, and the homelab feeds and log hosts, and says what to fix.
 
 ## Running it locally
 
@@ -30,7 +30,7 @@ pnpm serve
 
 ## Running it on a VM
 
-`deploy/vm/` sets gaidin up as a system service on Ubuntu 24.04. The original deployment uses a VM with 2 vCPUs and 2 GB of memory; the server itself uses around 120 MB.
+`deploy/vm/` sets gaidin up as a system service on Ubuntu 24.04. The original deployment uses a VM with 2 vCPUs and 4 GB of memory. The server itself uses around 120 MB; the [browser](tools.md#browser) adds about 250 MB per open profile on a busy page, and up to two are open at once.
 
 1. Create the VM and install Node (in `/usr/local/bin`) and pnpm.
 2. Change the repository URL in `deploy/vm/setup.sh` to your fork.
@@ -38,7 +38,7 @@ pnpm serve
 4. Copy `deploy/config.example.json` to `/etc/gaidin/config.json` and fill it in. `setup.sh` makes it readable by the service only (`root:gaidin`, mode 640).
 5. `gaidin doctor`, then run `setup.sh` again to start the service, and check `journalctl -u gaidin`.
 
-`setup.sh` is safe to rerun and is how you update: it pulls, installs dependencies, installs bubblewrap and its AppArmor profile and `poppler-utils` (for PDFs sent in Slack), allows memory overcommit (Oxlint, which checks [self-written tools](tools.md#self-written-tools), reserves 4 GiB of address space per thread), writes the unit and the `gaidin` command, creates the workspace key, restarts the service, and runs `tailscale serve` for the app when Tailscale is logged in. When a change touches `setup.sh` itself, run it twice: the first run still executes the old copy.
+`setup.sh` is safe to rerun and is how you update: it pulls, installs dependencies, installs bubblewrap and its AppArmor profile and `poppler-utils` (for PDFs sent in Slack), installs the browser's Chromium when the settings have a `browser` section (below), allows memory overcommit (Oxlint, which checks [self-written tools](tools.md#self-written-tools), reserves 4 GiB of address space per thread), writes the unit and the `gaidin` command, creates the workspace key, restarts the service, and runs `tailscale serve` for the app when Tailscale is logged in. When a change touches `setup.sh` itself, run it twice: the first run still executes the old copy.
 
 On the VM:
 
@@ -49,6 +49,9 @@ On the VM:
 | `/var/lib/gaidin/data` | the [data directory](concepts.md#the-data-directory) |
 | `/var/lib/gaidin/keys` | SSH keys for workspaces and container logs, and the workspace list |
 | `/var/lib/gaidin/deploy` | the deploy key, hidden from the service |
+| `/opt/gaidin/browsers` | the browser's Chromium, which only root can change |
+
+To turn on the [browser](tools.md#browser), add `"browser": { "profiles": ["personal"] }` to the settings and run `setup.sh`. It installs the libraries Chromium needs and a font (about 25 packages with `--no-install-recommends`, Mesa among them), Playwright's Chromium headless shell in `/opt/gaidin/browsers` (about 280 MB), and `deploy/vm/chromium.apparmor`, which lets Chromium keep its own sandbox under Ubuntu's limit on user namespaces. `gaidin doctor` then starts Chromium to check. Give an agent a profile from the app's settings page or with `gaidin agent set ID --profiles personal`.
 
 Back up the VM or the data directory; the SQLite file is the whole of gaidin's state.
 
@@ -120,6 +123,7 @@ The settings file is JSON: the first of `--config`, `GAIDIN_CONFIG`, `./gaidin.j
 | `budget.daily` | `GAIDIN_BUDGET_DAILY` | `5` | Dollars a day; 0 is no daily limit. See [Spend limits](#spend-limits). |
 | `budget.monthly` | `GAIDIN_BUDGET_MONTHLY` | `0` | Dollars a calendar month; 0 is no monthly limit. |
 | `approvals.waitHours` | `GAIDIN_APPROVAL_WAIT_HOURS` | `168` | How long approvals and questions wait, up to 576. |
+| `browser.profiles` | | | Names of the [browser](tools.md#browser) profiles agents can be given, such as `["personal"]`: lowercase letters, digits and `-`. Without them there's no browser. |
 | `extensions.homelab` | | off | The [homelab extension](extending.md#the-homelab-extension). |
 
 The secrets are `model.apiKey`, the ntfy URL and token, the two Slack tokens, and `search.apiKey`. Keep the file readable only by you or the service; `gaidin doctor` warns when anyone else can read it.

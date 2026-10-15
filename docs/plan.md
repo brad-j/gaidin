@@ -46,12 +46,13 @@
 32. Slack mirroring: a message sent from the app to a conversation with a Slack thread is posted there, headed *From the app:*, and then its answer, recorded before it's posted so a restart still posts both ([Surfaces](surfaces.md#slack)).
 33. The switch: the app is served at `/`, with the service worker, manifest and icons its own at the paths they had, so installed apps and devices signed up for notifications carry over; the app's old `/app/` addresses redirect, a notification opens the conversation it came from, and the web view and its tests are gone (protocol 4) ([Surfaces](surfaces.md#the-app)).
 34. Files between agents: `message_agent` and `hand_off` take up to 10 files from the sender's sandbox, read through its confined file tools, and the receiver gets copies in its `uploads/`, read-only to its commands, with a note of where they are, as for Slack's and the app's files. An approval for either names the files ([Tools](tools.md#other-agents)).
+35. The browser's reading tools: profiles named in the settings and given per agent in its roster entry, a Chromium per profile with its own sandbox and its cookies in `<data>/browser/`, and `browser_open`, `browser_snapshot`, `browser_screenshot` and `browser_tabs`, offered only to agents with a profile. Opening a page asks as a fetch does, a page's own navigations to other hosts are stopped, and private addresses are refused for everything a page loads. `setup.sh` installs Chromium with its AppArmor profile (protocol 7) ([Tools](tools.md#browser), [Security](security.md#the-browser)).
 
 ## Next
 
 Candidates:
 
-- Several named agents, designed below: Slack's channel per agent, the one step left now the app (designed below) has replaced the web view and holds the agents' pages. Then connectors (MCP servers with OAuth, tokens held by the server, granted per agent), a persistent browser with a take-over view, and owner-written allow and ask-first rules, in that order.
+- Several named agents, designed below: Slack's channel per agent, the one step left now the app (designed below) has replaced the web view and holds the agents' pages. Then connectors (MCP servers with OAuth, tokens held by the server, granted per agent), the rest of the browser (designed below: acting, downloads and the take-over view), and owner-written allow and ask-first rules, in that order.
 - Release polish: a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
 
 Not planned: branching from any message in the web view, since each thread is already a conversation of its own; push-to-talk, since the owner dictates with superwhisper; and projects or image generation in the app.
@@ -153,6 +154,82 @@ Going back to an older build ignores the new documents and fields, but would run
 2. Done: the roster, bindings, prompts, sandboxes, memory split, per-agent approvals, jobs and reminders, history, messaging and hand-off, and the CLI. Tests with the faux provider cover isolation: one agent's tools can't reach another's sandbox, notes, jobs, history or hosts.
 3. Slack: a channel per agent.
 4. Web view: the switcher, the agents page and the per-agent pages, built in the app (its steps 1 to 3), checked in a browser with the Playwright e2e tests.
+
+Each step ends with `pnpm check` passing and is a commit of its own.
+
+## Design: the browser
+
+Steps 1 and 2 are done (item 35). An agent that's been given a browser profile can open pages, read them, click and type, and stay signed in across conversations and restarts. The owner can watch that browser from the app and take it over to sign in, solve a CAPTCHA or confirm something. Today gaidin reads only public pages and APIs through `fetch_url`.
+
+It also makes handoffs easier on purpose. Grok Bot's bots share one computer, so every sign-in reaches every bot. Here a profile is granted like a workspace, so two agents that need the same sign-ins share a profile and nothing else.
+
+### Decided with the owner
+
+- **Profiles, granted per agent.** A profile is a named browser: cookies, storage and sign-ins. The server keeps it in `<data>/browser/<profile>/`, outside every sandbox, so no agent's shell can read its cookies. A roster entry lists the profiles its agent may use, and a new agent has none, nor does the default agent until given one. The alternatives were one profile per agent, which gives no sharing, or one for all agents, which is Grok Bot's model.
+- **Acting asks, with a per-host "act without asking".** Page text is outside text, so under today's rule every click and keystroke would ask. Instead, an approval's second button allows acting on that host for good, for that agent and profile, as "always allow" does for fetches. The plan's owner-written rules can widen or narrow it later.
+- **No passwords from the model.** `browser_type` refuses a password field. The owner signs in through the take-over view, so a password never passes through the model or the transcript.
+- **More memory for the VM.** Raised from 2 GiB to 4 GiB on 2026-10-15, since Chromium with a profile or two open needs several hundred MB more.
+- **A new dependency.** `playwright-core` and its Chromium headless shell, both pinned, and subject to the 3-day release age like everything else.
+- **Snapshots are capped.** A full snapshot of a busy page is 12,000 to 15,000 tokens (spike results below), so a few would reach compaction. `browser_open` and `browser_snapshot` return at most about 4,000 tokens and say when they cut it short, and `browser_snapshot(profile, ref?)` gives the part under one ref, so the model can look closer at a section it found.
+
+### Spike results
+
+Run on the VM on 2026-10-15 with `playwright-core` 1.64.0 (1.64.1 was a day old) and its `chromium_headless_shell-1248`, as `gaidin` in a transient unit with the service's limits. Everything was removed afterward except the system packages.
+
+- **Chromium's sandbox works, with an AppArmor profile.** Without one, Ubuntu's limit on user namespaces makes the sandbox fail and Playwright won't start it. A profile like `deploy/vm/bwrap.apparmor`, granting `userns` to the headless shell's path, fixes it: the renderers and zygotes ran in their own user and PID namespaces, and every process had a seccomp filter. Playwright passes `--no-sandbox` unless told `chromiumSandbox: true`, so the code has to set it. The profile is unconfined, so the binary it names must live where the service can't write, such as a root-owned directory `setup.sh` installs it into, never under `/var/lib/gaidin`.
+- **System packages.** The headless shell needs nine libraries the VM lacked, and the VM had no fonts. Installing them with `--no-install-recommends` added 25 packages, Mesa and LLVM among them (for `libgbm1`): `at-spi2-common fontconfig fonts-liberation libasound2-data libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libdrm-intel1 libgbm1 libllvm20 libpciaccess0 libx11-xcb1 libxcb-dri3-0 libxcb-present0 libxcb-randr0 libxcb-sync1 libxcb-xfixes0 libxcomposite1 libxdamage1 libxfixes3 libxi6 libxrandr2 libxshmfence1 mesa-libgallium`. They're still installed. The browser download is 278 MB.
+- **Memory.** Measured for the whole unit, page cache included, over a Node process of 86 MiB: one profile on a test page added about 70 MiB; two profiles, on GitHub and BBC News, about 475 MiB; a second tab in one of them, on Wikipedia, 160 MiB more, for a peak of 722 MiB. gaidin uses about 100 MiB and the VM has 1.4 GiB available with no swap, so 4 GiB stands.
+- **Snapshots.** `page.ariaSnapshot({ mode: "ai" })` gives refs (`[ref=e3]`) and `page.getByRef()` finds them again, both public API now, so the tools needn't copy Playwright MCP. A password field shows as a plain `textbox`, so `browser_type` checks the element's `type` attribute. GitHub's repository page was 52,000 characters and 642 refs; BBC News 45,000 and 502.
+- **Persistence.** A cookie and `localStorage` survived closing and reopening a profile.
+- **Stopping navigation.** `context.route` sees a click's main-frame navigation before it happens. Aborting it with `aborted` leaves the page as it was; `blockedbyclient` replaces it with Chrome's error page.
+- **Take-over.** `Page.startScreencast` sent 30 JPEG frames in 3 seconds of a page that changed 10 times a second, about 11 KiB each at 1280 by 800, around 330 KiB/s. `Input.dispatchMouseEvent` clicked a button, and `Input.dispatchKeyEvent` and `Input.insertText` typed into a field.
+
+### Shape
+
+- Chromium is launched by the server through Playwright when a profile is first used. Each profile in use is its own Chromium with the profile's directory as its user data (`launchPersistentContext`), since one Chromium can't hold two such directories, and it's closed after 15 minutes idle. Opening at most two at once keeps memory within the spike's numbers.
+- Chromium runs as the `gaidin` user under the service's systemd limits, not in bubblewrap, since it needs the network, and keeps its own sandbox through an AppArmor profile that `setup.sh` installs (spike results above). It won't run with `--no-sandbox`.
+- Downloads go to the calling agent's sandbox under `downloads/`, a new server directory that commands see read-only, as `uploads/` is. A file input takes only paths in the caller's sandbox, read through its file tools, as files in a hand-off are.
+- Page text in a tool result is outside text and is redacted like any tool output.
+
+### Tools
+
+One extension, `browser`, on only for agents with a profile:
+
+- `browser_open(profile, url)` loads a page in the profile's tab and returns its title, URL and an accessibility snapshot with a ref for each control, built from Playwright's accessibility tree as Playwright MCP's snapshots are. It's much cheaper than a screenshot.
+- `browser_snapshot(profile)` and `browser_screenshot(profile)`. A screenshot comes back as an image in the tool result, which Pi Durable 1.1.0 supports.
+- `browser_click(profile, ref)`, `browser_type(profile, ref, text, submit?)`, `browser_select`, `browser_back` and `browser_tabs`.
+- `browser_hand_over(profile, reason)` asks the owner to take over and waits, durably as `ask_owner` does, until the owner presses Done in the app. It then returns a fresh snapshot.
+
+### Rules
+
+- **Navigation follows `fetch_url`'s rule.** The host must be allowed for good for that agent or be a search result in the conversation; otherwise `browser_open` asks. A navigation that a click or a page's script starts in the main frame is checked the same way: it's stopped, and the model is told to open the URL with `browser_open`, which asks. Subresources such as scripts, images and a site's own API calls aren't checked for their host. A page can already send what it shows to its own servers. A page's own host is allowed, so following links on a site needs no new approval, and a redirect of an allowed navigation goes ahead.
+- **Private addresses are refused** for every request a page makes, as `fetch_url` refuses them, so a page can't reach the LAN, the tailnet or gaidin's own port. Added while building step 2.
+- **Acting** (click, type, select) asks while outside text is in the conversation, unless the host is allowed for acting without asking (above). The request names the agent, the profile, the host and what it's about to do.
+- **Take-over.** While the owner holds a profile, the agent's browser tools for it wait. The owner's input goes to the browser and never through the model.
+
+### The take-over view
+
+- gaidin starts a CDP screencast (`Page.startScreencast`) of the profile's tab and relays the frames to the app over a WebSocket at `/api/browser/live?profile=`, behind the same login and Origin checks. The app draws them and sends pointer and key events back as CDP `Input.dispatch*` calls. No X server or VNC is needed.
+- moiraine gets a page per profile with the live view, the current URL and which agent last used it. On a phone, a tap is a click and the soft keyboard types. The protocol version goes up.
+- A `browser_hand_over` request shows in the dock and is pushed like any other request, and it opens that page.
+
+### Durability and storage
+
+- Sign-ins and site storage survive restarts on disk. Open pages don't. A profile reopens at its last URL, which is recorded in a document. Browser tools aren't replay-safe, so a call cut off by a restart is reported as interrupted, as `bash`'s are.
+- Profiles are in the data directory, so the VM's nightly backup holds live session cookies. Treat those backups as secrets.
+
+### Known gaps
+
+- Any agent granted a profile can do anything the signed-in sites allow. Granting a profile is the real decision.
+- On a host allowed for acting without asking, a page on that host can steer what the agent does there.
+- A page that exploited Chromium would run as `gaidin`, outside bubblewrap, with Chromium's own sandbox as the only layer.
+
+### Order of work
+
+1. Done: a spike on the VM: Playwright's Chromium under the service's systemd limits and AppArmor, memory with two profiles open, and a screencast to a test page (spike results above).
+2. Done: profiles in the roster and settings, plus the read tools (open, snapshot, screenshot, tabs) with the navigation rule (item 35). Tests use a site the test serves on loopback, with no network. The app's settings page gives an agent profiles.
+3. The acting tools and their approvals, then downloads and file inputs.
+4. Hand-over and the take-over view in moiraine, with Playwright e2e tests there.
 
 Each step ends with `pnpm check` passing and is a commit of its own.
 

@@ -84,7 +84,8 @@ faux.setResponses(Array.from({ length: 500 }, () => step));
 const models = createModels();
 models.setProvider(faux.provider);
 const host = await startHost({
-	config: configFor({ owner: "Brad" }, {}),
+	// A browser profile to give agents; Chromium only starts when a tool uses it, which these tests don't.
+	config: configFor({ owner: "Brad", browser: { profiles: ["personal"] } }, {}),
 	dataDir: dir,
 	models,
 	model: { provider: "faux", modelId: "faux-1" },
@@ -96,6 +97,7 @@ const web = createWebServer({
 	root: host.root,
 	agents: host.agents,
 	workspaces: host.workspaces,
+	profiles: host.profiles,
 	uploads: host.uploads,
 	avatars: host.avatars,
 	threads: host.threads,
