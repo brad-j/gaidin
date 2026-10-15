@@ -118,8 +118,9 @@ A [connector](tools.md#connectors) is a remote service's MCP server, so what its
 - You set each tool to allow, ask or off. The server's read-only hint only sets the default, and only for a tool you haven't set.
 - The tools' descriptions are the server's text, which reaches the model, so each is pinned by a hash of its definition; one that's new or changed since you set it is off until you set it again.
 - What a tool returns is outside text, so note writes and cancels after it ask.
-- Its token is kept in `<data>/connectors/vault.json` (mode 600, in a directory only the server can enter), outside every sandbox and the database, and redacted from tool output. The VM's backups hold it.
-- The connector's own URL is your choice, so it may be on the LAN; anything else gaidin is told to fetch by a server will be held to public addresses when OAuth comes.
+- Its tokens, a pasted one or OAuth's access and refresh tokens, are kept in `<data>/connectors/vault.json` (mode 600, in a directory only the server can enter), outside every sandbox and the database, and redacted from tool output. The VM's backups hold them.
+- The connector's own URL is your choice, so it may be on the LAN. Every other URL a server names, its metadata, authorization server and endpoints, must be on the connector's own host or https on a public address, so a server can't send gaidin's requests into your LAN. An authorization server's metadata must name the issuer it was looked up as, and offer PKCE with S256.
+- Signing in is in your browser, never through a model. gaidin keeps each sign-in's PKCE verifier, state and expected issuer for 10 minutes; the callback, behind the Tailscale login like every route, takes only a state gaidin made, once, and refuses an answer from another issuer.
 
 ## Container logs
 

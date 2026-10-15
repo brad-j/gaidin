@@ -124,6 +124,7 @@ The settings file is JSON: the first of `--config`, `GAIDIN_CONFIG`, `./gaidin.j
 | `budget.monthly` | `GAIDIN_BUDGET_MONTHLY` | `0` | Dollars a calendar month; 0 is no monthly limit. |
 | `approvals.waitHours` | `GAIDIN_APPROVAL_WAIT_HOURS` | `168` | How long approvals and questions wait, up to 576. |
 | `browser.profiles` | | | Names of the [browser](tools.md#browser) profiles agents can be given, such as `["personal"]`: lowercase letters, digits and `-`. Without them there's no browser. |
+| `connectors.clientId` | | `<web.url>/api/connectors/client.json` | The https URL of a public copy of gaidin's client id document, for [connector](tools.md#connectors) services on the internet that fetch it. `gaidin connector client-document` prints it. |
 | `extensions.homelab` | | off | The [homelab extension](extending.md#the-homelab-extension). |
 
 The secrets are `model.apiKey`, the ntfy URL and token, the two Slack tokens, and `search.apiKey`. Keep the file readable only by you or the service; `gaidin doctor` warns when anyone else can read it.

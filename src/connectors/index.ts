@@ -1,7 +1,8 @@
 // Connectors: remote MCP servers the owner adds, whose tools become tools of the agents the owner grants them to
 // (the roster entry's `connectors`). Each connector is an extension, `connector-<name>`, selected only in the homes of
 // agents given it (agents.ts); a call from another agent is refused. The client is client.ts; tokens are kept in
-// vault.ts, never in the database.
+// vault.ts, never in the database. A connector signs in with a token the owner pasted, or with OAuth (oauth.ts): the
+// owner's browser goes to the service and comes back to gaidin's callback, and the grant is refreshed before it expires.
 //
 // The owner sets each tool to allow, ask or off. The server's annotations only set the default: read-only tools start
 // at allow, the rest at ask, which asks on every call. A tool's description is the server's text, which the model
@@ -22,6 +23,7 @@ import { clip, guard, type Guard, whole } from "../guards.ts";
 import { attempt, isObject, type Json, jsonObject, literal, object, optional, string } from "../parse.ts";
 import type { GrowingRedactor } from "../redact.ts";
 import { AuthRequired, type CallResult, type McpClient, mcpClient, type McpTool } from "./client.ts";
+import { createOAuth, type Grant } from "./oauth.ts";
 import { createVault } from "./vault.ts";
 
 /** How a tool's calls go: without asking, asking each time, or not offered. */
@@ -37,8 +39,10 @@ export type Connector = {
 	/** Lowercase letters, digits and -, like an agent's id; its tools are <name>_<tool>. */
 	name: string;
 	url: string;
-	/** "token": a bearer token the owner gave, kept in the vault. */
-	auth: "none" | "token";
+	/** "token": a bearer token the owner gave; "oauth": a grant from signing in. Both kept in the vault. */
+	auth: "none" | "token" | "oauth";
+	/** A client id the owner gave for signing in to this server, when it takes neither a client id document nor registration. */
+	clientId?: string;
 	/** How long a call may take; default 60. */
 	timeoutSeconds?: number;
 	/** The MCP revision it speaks, and what it calls itself, once connected. */
@@ -65,6 +69,11 @@ export const Connectors = defineDoc<{ items: Connector[] }>({
 const NAME = /^[a-z][a-z0-9-]{0,30}$/;
 /** The most text a call returns, as for a page. */
 export const MAX_RESULT = 20_000;
+
+/** Where the owner's browser comes back to from signing a connector in. */
+export const CALLBACK_PATH = "/api/connectors/callback";
+/** gaidin's client id document, which a server that checks the redirect against the client id's host never fetches. */
+export const CLIENT_PATH = "/api/connectors/client.json";
 
 /** The extension of connector `name`. */
 export const extensionOf = (name: string) => `connector-${name}`;
@@ -183,9 +192,19 @@ export function createConnectors(options: {
 	fetch?: typeof fetch;
 	/** How a connector's http URL's host is resolved; tests replace it. */
 	resolve?: (host: string) => Promise<{ address: string }[]>;
+	/** The app's address, web.url, which the owner's browser comes back to from signing in. */
+	appUrl?: string;
+	/** The client id document's URL, when the owner hosts a copy in public (connectors.clientId). */
+	clientId?: string;
 }) {
 	const { owner, registry } = options;
 	const vault = createVault(options.dir, options.redactor);
+	const redirectUri = options.appUrl === undefined ? undefined : `${options.appUrl}${CALLBACK_PATH}`;
+	const oauth = createOAuth({ redirectUri, clientId: options.clientId ?? (options.appUrl === undefined ? undefined : `${options.appUrl}${CLIENT_PATH}`), fetch: options.fetch, resolve: options.resolve });
+	/** Refreshes under way, by connector, so two calls don't refresh at once. */
+	const refreshing = new Map<string, Promise<Grant>>();
+	/** Each connector's last challenge, for the scopes a new sign-in asks for. */
+	const challenges = new Map<string, string | undefined>();
 	let items: Connector[] = [];
 	const installed = new Map<string, Extension>();
 	const clients = new Map<string, McpClient>();
@@ -203,10 +222,50 @@ export function createConnectors(options: {
 	function clientOf(connector: Connector): McpClient {
 		let client = clients.get(connector.name);
 		if (client === undefined) {
-			client = mcpClient({ url: connector.url, token: async () => vault.get(connector.name)?.token, fetch: options.fetch, timeoutMs: (connector.timeoutSeconds ?? 60) * 1000 });
+			client = mcpClient({ url: connector.url, token: () => tokenFor(connector.name), fetch: options.fetch, timeoutMs: (connector.timeoutSeconds ?? 60) * 1000 });
 			clients.set(connector.name, client);
 		}
 		return client;
+	}
+
+	/** The token to send: the pasted one, or the grant's, refreshed when it's within a minute of expiring. */
+	async function tokenFor(name: string, force = false): Promise<string | undefined> {
+		const held = vault.get(name);
+		if (held?.grant === undefined) return held?.token;
+		const { grant } = held;
+		const due = grant.expiresAt !== undefined && grant.expiresAt < Date.now() + 60_000;
+		if ((!force && !due) || grant.refresh === undefined) return grant.token;
+		let running = refreshing.get(name);
+		if (running === undefined) {
+			running = oauth.refresh(grant).then((fresh) => {
+				vault.set(name, { grant: fresh });
+				return fresh;
+			}).finally(() => refreshing.delete(name));
+			refreshing.set(name, running);
+		}
+		return (await running).token;
+	}
+
+	/**
+	 * Runs `work`, and when the server refuses the token, refreshes a grant once and runs it again. A refusal that stays
+	 * marks the connector as needing the owner.
+	 */
+	async function signedIn<T>(connector: Connector, work: () => Promise<T>): Promise<T> {
+		try {
+			return await work();
+		} catch (error) {
+			if (!(error instanceof AuthRequired)) throw error;
+			challenges.set(connector.name, error.challenge);
+			if (vault.get(connector.name)?.grant?.refresh !== undefined) {
+				try {
+					await tokenFor(connector.name, true);
+					return await work();
+				} catch (again) {
+					if (!(again instanceof AuthRequired) && !(again instanceof Error && /refused the token request/.test(again.message))) throw again;
+				}
+			}
+			throw error;
+		}
 	}
 
 	/** Changes the document, then the copy in memory and the installed extensions to match. */
@@ -254,11 +313,11 @@ export function createConnectors(options: {
 		if (problem !== undefined) throw new Error(problem);
 		const signal = AbortSignal.any([signalOf(api, context), AbortSignal.timeout((connector.timeoutSeconds ?? 60) * 1000)]);
 		try {
-			return render(connector.name, tool.name, await clientOf(connector).callTool(tool, args, signal), owner);
+			return render(connector.name, tool.name, await signedIn(connector, () => clientOf(connector).callTool(tool, args, signal)), owner);
 		} catch (error) {
 			if (!(error instanceof AuthRequired)) throw error;
 			await mark(connector.name, "needs-owner", error.message);
-			throw new Error(`The ${connector.name} connector ${error.message}; ${owner} has to give it a token that works.`);
+			throw new Error(`The ${connector.name} connector ${error.message}; ${owner} has to sign it in again.`);
 		}
 	}
 
@@ -320,7 +379,7 @@ export function createConnectors(options: {
 		clients.delete(name);
 		const client = clientOf(connector);
 		try {
-			const { tools, rejected } = await client.listTools();
+			const { tools, rejected } = await signedIn(connector, () => client.listTools());
 			await change((all) => {
 				const stored = all.find((c) => c.name === name);
 				if (stored === undefined) return;
@@ -372,6 +431,36 @@ export function createConnectors(options: {
 		return find(name)!.tools.find((t) => t.name === tool.name)!;
 	}
 
+	/**
+	 * Starts signing connector `name` in with OAuth: the URL the owner's browser goes to. `clientId` is one the owner
+	 * registered with the service, for a server that takes neither a client id document nor registration.
+	 */
+	async function connect(name: string, clientId?: string): Promise<string> {
+		const connector = find(name);
+		if (connector === undefined) throw new Error(`There's no connector ${name}.`);
+		if (clientId !== undefined) {
+			await change((all) => {
+				const stored = all.find((c) => c.name === name);
+				if (stored !== undefined) stored.clientId = clientId;
+			});
+		}
+		return oauth.start(name, connector.url, challenges.get(name), clientId ?? connector.clientId);
+	}
+
+	/** The owner's browser came back from signing in: keeps the grant and reads the connector's tools. */
+	async function callback(query: URLSearchParams): Promise<Connector> {
+		const { connector: name, grant } = await oauth.finish(query);
+		if (find(name) === undefined) throw new Error(`There's no connector ${name} any more.`);
+		vault.set(name, { grant });
+		challenges.delete(name);
+		await change((all) => {
+			const stored = all.find((c) => c.name === name);
+			if (stored !== undefined) stored.auth = "oauth";
+		});
+		// Its tools take their defaults when the owner hasn't seen them yet.
+		return refresh(name, find(name)!.tools.length === 0);
+	}
+
 	/** Changes a connector's token: a new one, or none. It's checked by connecting again. */
 	async function setToken(name: string, token: string | undefined): Promise<Connector> {
 		if (find(name) === undefined) throw new Error(`There's no connector ${name}.`);
@@ -400,6 +489,10 @@ export function createConnectors(options: {
 	return {
 		load,
 		add,
+		connect,
+		callback,
+		/** gaidin's client id document, served at CLIENT_PATH. */
+		clientDocument: () => (oauth.clientId === undefined ? undefined : oauth.document(oauth.clientId)),
 		refresh,
 		setTool,
 		setToken,

@@ -28,6 +28,9 @@ const USAGE = `usage: gaidin [--config FILE] COMMAND
                             change its token, read from stdin, or take it away without --token
   connector tool NAME TOOL allow|ask|off
                             set a tool, which also accepts its definition as it is now
+  connector connect NAME [--client-id ID]
+                            sign it in with OAuth: prints the address to open in a browser
+  connector client-document print gaidin's client id document, for connectors.clientId
   connector refresh NAME    read its tools again
   connector remove NAME     remove it, its token and every agent's grant of it
   doctor [--push]           check the settings and everything the server needs
@@ -49,6 +52,7 @@ const { values, positionals } = parseArgs({
 		profiles: { type: "string" },
 		connectors: { type: "string" },
 		token: { type: "boolean" },
+		"client-id": { type: "string" },
 		push: { type: "boolean" },
 		help: { type: "boolean", short: "h" },
 	},
@@ -104,7 +108,7 @@ switch (command) {
 	}
 	case "connector": {
 		const [action = "list", name, third, fourth] = rest;
-		const usage = "usage: gaidin connector list | show NAME | add NAME URL [--token] | token NAME [--token] | tool NAME TOOL allow|ask|off | refresh NAME | remove NAME";
+		const usage = "usage: gaidin connector list | show NAME | add NAME URL [--token] | connect NAME [--client-id ID] | token NAME [--token] | tool NAME TOOL allow|ask|off | refresh NAME | remove NAME | client-document";
 		// The token comes on stdin, so it's in no shell history or process list.
 		const token = async () => {
 			if (values.token !== true) return undefined;
@@ -117,6 +121,7 @@ switch (command) {
 			return text.trim();
 		};
 		if (action === "list") process.exit(await connectors(loaded.config, { type: "connector", action: "list" }));
+		if (action === "client-document") process.exit(await connectors(loaded.config, { type: "connector", action: "client-document" }));
 		if (name === undefined) fail([usage]);
 		if (action === "show" || action === "refresh" || action === "remove") process.exit(await connectors(loaded.config, { type: "connector", action, name: name! }));
 		if (action === "add") {
@@ -125,6 +130,11 @@ switch (command) {
 			const given = await token();
 			if (given !== undefined) add.token = given;
 			process.exit(await connectors(loaded.config, add));
+		}
+		if (action === "connect") {
+			const connect: Parameters<typeof connectors>[1] = { type: "connector", action: "connect", name: name! };
+			if (values["client-id"] !== undefined) connect.clientId = values["client-id"];
+			process.exit(await connectors(loaded.config, connect));
 		}
 		if (action === "token") {
 			const change: Parameters<typeof connectors>[1] = { type: "connector", action: "token", name: name! };

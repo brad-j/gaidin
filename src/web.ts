@@ -14,6 +14,7 @@ import { type AgentEvent, type Conversation, type ConversationId, type Harness, 
 import { type AgentEntry, agentIdOf, DEFAULT_AGENT, type RosterService } from "./agents.ts";
 import { BrowserState } from "./browser/index.ts";
 import type { LiveEvent, TakeOver } from "./browser/takeover.ts";
+import { CALLBACK_PATH, CLIENT_PATH, type ConnectorService } from "./connectors/index.ts";
 import type { ApprovalRequest, ApprovalService, Decision } from "./approvals.ts";
 import type { BudgetGuard, BudgetStatus } from "./budget.ts";
 import { context } from "./host.ts";
@@ -268,6 +269,8 @@ export function createWebServer(options: {
 	profiles?: () => readonly string[];
 	/** Taking a profile over; without it the browser routes are 404s. */
 	takeOver?: TakeOver;
+	/** The connectors, whose sign-ins come back to CALLBACK_PATH. */
+	connectors?: ConnectorService;
 	threads: Threads;
 	user: string;
 	/** The directory of moiraine's build, the app, served at /. */
@@ -462,6 +465,21 @@ export function createWebServer(options: {
 			if (!open) stop();
 		} catch (error) {
 			viewer({ type: "released", reason: `couldn't open it: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}` });
+		}
+	}
+
+	/**
+	 * Where the owner's browser comes back to from signing a connector in. The state it carries is the one gaidin made, so
+	 * another site can't finish a sign-in it didn't start; the answer is a line of text.
+	 */
+	async function signedIn(url: URL, response: ServerResponse) {
+		if (options.connectors === undefined) throw new HttpError(404, "There are no connectors.");
+		try {
+			const connector = await options.connectors.callback(url.searchParams);
+			const tools = connector.tools.length;
+			reply(response, 200, connector.state === "connected" ? `${connector.name} is signed in, with ${tools} ${tools === 1 ? "tool" : "tools"}. You can close this page.` : `${connector.name} signed in, but connecting failed: ${connector.problem ?? connector.state}.`, "text/plain; charset=utf-8");
+		} catch (error) {
+			reply(response, 400, `Signing in didn't finish: ${error instanceof Error ? error.message : String(error)}`, "text/plain; charset=utf-8");
 		}
 	}
 
@@ -767,6 +785,12 @@ export function createWebServer(options: {
 		if (request.method === "GET") {
 			if (path === "/events") return events(url, response);
 			if (path === LIVE_PATH) return live(url, request, response);
+			if (path === CALLBACK_PATH) return signedIn(url, response);
+			if (path === CLIENT_PATH) {
+				const document = options.connectors?.clientDocument();
+				if (document === undefined) throw new HttpError(404, "Signing connectors in needs web.url in the settings.");
+				return json(response, document);
+			}
 			if (path === AVATAR_PATH) return avatar(url, response);
 			if (isGet(path)) return json(response, await gets[path](url));
 			if (path === OLD_APP_PATH || path.startsWith(`${OLD_APP_PATH}/`)) return redirect(response, `${path.slice(OLD_APP_PATH.length) || "/"}${url.search}`);

@@ -55,13 +55,15 @@ export type Config = {
 	keysDir: string;
 	/** Without it there's no browser. */
 	browser?: BrowserConfig;
+	/** The URL of a public copy of gaidin's client id document, for services that fetch it (connectors/oauth.ts). */
+	connectors?: { clientId: string };
 	homelab?: HomelabConfig;
 };
 
 export type Loaded = { config: Config; errors: string[]; warnings: string[] };
 
 const DEFAULT_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
-const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "alerts", "slack", "web", "sandbox", "budget", "approvals", "search", "keys", "browser", "extensions"];
+const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "alerts", "slack", "web", "sandbox", "budget", "approvals", "search", "keys", "browser", "connectors", "extensions"];
 /** A browser profile's name, as an agent's id. */
 const PROFILE = /^[a-z][a-z0-9-]{0,30}$/;
 
@@ -291,6 +293,14 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 		else browser = { profiles };
 	}
 
+	// Connectors
+	const connectorsSection = section("connectors");
+	for (const key of Object.keys(connectorsSection)) if (key !== "clientId") errors.push(`Unknown setting "connectors.${key}"`);
+	const connectorClientId = text("connectors.clientId", connectorsSection.clientId);
+	if (connectorClientId !== undefined && (URL.parse(connectorClientId)?.protocol !== "https:" || ["", "/"].includes(URL.parse(connectorClientId)!.pathname))) {
+		errors.push("connectors.clientId must be an https URL with a path, where a copy of gaidin's client id document is (gaidin connector client-document prints it)");
+	}
+
 	// Extensions
 	const extensions = section("extensions");
 	for (const key of Object.keys(extensions)) {
@@ -352,6 +362,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	}
 	if (search !== undefined) config.search = search;
 	if (browser !== undefined) config.browser = browser;
+	if (connectorClientId !== undefined) config.connectors = { clientId: connectorClientId };
 	if (homelab !== undefined) config.homelab = homelab;
 	return { config, errors, warnings };
 }

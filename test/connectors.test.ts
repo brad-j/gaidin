@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -9,7 +10,9 @@ import type { Conversation } from "@earendil-works/pi-durable";
 import type { ApprovalRequest } from "../src/approvals.ts";
 import { AuthRequired, headerParams, headerValue, mcpClient } from "../src/connectors/client.ts";
 import { type ConnectorTool, merge, offered, render, review, urlProblem } from "../src/connectors/index.ts";
-import { configFor } from "../src/config.ts";
+import { configFor, loadConfig } from "../src/config.ts";
+import { createOAuth } from "../src/connectors/oauth.ts";
+import { createWebServer } from "../src/web.ts";
 import { assistantText, context, startHost } from "../src/host.ts";
 import { parseClientMessage } from "../src/server.ts";
 import { fakeMcp, type FakeTool } from "./fake-mcp.ts";
@@ -226,3 +229,152 @@ test("the CLI's connector commands read right", () => {
 	assert.throws(() => parseClientMessage('{"type":"connector","action":"tool","name":"mail"}'), /allow, ask or off/);
 	assert.deepEqual(parseClientMessage('{"type":"agent","action":"set","id":"scout","change":{"connectors":["mail"]}}'), { type: "agent", action: "set", id: "scout", change: { connectors: ["mail"] } });
 });
+
+/** gaidin at a tailnet address, with no connectors yet. */
+async function signingHost(t: TestContext) {
+	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const host = await startHost({ config: configFor({ owner: "Brad", web: { user: "brad@example.com", port: 0, url: "https://gaidin.example.ts.net" } }), dataDir: dir, sandbox: "none", ...scripted(), adapters: { push: { send: async () => true } } });
+	t.after(() => host.close());
+	await host.agents.add({ id: "scout", name: "Scout", job: "" });
+	return { host, dir };
+}
+
+/** What the owner's browser does with the address gaidin gives: signs in, and is sent back with the code. */
+async function signIn(address: string): Promise<URLSearchParams> {
+	const answer = await fetch(address, { redirect: "manual" });
+	assert.equal(answer.status, 302, `the sign-in page answered ${answer.status}`);
+	const back = new URL(answer.headers.get("location")!);
+	assert.equal(`${back.origin}${back.pathname}`, "https://gaidin.example.ts.net/api/connectors/callback");
+	return back.searchParams;
+}
+
+test("a server like Home Assistant's: signed in with OAuth and gaidin's own URL as its client id, refreshed when the token expires, and needing the owner when refresh is refused", async (t) => {
+	const server = await fakeMcp(t, { era: "modern", tools: () => [SEARCH], oauth: {}, call: (_name, _args, headers) => ({ content: [{ type: "text", text: `called with ${String(headers.authorization)}` }] }) });
+	const { host, dir } = await signingHost(t);
+	const added = await host.connectors.add({ name: "home", url: server.url });
+	assert.equal(added.state, "needs-owner");
+
+	const address = new URL(await host.connectors.connect("home"));
+	assert.equal(`${address.origin}${address.pathname}`, `${new URL(server.url).origin}/auth/authorize`);
+	assert.equal(address.searchParams.get("client_id"), "https://gaidin.example.ts.net/api/connectors/client.json");
+	assert.equal(address.searchParams.get("redirect_uri"), "https://gaidin.example.ts.net/api/connectors/callback");
+	assert.equal(address.searchParams.get("code_challenge_method"), "S256");
+	assert.equal(address.searchParams.get("resource"), new URL(server.url).origin);
+	const connected = await host.connectors.callback(await signIn(address.href));
+	assert.deepEqual([connected.state, connected.auth, connected.tools.map((tool) => [tool.name, offered(tool)])], ["connected", "oauth", [["search_mail", true]]]);
+	assert.equal(server.auth.tokenRequests[0]!.grant_type, "authorization_code");
+	assert.match(readFileSync(join(dir, "connectors", "vault.json"), "utf8"), /"refresh": "refresh-1"/);
+
+	await host.agents.update("scout", { connectors: ["home"] });
+	const scout = await host.agents.home("scout");
+	assert.match(await say(scout, CALL("home_search_mail", { q: "x" })), /called with Bearer \[redacted CONNECTOR_HOME_TOKEN\]/);
+
+	// The access token stops working; the call refreshes it and goes on.
+	server.expire();
+	assert.match(await say(scout, CALL("home_search_mail", { q: "x" })), /called with Bearer \[redacted CONNECTOR_HOME_TOKEN\]/);
+	assert.equal(server.auth.tokenRequests.at(-1)!.grant_type, "refresh_token");
+
+	// Refresh refused: the connector needs Brad, and a new sign-in mends it.
+	server.revoke();
+	assert.match(await say(scout, CALL("home_search_mail", { q: "x" })), /The home connector needs Brad|has to sign it in again/);
+	assert.equal(host.connectors.list()[0]!.state, "needs-owner");
+	assert.equal((await host.connectors.callback(await signIn(await host.connectors.connect("home")))).state, "connected");
+});
+
+test("the callback finishes a sign-in only for the state gaidin made, from the issuer it expects", async (t) => {
+	const server = await fakeMcp(t, { era: "legacy", tools: () => [SEARCH], oauth: { challenge: true } });
+	const { host } = await signingHost(t);
+	await host.connectors.add({ name: "home", url: server.url });
+	await assert.rejects(host.connectors.callback(new URLSearchParams({ state: "made-up", code: "code-1" })), /isn't one gaidin started/);
+	const back = await signIn(await host.connectors.connect("home"));
+	back.set("iss", "https://evil.example");
+	await assert.rejects(host.connectors.callback(back), /came from https:\/\/evil.example/);
+	// The state is spent either way.
+	back.set("iss", new URL(server.url).origin);
+	await assert.rejects(host.connectors.callback(back), /isn't one gaidin started/);
+	assert.equal((await host.connectors.callback(await signIn(await host.connectors.connect("home")))).protocol, "2025-06-18");
+});
+
+test("a server that takes registration instead of client id documents gets gaidin registered", async (t) => {
+	const server = await fakeMcp(t, { era: "modern", tools: () => [SEARCH], oauth: { register: true } });
+	const { host } = await signingHost(t);
+	await host.connectors.add({ name: "notes", url: server.url });
+	const address = new URL(await host.connectors.connect("notes"));
+	assert.equal(address.searchParams.get("client_id"), "registered-1");
+	assert.equal((await host.connectors.callback(await signIn(address.href))).state, "connected");
+});
+
+test("discovery holds a server to its own host or public https, its issuer to the one it named, and PKCE to S256", async () => {
+	const pages = new Map<string, unknown>();
+	const oauth = createOAuth({
+		redirectUri: "https://gaidin.example.ts.net/api/connectors/callback",
+		clientId: "https://gaidin.example.ts.net/api/connectors/client.json",
+		fetch: async (input) => {
+			const page = pages.get(String(input));
+			return page === undefined ? new Response("", { status: 404 }) : Response.json(page);
+		},
+		resolve: async (host) => [{ address: host === "auth.example.com" ? "93.184.216.34" : "192.168.3.9" }],
+	});
+	const server = "http://192.168.3.105/api/mcp";
+	const metadata = { issuer: "https://auth.example.com", authorization_endpoint: "https://auth.example.com/authorize", token_endpoint: "https://auth.example.com/token", code_challenge_methods_supported: ["S256"], client_id_metadata_document_supported: true };
+	pages.set("http://192.168.3.105/.well-known/oauth-protected-resource", { resource: "http://192.168.3.105", authorization_servers: ["https://auth.example.com"] });
+	pages.set("https://auth.example.com/.well-known/oauth-authorization-server", metadata);
+	assert.equal((await oauth.discover(server)).tokenEndpoint, "https://auth.example.com/token");
+
+	pages.set("https://auth.example.com/.well-known/oauth-authorization-server", { ...metadata, token_endpoint: "https://intranet.example.com/token" });
+	await assert.rejects(oauth.discover(server), /token endpoint, https:\/\/intranet.example.com\/token, isn't on a public address/);
+	pages.set("https://auth.example.com/.well-known/oauth-authorization-server", { ...metadata, issuer: "https://other.example.com" });
+	await assert.rejects(oauth.discover(server), /names https:\/\/other.example.com, not https:\/\/auth.example.com/);
+	pages.set("https://auth.example.com/.well-known/oauth-authorization-server", { ...metadata, code_challenge_methods_supported: ["plain"] });
+	await assert.rejects(oauth.discover(server), /PKCE with S256/);
+	pages.set("http://192.168.3.105/.well-known/oauth-protected-resource", { resource: "http://192.168.3.105", authorization_servers: ["http://auth.example.com"] });
+	await assert.rejects(oauth.discover(server), /authorization server, http:\/\/auth.example.com, isn't https/);
+	pages.set("http://192.168.3.105/.well-known/oauth-protected-resource", { resource: "https://elsewhere.example.com", authorization_servers: ["https://auth.example.com"] });
+	await assert.rejects(oauth.discover(server), /for another resource/);
+});
+
+test("the callback route answers in plain text, and gaidin serves its client id document", async (t) => {
+	const server = await fakeMcp(t, { era: "modern", tools: () => [SEARCH, SEND], oauth: {} });
+	const { host } = await signingHost(t);
+	const web = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: "brad@example.com", connectors: host.connectors, switchable: host.switchable, approvals: host.approvals });
+	await new Promise<void>((resolve) => web.listen(0, "127.0.0.1", resolve));
+	t.after(async () => {
+		web.closeAllConnections();
+		await new Promise((resolve) => web.close(resolve));
+	});
+	const base = `http://127.0.0.1:${(web.address() as AddressInfo).port}`;
+	const headers = { "Tailscale-User-Login": "brad@example.com" };
+	assert.deepEqual(await (await fetch(`${base}/api/connectors/client.json`, { headers })).json(), {
+		client_id: "https://gaidin.example.ts.net/api/connectors/client.json",
+		client_name: "gaidin",
+		redirect_uris: ["https://gaidin.example.ts.net/api/connectors/callback"],
+		grant_types: ["authorization_code", "refresh_token"],
+		response_types: ["code"],
+		token_endpoint_auth_method: "none",
+		application_type: "web",
+	});
+	await host.connectors.add({ name: "home", url: server.url });
+	const back = await signIn(await host.connectors.connect("home"));
+	const done = await fetch(`${base}/api/connectors/callback?${back}`, { headers });
+	assert.equal(await done.text(), "home is signed in, with 2 tools. You can close this page.");
+	const again = await fetch(`${base}/api/connectors/callback?${back}`, { headers });
+	assert.equal(again.status, 400);
+	assert.match(await again.text(), /^Signing in didn't finish: /);
+});
+
+test("connectors.clientId is an https URL with a path", () => {
+	const load = (connectors: object) => loadConfig({ env: { GAIDIN_CONFIG: settingsFile({ connectors }) }, search: false });
+	assert.equal(load({ clientId: "https://bradjohnson.io/gaidin/client.json" }).config.connectors?.clientId, "https://bradjohnson.io/gaidin/client.json");
+	assert.match(load({ clientId: "https://bradjohnson.io" }).errors.join(), /https URL with a path/);
+	assert.match(load({ clientId: "http://x/c.json" }).errors.join(), /https URL with a path/);
+	assert.match(load({ clientid: "x" }).errors.join(), /Unknown setting "connectors.clientid"/);
+});
+
+function settingsFile(settings: object): string {
+	const dir = mkdtempSync(join(tmpdir(), "gaidin-settings-"));
+	process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
+	const file = join(dir, "gaidin.json");
+	writeFileSync(file, JSON.stringify({ model: { provider: "faux" }, ...settings }));
+	return file;
+}

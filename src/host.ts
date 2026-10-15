@@ -207,7 +207,7 @@ export async function openHost(options: HostOptions = {}) {
 	const browser = config.browser === undefined ? undefined : createBrowser({ profiles: config.browser.profiles, dir: resolve(dir, "browser"), dataDir: dir, owner, fetch: options.fetch, chromium: options.chromium, approvals: () => approvals!, read: () => harness });
 	if (browser !== undefined) registry.install(browser.extension);
 	// Their extensions are installed once the Harness is open and their document can be read.
-	const connectors = createConnectors({ dir: resolve(dir, "connectors"), owner, registry, redactor: growing, root: () => root, roster: () => roster, fetch: options.connectorFetch, resolve: options.fetch?.resolve });
+	const connectors = createConnectors({ dir: resolve(dir, "connectors"), owner, registry, redactor: growing, root: () => root, roster: () => roster, fetch: options.connectorFetch, resolve: options.fetch?.resolve, appUrl: config.web?.url, clientId: config.connectors?.clientId });
 	// Self-written tools only ever run in a box, so without bubblewrap there are none.
 	const self = bwrap === undefined ? undefined : createSelf({ dataDir: dir, sandbox, bwrap, hide, registry, approvals: () => approvals!, owner, fetch: options.fetch });
 	if (self !== undefined) {

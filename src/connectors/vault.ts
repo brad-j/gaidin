@@ -5,20 +5,37 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { GrowingRedactor } from "../redact.ts";
-import { dictionary, object, optional, parseJson, string } from "../parse.ts";
+import { dictionary, integer, object, optional, parseJson, string } from "../parse.ts";
+import type { Grant } from "./oauth.ts";
 
-/** What's kept for a connector: a bearer token the owner pasted, or OAuth's (step 2). */
-export type Held = { token?: string };
+/** What's kept for a connector: a bearer token the owner pasted, or an OAuth grant. */
+export type Held = { token?: string; grant?: Grant };
 
-const file = dictionary(object({ token: optional(string) }));
+const grant = object({
+	token: string,
+	refresh: optional(string),
+	expiresAt: optional(integer),
+	issuer: string,
+	clientId: string,
+	clientSecret: optional(string),
+	tokenEndpoint: string,
+	resource: string,
+	scope: optional(string),
+});
+const file = dictionary(object({ token: optional(string), grant: optional(grant) }));
 
 export function createVault(dir: string, redactor?: GrowingRedactor) {
 	const path = join(dir, "vault.json");
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	chmodSync(dir, 0o700);
 	const held = new Map<string, Held>(existsSync(path) ? parseJson(readFileSync(path, "utf8"), file, path) : []);
-	const name = (connector: string) => `CONNECTOR_${connector.toUpperCase().replace(/-/g, "_")}_TOKEN`;
-	for (const [connector, value] of held) redactor?.set(name(connector), value.token);
+	const name = (connector: string, what: string) => `CONNECTOR_${connector.toUpperCase().replace(/-/g, "_")}_${what}`;
+	const redact = (connector: string, value: Held | undefined) => {
+		redactor?.set(name(connector, "TOKEN"), value?.token ?? value?.grant?.token);
+		redactor?.set(name(connector, "REFRESH_TOKEN"), value?.grant?.refresh);
+		redactor?.set(name(connector, "CLIENT_SECRET"), value?.grant?.clientSecret);
+	};
+	for (const [connector, value] of held) redact(connector, value);
 
 	function save() {
 		const temporary = `${path}.${process.pid}`;
@@ -31,12 +48,12 @@ export function createVault(dir: string, redactor?: GrowingRedactor) {
 		set(connector: string, value: Held) {
 			held.set(connector, value);
 			save();
-			redactor?.set(name(connector), value.token);
+			redact(connector, value);
 		},
 		remove(connector: string) {
 			if (!held.delete(connector)) return;
 			save();
-			redactor?.set(name(connector), undefined);
+			redact(connector, undefined);
 		},
 	};
 }

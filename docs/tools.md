@@ -172,10 +172,12 @@ A hand-over shows in the app's dock with Take over, Done and Can't, is pushed to
 
 A connector is a remote MCP server you add, such as a mail, calendar or notes service's: its tools become tools of the agents you give it to. It's for services that offer one; the [browser](#browser) is for sites that don't.
 
-You add one from the command line for now, with its name and its server's URL, and its bearer token on standard input if it needs one (OAuth comes next, [Plan](plan.md#design-connectors)):
+You add one from the command line for now, with its name and its server's URL. A server that signs in with OAuth is connected with `connector connect`, which prints an address to open in a browser; one that takes a token you paste gets it on standard input:
 
 ```sh
-gaidin connector add mail https://mcp.example.com/mcp --token    # paste the token, then Enter
+gaidin connector add home http://192.168.3.105/api/mcp           # then:
+gaidin connector connect home                                    # open the address it prints, sign in
+gaidin connector add mail https://mcp.example.com/mcp --token    # or paste a token, then Enter
 gaidin connector show mail                                       # its tools and how each is set
 gaidin connector tool mail send_mail ask                         # allow, ask or off
 gaidin agent set scout --connectors mail                         # which agents get its tools
@@ -191,9 +193,11 @@ Each tool is named `<connector>_<tool>` for the model and set to one of:
 
 A tool's description is the server's own text, which the model reads, so gaidin pins it: a hash of its name, description, schema and the server's hints, as you last set it. When the server adds a tool, or changes one, the tool is off until you set it again, which accepts it as it is then; `connector show` marks it new or changed. The tools of a connector you've just added take their defaults, since adding it is when you look at them. A server can mark a tool's schema in a way gaidin can't honor (an `x-mcp-header` in the wrong place); such a tool is listed as unusable and never offered.
 
-What a tool returns is outside text, labelled as from that connector, cut to 20,000 characters, with its images kept. A call waits up to 60 seconds. A server that asks for more input in the middle of a call isn't answered yet; the call fails naming what it asked. When the server refuses the token, the connector is marked as needing you, and its tools say so until you give it one that works.
+What a tool returns is outside text, labelled as from that connector, cut to 20,000 characters, with its images kept. A call waits up to 60 seconds. A server that asks for more input in the middle of a call isn't answered yet; the call fails naming what it asked. When the server refuses the token, a signed-in connector refreshes it and tries once more; if that's refused too, or a pasted token is, the connector is marked as needing you, and its tools say so until you sign it in again or give it a token that works.
 
-The token is kept in `<data>/connectors/vault.json`, readable only by the server, never in the database or a transcript, and redacted from tool output. gaidin speaks both the current MCP revision, 2026-07-28, and the earlier ones (2025-03-26 to 2025-11-25) that most servers still use, finding out which with the first request.
+Signing in follows the MCP spec's OAuth: gaidin finds the service's sign-in from the server's metadata, sends your browser there with PKCE, and takes the answer at `<web.url>/api/connectors/callback`, so it needs `web.url` and a browser that reaches both the service and gaidin's app. The sign-in must finish within 10 minutes. gaidin identifies itself with a client id document, `<web.url>/api/connectors/client.json`. A service that checks the address it sends you back to against the client id's host, as Home Assistant does, takes that without fetching it. One on the internet that fetches the document can't reach your tailnet, so put a copy (`gaidin connector client-document` prints it) at a public https address and name it in `connectors.clientId` ([Deploying](deploy.md#settings)). A service that registers clients instead gets gaidin registered, and for one that does neither, give the client id you registered with it: `connector connect NAME --client-id ID`. Access tokens are refreshed a minute before they expire.
+
+The tokens are kept in `<data>/connectors/vault.json`, readable only by the server, never in the database or a transcript, and redacted from tool output. gaidin speaks both the current MCP revision, 2026-07-28, and the earlier ones (2025-03-26 to 2025-11-25) that most servers still use, finding out which with the first request.
 
 ## Workspaces
 

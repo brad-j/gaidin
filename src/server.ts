@@ -37,7 +37,9 @@ export type ClientMessage =
 	| { type: "connector"; action: "show" | "refresh" | "remove"; name: string }
 	| { type: "connector"; action: "add"; name: string; url: string; token?: string }
 	| { type: "connector"; action: "tool"; name: string; tool: string; setting: ToolSetting }
-	| { type: "connector"; action: "token"; name: string; token?: string };
+	| { type: "connector"; action: "token"; name: string; token?: string }
+	| { type: "connector"; action: "connect"; name: string; clientId?: string }
+	| { type: "connector"; action: "client-document" };
 /** What the server sends back. */
 export type ServerMessage = { type: "line"; text: string } | { type: "done"; status: string };
 
@@ -46,7 +48,8 @@ const clientMessage = object({
 	content: optional(string),
 	requestId: optional(string),
 	agent: optional(string),
-	action: optional(literal("list", "add", "set", "show", "refresh", "tool", "token", "remove")),
+	action: optional(literal("list", "add", "set", "show", "refresh", "tool", "token", "remove", "connect", "client-document")),
+	clientId: optional(string),
 	url: optional(string),
 	token: optional(string),
 	tool: optional(string),
@@ -68,6 +71,7 @@ export function parseClientMessage(line: string): ClientMessage {
 	if (message.type === "connector") {
 		const { action = "list", name } = message;
 		if (action === "list") return { type: "connector", action: "list" };
+		if (action === "client-document") return { type: "connector", action: "client-document" };
 		if (name === undefined) throw new ParseError(`a connector ${action} needs a name`);
 		if (action === "show" || action === "refresh" || action === "remove") return { type: "connector", action, name };
 		if (action === "add") {
@@ -75,6 +79,11 @@ export function parseClientMessage(line: string): ClientMessage {
 			const add: ClientMessage = { type: "connector", action: "add", name, url: message.url };
 			if (message.token !== undefined) add.token = message.token;
 			return add;
+		}
+		if (action === "connect") {
+			const connect: ClientMessage = { type: "connector", action: "connect", name };
+			if (message.clientId !== undefined) connect.clientId = message.clientId;
+			return connect;
 		}
 		if (action === "token") {
 			const token: ClientMessage = { type: "connector", action: "token", name };
@@ -192,7 +201,7 @@ export async function serve(config: Config) {
 
 	const web = config.web === undefined
 		? undefined
-		: createWebServer({ harness, root, agents: host.agents, workspaces: host.workspaces, profiles: host.profiles, takeOver: host.takeOver, uploads: host.uploads, avatars: host.avatars, mirror: slack?.mirror, threads: host.threads, user: config.web.user, app: config.web.app, switchable, approvals, models: config.model.choices, budget, timeline, history, skills, stop, snooze: reminders.snooze, push });
+		: createWebServer({ harness, root, agents: host.agents, workspaces: host.workspaces, profiles: host.profiles, takeOver: host.takeOver, connectors: host.connectors, uploads: host.uploads, avatars: host.avatars, mirror: slack?.mirror, threads: host.threads, user: config.web.user, app: config.web.app, switchable, approvals, models: config.model.choices, budget, timeline, history, skills, stop, snooze: reminders.snooze, push });
 	if (web !== undefined) {
 		const port = config.web!.port;
 		// Loopback only: tailscale serve is the way in, and it vouches for who's asking.
@@ -260,6 +269,15 @@ export async function serve(config: Config) {
 			case "tool":
 				send(socket, { type: "line", text: describeTool(await connectors.setTool(request.name, request.tool, request.setting)) });
 				break;
+			case "connect":
+				send(socket, { type: "line", text: `Open this in a browser that can reach the service and gaidin's app, and sign in; it comes back to gaidin within 10 minutes:\n${await connectors.connect(request.name, request.clientId)}` });
+				break;
+			case "client-document": {
+				const document = connectors.clientDocument();
+				if (document === undefined) throw new Error("Signing connectors in needs web.url in the settings.");
+				send(socket, { type: "line", text: JSON.stringify(document, null, 2) });
+				break;
+			}
 			case "remove":
 				await connectors.remove(request.name);
 				send(socket, { type: "line", text: `Removed ${request.name}, its token and every agent's grant of it.` });
