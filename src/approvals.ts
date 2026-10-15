@@ -1,4 +1,4 @@
-// Approval hook: some tool calls wait for the owner to allow them, from Slack or the web view.
+// Approval hook: some tool calls wait for the owner to allow them, from Slack or the app.
 //
 // Each tool's rules are its guard (guards.ts), which the module that owns the tool declares. A beforeTool
 // hook finds the call's guard and asks it whether the call needs approval. If it does, the hook takes a

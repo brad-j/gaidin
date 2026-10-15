@@ -22,7 +22,8 @@
   },
   "web": {
     "user": "alex@example.com",
-    "url": "https://gaidin.<your tailnet>.ts.net"
+    "url": "https://gaidin.<your tailnet>.ts.net",
+    "app": "/var/lib/gaidin/moiraine"
   },
   "search": {
     "provider": "tavily",

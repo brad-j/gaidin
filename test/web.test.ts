@@ -49,89 +49,79 @@ async function lastUserEntry(host: Awaited<ReturnType<typeof startHost>>) {
 	throw new Error("no message from the owner");
 }
 
-test("only Brad's tailnet login gets in", async (t) => {
-	const { call } = await start(t);
+/** A stand-in for moiraine's build: a shell with two inline scripts, a hashed script, an icon and a dotfile. */
+function fakeApp(t: TestContext) {
+	const app = mkdtempSync(join(tmpdir(), "gaidin-app-"));
+	t.after(() => rmSync(app, { recursive: true, force: true }));
+	const inline = ["document.currentScript.remove()", "self.$_TSR={};"];
+	writeFileSync(join(app, "_shell.html"), `<html><head><title>gaidin</title></head><body><script>${inline[0]}</script><script data-part="">${inline[1]}</script><script type="module" src="/assets/index-abc.js"></script></body></html>`);
+	mkdirSync(join(app, "assets"));
+	writeFileSync(join(app, "assets", "index-abc.js"), "console.log(1)");
+	writeFileSync(join(app, "icon-192.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+	writeFileSync(join(app, "manifest.webmanifest"), JSON.stringify({ id: "/", start_url: "/" }));
+	writeFileSync(join(app, ".hidden"), "not served");
+	return { app, hashes: inline.map((code) => `'sha256-${createHash("sha256").update(code).digest("base64")}'`) };
+}
+
+test("only Brad's tailnet login gets in, and the app's files are its own: icons and manifest at the paths they had", async (t) => {
+	const { call } = await start(t, fakeApp(t).app);
 	assert.equal((await fetch((await call("/")).url)).status, 403);
 	assert.equal((await call("/", { as: "someone@example.com" })).status, 403);
 	const page = await call("/");
 	assert.equal(page.status, 200);
 	assert.match(await page.text(), /<title>gaidin<\/title>/);
-	// /app.js and every module it imports, directly or not, are served with their types stripped.
-	const served = new Set(["/app.js"]);
-	for (const path of served) {
-		const script = await call(path);
-		assert.equal(script.status, 200, path);
-		assert.match(script.headers.get("content-type")!, /^text\/javascript/);
-		const code = await script.text();
-		assert.doesNotMatch(code, /: (HTMLElement|Transcript|Job|Reminder)\b/, `${path} has types left`);
-		// Only the page's own modules: the server's types it imports are stripped with the rest.
-		for (const [, from] of code.matchAll(/^import .* from "([^"]+)";$/gm)) {
-			assert.match(from, /^\.\/[a-z]+\.ts$/, `${path} imports ${from}`);
-			served.add(from.slice(1));
-		}
-	}
-	assert.ok(served.has("/transcript.ts") && served.has("/schedule.ts"), [...served].join());
-	for (const path of ["/favicon.svg", "/logo.svg"]) {
-		const icon = await call(path);
-		assert.equal(icon.headers.get("content-type"), "image/svg+xml");
-		assert.match(await icon.text(), /<title>gaidin<\/title>/);
-	}
-	const manifest = await (await call("/manifest.webmanifest")).json();
-	for (const path of ["/apple-touch-icon.png", ...manifest.icons.map((icon: { src: string }) => icon.src)]) {
-		const png = await call(path);
-		assert.equal(png.headers.get("content-type"), "image/png", path);
-		assert.deepEqual([...new Uint8Array(await png.arrayBuffer()).subarray(1, 4)], [0x50, 0x4e, 0x47], path);
-	}
+	const icon = await call("/icon-192.png");
+	assert.equal(icon.headers.get("content-type"), "image/png");
+	assert.equal(icon.headers.get("cache-control"), "no-store");
+	assert.equal((await call("/manifest.webmanifest")).headers.get("content-type"), "application/manifest+json");
 });
 
-test("every response forbids framing and runs only the page's own script", async (t) => {
-	const { call } = await start(t);
+test("every response forbids framing, and runs only the app's own script", async (t) => {
+	const { call } = await start(t, fakeApp(t).app);
 	for (const response of [await call("/"), await call("/api/settings"), await call("/", { as: "someone@example.com" })]) {
 		assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
-		assert.match(response.headers.get("content-security-policy") ?? "", /script-src 'self';/);
+		assert.match(response.headers.get("content-security-policy") ?? "", /script-src 'self'[ ;]/);
 		assert.equal(response.headers.get("x-frame-options"), "DENY");
 		assert.equal(response.headers.get("x-content-type-options"), "nosniff");
 	}
+	assert.match((await call("/api/settings")).headers.get("content-security-policy")!, /script-src 'self';/);
 });
 
-test("the app's files are served at /app/, and its shell for every other path there, with its inline scripts allowed by hash", async (t) => {
-	const app = mkdtempSync(join(tmpdir(), "gaidin-app-"));
-	t.after(() => rmSync(app, { recursive: true, force: true }));
-	const inline = ["document.currentScript.remove()", "self.$_TSR={};"];
-	writeFileSync(join(app, "_shell.html"), `<html><body><script>${inline[0]}</script><script data-part="">${inline[1]}</script><script type="module" src="/app/assets/index-abc.js"></script></body></html>`);
-	mkdirSync(join(app, "assets"));
-	writeFileSync(join(app, "assets", "index-abc.js"), "console.log(1)");
-	writeFileSync(join(app, "robots.txt"), "no");
-	writeFileSync(join(app, ".hidden"), "not served");
+test("the app's shell answers every path that isn't the API or one of its files, with its inline scripts allowed by hash, and its old /app/ addresses go to the new ones", async (t) => {
+	const { app, hashes } = fakeApp(t);
 	const { call } = await start(t, app);
 
-	const script = await call("/app/assets/index-abc.js");
+	const script = await call("/assets/index-abc.js");
 	assert.equal(await script.text(), "console.log(1)");
 	assert.match(script.headers.get("content-type")!, /^text\/javascript/);
 	assert.match(script.headers.get("cache-control")!, /immutable/);
-	assert.equal((await call("/app/robots.txt")).headers.get("cache-control"), "no-store");
 
 	// Any other path, a dotfile and a way out of the directory included, gets the shell, which isn't cached.
-	const hashes = inline.map((code) => `'sha256-${createHash("sha256").update(code).digest("base64")}'`);
-	for (const path of ["/app", "/app/", "/app/gaidin/t/12", "/app/.hidden", "/app/..%2fpackage.json", "/app/_shell.html", "/app/assets/missing.js"]) {
+	for (const path of ["/", "/gaidin", "/gaidin/t/12", "/activity", "/.hidden", "/..%2fpackage.json", "/_shell.html", "/assets/missing.js"]) {
 		const shell = await call(path);
 		assert.equal(shell.status, 200, path);
 		assert.match(await shell.text(), /^<html>/, path);
 		assert.equal(shell.headers.get("cache-control"), "no-store", path);
 		assert.ok(shell.headers.get("content-security-policy")!.includes(`script-src 'self' ${hashes.join(" ")};`), path);
-		assert.match(shell.headers.get("content-security-policy")!, /frame-ancestors 'none'/, path);
 	}
-	assert.equal((await call("/app/%E0%A4%A")).status, 400);
-	assert.equal((await call("/app/", { as: "someone@example.com" })).status, 403);
-	// Other pages keep the policy without the hashes.
-	assert.match((await call("/")).headers.get("content-security-policy")!, /script-src 'self';/);
+	assert.equal((await call("/%E0%A4%A")).status, 400);
+	// The API's own paths aren't the app's.
+	assert.equal((await call("/api/nothing")).status, 404);
+
+	for (const [from, to] of [["/app", "/"], ["/app/", "/"], ["/app/gaidin/t/12", "/gaidin/t/12"], ["/app/gaidin/skills/gaidin/tools.md?create=true", "/gaidin/skills/gaidin/tools.md?create=true"]] as const) {
+		const moved = await call(from, { redirect: "manual" });
+		assert.equal(moved.status, 308, from);
+		assert.equal(moved.headers.get("location"), to, from);
+	}
 });
 
 test("without web.app there's no app, and a missing build says so", async (t) => {
-	assert.equal((await (await start(t)).call("/app/")).status, 404);
+	const none = await (await start(t)).call("/");
+	assert.equal(none.status, 404);
+	assert.match(await none.text(), /set web\.app/);
 	const empty = mkdtempSync(join(tmpdir(), "gaidin-app-"));
 	t.after(() => rmSync(empty, { recursive: true, force: true }));
-	const missing = await (await start(t, empty)).call("/app/");
+	const missing = await (await start(t, empty)).call("/");
 	assert.equal(missing.status, 404);
 	assert.match(await missing.text(), /The app isn't built/);
 });
@@ -286,7 +276,7 @@ test("a fired reminder is snoozed from its push's button", async (t) => {
 		return id;
 	}, context);
 	await host.harness.waitForTask(fired, context);
-	// The transcript's record of it carries its id, for the web view's snooze buttons.
+	// The transcript's record of it carries its id, for the app's snooze buttons.
 	const record = (await host.root.entries({}, 5, undefined, context)).items.find((e) => e.kind === "gaidin.reminder-fired");
 	assert.equal((record?.data as { taskId?: number } | undefined)?.taskId, fired);
 

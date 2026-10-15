@@ -1,6 +1,6 @@
 // Memory: lasting notes, which every conversation sees in its system prompt, job runs included. Shared notes are
 // about the owner and their world, and every agent sees them; work notes are one agent's own (agents.ts). The
-// agents keep them with remember, update_memory and forget; the owner can read, add and delete them in the web view.
+// agents keep them with remember, update_memory and forget; the owner can read, add and delete them in the app.
 // The prompt and the tools name a shared note s<n> and a work note w<n>; the documents keep plain numbers.
 //
 // Notes outlive the conversation that wrote them, which makes them the place a planted instruction would want to

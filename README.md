@@ -36,7 +36,7 @@ pnpm check                                   # type check, lint and tests
 ## Documentation
 
 - [Concepts](docs/concepts.md): the durable conversation, threads, agents, and what survives a restart
-- [Surfaces](docs/surfaces.md): the CLI, Slack and the web view, and how to set them up
+- [Surfaces](docs/surfaces.md): the CLI, Slack and the app, and how to set them up
 - [Tools](docs/tools.md): every tool, what it can reach, and what asks first
 - [Security](docs/security.md): the sandbox, redaction, approvals, and the known gaps
 - [Deploying](docs/deploy.md): running it as a service, adding workspaces, and every setting

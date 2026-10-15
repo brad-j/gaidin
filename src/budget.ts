@@ -2,7 +2,7 @@
 // baseline at the start of each local day and month, and refuses new model requests once the day's or
 // the month's spend reaches its limit. Requests are refused by the model lookup the Harness makes before
 // each one: with no model, the run ends as unanswered, without retrying. The owner can allow more for
-// the day from the web view.
+// the day from the app.
 //
 // The total is refreshed after every model response, so the request that crosses a limit still
 // finishes. Scheduled jobs make requests without the owner, which is what this is mainly for.
@@ -96,7 +96,7 @@ export function createBudget(options: {
 			let warn: string | undefined;
 			if (reason !== undefined && doc.stopped !== day) {
 				doc.stopped = day;
-				warn = `gaidin has stopped making model requests. ${reason} Allow more in the web view, or it starts again ${overMonth ? "next month" : "tomorrow"}.`;
+				warn = `gaidin has stopped making model requests. ${reason} Allow more in the app, or it starts again ${overMonth ? "next month" : "tomorrow"}.`;
 			} else if (reason === undefined && limits.daily > 0 && today >= dailyLimit * 0.8 && doc.warned !== day) {
 				doc.warned = day;
 				warn = `gaidin has spent ${money(today)} today, 80% of the daily limit of ${money(dailyLimit)}.`;

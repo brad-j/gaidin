@@ -565,7 +565,7 @@ export function createSelf(options: {
 		}
 	}
 
-	/** The self-written tools, which the web view can switch off. */
+	/** The self-written tools, which the app can switch off. */
 	const loaded = () => [...runners.keys()].flatMap((name) => registry.snapshot().extension(`self-${name}`)?.tools ?? []);
 
 	return {

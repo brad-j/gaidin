@@ -218,7 +218,7 @@ test("Slack asks with buttons, in the thread for a forked conversation, and show
 	assert.equal(calls.filter((c) => c.method === "chat.postMessage")[1]!.body.thread_ts, "111.222");
 });
 
-test("the web view lists requests and decides them", async (t) => {
+test("the app lists requests and decides them", async (t) => {
 	const { createWebServer } = await import("../src/web.ts");
 	const { host } = await start(t, [["a.test"]]);
 	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: "me", switchable: host.switchable, approvals: host.approvals });

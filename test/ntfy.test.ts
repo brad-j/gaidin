@@ -23,7 +23,7 @@ test("reminders and job reports carry the icon when one is set", async (t) => {
 	assert.deepEqual(seen.map((headers) => headers.icon), [icon, icon, undefined]);
 });
 
-test("with the web view's address, a reminder opens it when tapped and has two snooze buttons", async (t) => {
+test("with the app's address, a reminder opens it when tapped and has two snooze buttons", async (t) => {
 	const seen: IncomingHttpHeaders[] = [];
 	const server = createServer((request, response) => {
 		seen.push(request.headers);

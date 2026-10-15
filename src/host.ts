@@ -139,7 +139,7 @@ export async function openHost(options: HostOptions = {}) {
 	await prepareServerDirs(sandbox);
 	const chosen = options.models && options.model ? { models: options.models, model: options.model } : modelFor(config);
 	const model = chosen.model;
-	// Web Push needs the web view's address, which push services are given as the sender's contact.
+	// Web Push needs the app's address, which push services are given as the sender's contact.
 	const pushKeys = config.web?.url === undefined ? undefined : loadPushKeys(dir);
 	let push: Push | undefined;
 	// Made by start(), once the server can give it Slack. Tasks only run from then on, so nothing tells the owner before.
@@ -277,7 +277,7 @@ export async function openHost(options: HostOptions = {}) {
 		return true;
 	}
 
-	// The tools the web view can switch off: the coding tools, fetch_url (gaidin's only way to the internet), the history tools, the workspace tools
+	// The tools the app can switch off: the coding tools, fetch_url (gaidin's only way to the internet), the history tools, the workspace tools
 	// and the self-written ones.
 	const builtIn = [...(CodingTools.tools ?? []), web.tool, ...(search === undefined ? [] : [search]), ...history.tools, ...workspaces.tools];
 	const switchable = () => [...builtIn, ...(self?.tools() ?? [])];

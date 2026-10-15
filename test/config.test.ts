@@ -155,10 +155,10 @@ test("ntfy.icon is read, kept when masked, and must be a URL", (t) => {
 	assert.ok(bad.errors.some((error) => /ntfy.icon must be the URL/.test(error)));
 });
 
-test("web.url is the web view's address, without a trailing slash", (t) => {
+test("web.url is the app's address, without a trailing slash", (t) => {
 	const read = (url: string) => loadConfig({ file: file(t, { model: { apiKey: KEY }, web: { user: "brad@example.com", url } }), env: {} });
 	assert.equal(read("https://gaidin.example.ts.net/").config.web?.url, "https://gaidin.example.ts.net");
-	assert.ok(read("gaidin.example.ts.net").errors.some((error) => /web\.url must be the web view's address/.test(error)));
+	assert.ok(read("gaidin.example.ts.net").errors.some((error) => /web\.url must be the app's address/.test(error)));
 });
 
 test("web.app is a directory, from the settings file's own when it's relative", (t) => {

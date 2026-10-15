@@ -9,7 +9,7 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { configFor } from "../src/config.ts";
 import { context, startHost } from "../src/host.ts";
-import { deviceProblem, encrypt, loadPushKeys, vapid } from "../src/push.ts";
+import { deviceProblem, encrypt, loadPushKeys, pushAdapter, type PushMessage, vapid } from "../src/push.ts";
 import { createWebServer } from "../src/web.ts";
 
 const b64 = (text: string) => Buffer.from(text.replace(/\s+/g, ""), "base64url");
@@ -81,7 +81,7 @@ test("the key pair is made once and kept private, and pushes are signed with it"
 	assert.ok(verify("sha256", Buffer.from(`${head}.${claims}`), { key: publicKey, dsaEncoding: "ieee-p1363" }, b64(signature!)));
 });
 
-test("reminders and requests reach signed-up devices, a device that's gone is dropped, and the web view signs devices up", async (t) => {
+test("reminders and requests reach signed-up devices, each opening its conversation, a device that's gone is dropped, and the app signs devices up", async (t) => {
 	const sent: { url: string; headers: Record<string, string>; body: Buffer }[] = [];
 	const pushFetch = (async (url: string, init: RequestInit) => {
 		sent.push({ url, headers: init.headers as Record<string, string>, body: Buffer.from(init.body as Uint8Array) });
@@ -114,10 +114,6 @@ test("reminders and requests reach signed-up devices, a device that's gone is dr
 	const post = (path: string, body: unknown) =>
 		fetch(base + path, { method: "POST", body: JSON.stringify(body), headers: { "Tailscale-User-Login": BRAD, "Content-Type": "application/json" } });
 
-	const worker = await fetch(`${base}/sw.js`, { headers: { "Tailscale-User-Login": BRAD } });
-	assert.match(worker.headers.get("content-type")!, /^text\/javascript/);
-	assert.match(await worker.text(), /addEventListener\("push"/);
-
 	const phone = device();
 	const old = device();
 	assert.equal((await post("/api/push/subscribe", { endpoint: "http://push.test/a", keys: { p256dh: phone.p256dh, auth: phone.authText } })).status, 400);
@@ -140,8 +136,8 @@ test("reminders and requests reach signed-up devices, a device that's gone is dr
 	};
 	const messages = await toPhone(2);
 	const byTag = (prefix: string) => messages.find((m) => m.tag?.startsWith(prefix));
-	assert.deepEqual({ ...byTag("approval-"), tag: undefined }, { title: "gaidin wants to", body: 'schedule "Briefing", at 08:00, every day: Brief me.', urgency: "high", tag: undefined });
-	assert.deepEqual({ ...byTag("reminder-"), tag: undefined }, { title: "gaidin", body: "stretch", urgency: "high", tag: undefined });
+	assert.deepEqual({ ...byTag("approval-"), tag: undefined }, { title: "gaidin wants to", body: 'schedule "Briefing", at 08:00, every day: Brief me.', urgency: "high", tag: undefined, url: `/gaidin/t/${host.root.id}` });
+	assert.deepEqual({ ...byTag("reminder-"), tag: undefined }, { title: "gaidin", body: "stretch", urgency: "high", tag: undefined, url: "/gaidin" });
 
 	const request = sent.find((s) => s.url.endsWith("/phone"))!;
 	assert.equal(request.headers["Content-Encoding"], "aes128gcm");
@@ -177,4 +173,12 @@ test("a push fits the 4,096 bytes a push service takes, however its text escapes
 	}
 	await host.push!.send({ title: "gaidin", body: "stretch" });
 	assert.deepEqual(JSON.parse(decrypt(bodies.at(-1)!, phone.ecdh, phone.auth)), { title: "gaidin", body: "stretch" });
+});
+
+test("a job's report opens its run, another agent's in that agent's addresses, and a budget stop opens activity", async () => {
+	const pushed: PushMessage[] = [];
+	const adapter = pushAdapter({ send: async (message: PushMessage) => (pushed.push(message), 1) });
+	await adapter.send({ kind: "report", report: { taskId: 3, title: "Briefing", text: "Sunny.", conversationId: 41, agent: "scout" } });
+	await adapter.send({ kind: "budget", text: "Stopped at the daily limit." });
+	assert.deepEqual(pushed.map((m) => m.url), ["/scout/t/41", "/activity"]);
 });

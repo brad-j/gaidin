@@ -5,7 +5,7 @@
 //
 // docs/ is the built-in gaidin skill, so gaidin can read the documentation of the version that's running.
 // Local skills are directories in <data>/skills, which the sandbox can't see. The owner writes them from the
-// web view, and gaidin with write_skill and remove_skill, which always ask the owner first, showing the change.
+// app, and gaidin with write_skill and remove_skill, which always ask the owner first, showing the change.
 // Every change is a commit in that directory's Git repository, and the list is read again after it. A change
 // made on disk by hand shows once the server starts again.
 import { execFile } from "node:child_process";

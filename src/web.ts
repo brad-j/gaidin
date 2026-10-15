@@ -1,19 +1,14 @@
-// The web view and the app's API: each agent's conversations, live, with a message box and a stop button, its
-// reminders, jobs, notes and settings, the roster, and threads the owner starts and continues (threads.ts). A request
-// names its agent with `?agent=` or `agent` in its body, and a conversation with `conversation`; without them, it's the
-// default agent's home conversation, the root. It listens on loopback only; `tailscale serve` puts HTTPS in front and
-// adds Tailscale-User-Login, and only GAIDIN_WEB_USER is let in.
+// The app's server: moiraine's build, from the directory web.app names, and the API it works through: each agent's
+// conversations, live, its reminders, jobs, notes, skills and settings, the roster, and threads the owner starts and
+// continues (threads.ts). A request names its agent with `?agent=` or `agent` in its body, and a conversation with
+// `conversation`; without them, it's the default agent's home conversation, the root. It listens on loopback only;
+// `tailscale serve` puts HTTPS in front and adds Tailscale-User-Login, and only GAIDIN_WEB_USER is let in.
 //
-// The page is web/index.html, web/app.ts and the modules it imports, with their types stripped as they're served. Its icon is assets/logo.svg,
-// and the header shows assets/logo-transparent.svg. The PNG icons, for phone home screens and ntfy.icon, are
-// renders of the same two files. web/sw.js is the service worker that shows notifications (push.ts).
-//
-// With `web.app`, moiraine's build is served at /app/ beside it: its files, and its shell for every other path there.
+// Every path that isn't the API or /events is the app's: one of its files (its icons, manifest and service worker
+// among them, at the paths the web view had them), or its shell.
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { stripTypeScriptTypes } from "node:module";
 import { extname, resolve, sep } from "node:path";
 import { type AgentEvent, type Conversation, type Harness, type ModelRef, type SnapshotEvent, type ToolRegistration, type Tx, type UsageState, watchEvents } from "@earendil-works/pi-durable";
 import { type AgentEntry, agentIdOf, DEFAULT_AGENT, type RosterService } from "./agents.ts";
@@ -32,7 +27,6 @@ import { type createSkills, readSkillFile, type Skill } from "./skills.ts";
 import type { Threads } from "./threads.ts";
 import { stamp } from "./time.ts";
 
-const WEB_DIR = resolve(import.meta.dirname, "../web");
 
 /**
  * On every response. Another site can't frame the page, which would carry the owner's tailnet identity, and trick a
@@ -53,8 +47,8 @@ function policy(scripts: readonly string[] = []): string {
 	);
 }
 
-/** Where moiraine's build is served. Its own paths start here too: it's built with this base. */
-const APP_PATH = "/app";
+/** Where the app was served beside the web view, before it took its place: its old addresses go to the new ones. */
+const OLD_APP_PATH = "/app";
 /** The page moiraine's build gives for every path that isn't one of its files. */
 const APP_SHELL = "_shell.html";
 const APP_TYPES = new Map([
@@ -72,7 +66,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 3;
+export const PROTOCOL = 4;
 
 /** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
 export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
@@ -133,8 +127,8 @@ export type Timeline = Awaited<ReturnType<ReturnType<typeof createHistory>["time
 export type ListedSkill = Omit<Skill, "dir">;
 const listed = ({ name, description, source, files }: Skill): ListedSkill => ({ name, description, source, files });
 
-// The protocol between the page (web/app.ts) and this server: what each route answers, and what each POST takes.
-// The route tables below are checked against these, and the page's requests are typed by them.
+// The protocol between the app (moiraine) and this server: what each route answers, and what each POST takes.
+// The route tables below are checked against these, and the app's requests are typed by them.
 
 /** What each GET route answers. */
 export type Gets = {
@@ -221,7 +215,7 @@ export function createWebServer(options: {
 	workspaces?: () => readonly string[];
 	threads: Threads;
 	user: string;
-	/** The directory of moiraine's build, served at /app/. */
+	/** The directory of moiraine's build, the app, served at /. */
 	app?: string;
 	/**
 	 * Posts a message sent from the app in its conversation's Slack thread, if it has one, and then its answer (slack/).
@@ -256,22 +250,6 @@ export function createWebServer(options: {
 	approvals.onChange(() => {
 		for (const send of streams) send({ type: "approvals_changed" });
 	});
-	const page = readFileSync(resolve(WEB_DIR, "index.html"));
-	const script = (name: string) => stripTypeScriptTypes(readFileSync(resolve(WEB_DIR, name), "utf8"));
-	// app.ts imports the other modules by their .ts names, which the browser asks for beside /app.js.
-	const modules = ["activity.ts", "api.ts", "dom.ts", "history.ts", "log.ts", "markdown.ts", "memory.ts", "page.ts", "schedule.ts", "settings.ts", "skills.ts", "transcript.ts"];
-	const scripts = new Map([["/app.js", script("app.ts")], ...modules.map((name) => [`/${name}`, script(name)] as const)]);
-	const asset = (name: string, type: string) => ({ body: readFileSync(resolve(import.meta.dirname, "..", name)), type });
-	const files = new Map([
-		["/favicon.svg", asset("assets/logo.svg", "image/svg+xml")],
-		["/logo.svg", asset("assets/logo-transparent.svg", "image/svg+xml")],
-		["/apple-touch-icon.png", asset("assets/icon-180.png", "image/png")],
-		["/icon-192.png", asset("assets/icon-192.png", "image/png")],
-		["/icon-512.png", asset("assets/icon-512.png", "image/png")],
-		["/icon-maskable-512.png", asset("assets/icon-maskable-512.png", "image/png")],
-		["/manifest.webmanifest", asset("web/manifest.webmanifest", "application/manifest+json")],
-		["/sw.js", asset("web/sw.js", "text/javascript; charset=utf-8")],
-	]);
 
 	/** The agent a GET names, or the default agent. */
 	const agentIn = (url: URL) => url.searchParams.get("agent") ?? DEFAULT_AGENT;
@@ -603,14 +581,13 @@ export function createWebServer(options: {
 		const url = new URL(request.url ?? "/", "http://gaidin");
 		const path = url.pathname;
 		if (request.method === "GET") {
-			if (path === "/") return reply(response, 200, page, "text/html; charset=utf-8");
-			if (options.app !== undefined && (path === APP_PATH || path.startsWith(`${APP_PATH}/`))) return serveApp(options.app, path.slice(APP_PATH.length), response);
-			const code = scripts.get(path);
-			if (code !== undefined) return reply(response, 200, code, "text/javascript; charset=utf-8");
-			const file = files.get(path);
-			if (file !== undefined) return reply(response, 200, file.body, file.type);
 			if (path === "/events") return events(url, response);
 			if (isGet(path)) return json(response, await gets[path](url));
+			if (path === OLD_APP_PATH || path.startsWith(`${OLD_APP_PATH}/`)) return redirect(response, `${path.slice(OLD_APP_PATH.length) || "/"}${url.search}`);
+			if (!path.startsWith("/api/")) {
+				if (options.app === undefined) throw new HttpError(404, "There's no app here: set web.app in gaidin's settings to the directory of moiraine's build.");
+				return serveApp(options.app, path, response);
+			}
 		}
 		if (request.method === "POST" && path === "/api/files") return json(response, await upload(request));
 		if (request.method !== "POST" || !isPost(path)) throw new HttpError(404, "Not found");
@@ -740,6 +717,12 @@ async function readBytes(request: IncomingMessage, max: number): Promise<Buffer>
 		chunks.push(chunk);
 	}
 	return Buffer.concat(chunks);
+}
+
+/** Sends the browser to `to` for good, keeping the method. */
+function redirect(response: ServerResponse, to: string) {
+	response.writeHead(308, { ...SECURITY_HEADERS, Location: to, "Cache-Control": "no-store" });
+	response.end();
 }
 
 function reply(response: ServerResponse, status: number, body: string | Buffer, type: string) {

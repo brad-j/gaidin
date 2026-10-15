@@ -3,7 +3,7 @@
 // list them across conversations.
 //
 // - messages: the owner's messages and gaidin's answers, with a full-text index, for search_history.
-// - activity: what gaidin did and who allowed it, for the web view's timeline: tool calls and whether they
+// - activity: what gaidin did and who allowed it, for the app's timeline: tool calls and whether they
 //   worked, approval outcomes (approvals.ts writes them into the transcript), job reports and reminders.
 //
 // Both cover the main conversation, Slack threads, job runs and conversations one agent started with another, not
@@ -48,7 +48,7 @@ export type Activity = {
 	outcome: string;
 };
 
-const WHERE = new Map([["slack", " in Slack"], ["web", " in the web view"]]);
+const WHERE = new Map([["slack", " in Slack"], ["web", " in the app"]]);
 
 /** What an entry adds to the timeline. `update` is a tool call's outcome, by its call id. */
 type Contribution = { rows: (Omit<Activity, "place" | "agent"> & { ref: string })[]; update?: [string, string] };
@@ -107,7 +107,7 @@ async function placeOf(tx: Tx, id: ConversationId, home: boolean, started: boole
 	return (await tx.task(conversation.owner.taskId))?.kind === "gaidin.job" ? "job" : undefined;
 }
 
-/** A thread, a job run or a conversation another agent started, as the web view lists them. */
+/** A thread, a job run or a conversation another agent started, as the app lists them. */
 export type ConversationSummary = {
 	id: number;
 	place: Exclude<Place, "main">;

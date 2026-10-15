@@ -73,7 +73,7 @@ test("reaching no one without an error, as with no device signed up or nothing s
 	await createNotifications({}).send({ kind: "budget", text: "over" });
 });
 
-test("a request never throws: it waits in the web view whatever happens to its notifications", async () => {
+test("a request never throws: it waits in the app whatever happens to its notifications", async () => {
 	const log: string[] = [];
 	await createNotifications({ push: fake("push", log, new Error("push down")), slack: fake("slack", log, new Error("slack down")) }).send(request);
 	assert.deepEqual(log, ["push request", "slack request"]);

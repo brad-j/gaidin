@@ -37,8 +37,8 @@ export type Config = {
 	ntfy?: { url: string; token?: string; icon?: string };
 	slack?: SlackConfig;
 	/**
-	 * `url` is where the owner reaches the web view, for links and buttons in pushes. `app` is the directory of
-	 * moiraine's build, served at /app/.
+	 * `url` is where the owner reaches the app, for links and buttons in pushes. `app` is the directory of
+	 * moiraine's build, the app, served at /.
 	 */
 	web?: { user: string; port: number; url?: string; app?: string };
 	sandbox: "bwrap" | "none";
@@ -224,7 +224,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	const port = Number(portValue);
 	if (!Number.isInteger(port) || port < 1 || port > 65535) errors.push(`web.port must be a port number, not ${JSON.stringify(portValue)}`);
 	const webUrl = text("web.url", webSection.url)?.replace(/\/+$/, "");
-	if (webUrl !== undefined && !/^https?:\/\/[^/]+$/.test(webUrl)) errors.push("web.url must be the web view's address, like https://gaidin.example.ts.net");
+	if (webUrl !== undefined && !/^https?:\/\/[^/]+$/.test(webUrl)) errors.push("web.url must be the app's address, like https://gaidin.example.ts.net");
 	const webApp = text("web.app", webSection.app);
 	if (ntfyUrl === undefined && (webUser === undefined || webUrl === undefined)) {
 		warnings.push("Neither ntfy.url nor web.url: reminders print to the server's output instead of reaching a phone");

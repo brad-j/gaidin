@@ -18,7 +18,7 @@
 | `approvals.ts` | the approval hook and `ask_owner`; each tool's rules are its guard (`guards.ts`) |
 | `redact.ts` | the redaction hook, installed last so it sees every result |
 
-The surfaces are separate: `server.ts` wires the socket, Slack and the web view (`web.ts`, `web/`), then starts the host. Slack is `slack/`, built by one call, `createSlack(settings, host)`, which checks once that a message or button press is the owner's in the gaidin channel before handing it to `conversation.ts` (the owner's messages and threads) or `notifications.ts` (what gaidin posts and its buttons). It reaches Slack through `api.ts` and `socket.ts`; tests replace both (`test/fake-slack.ts`). The web view's protocol is two type maps in `web.ts`, `Gets` and `Posts`: what each route answers, and what each POST takes. Its route tables are checked against them, and the page imports them with `import type`, which is stripped as it's served, so a route that changes its answer fails `tsc` on both sides. A new route is an entry in a map and in its table. The page's copy of the conversation is `web/transcript.ts`, which only applies events to its state; `test/transcript.test.ts` replays recorded event streams through it. `sandbox.ts` is the tools' execution environment.
+The surfaces are separate: `server.ts` wires the socket, Slack and the app's server (`web.ts`), then starts the host. Slack is `slack/`, built by one call, `createSlack(settings, host)`, which checks once that a message or button press is the owner's in the gaidin channel before handing it to `conversation.ts` (the owner's messages and threads) or `notifications.ts` (what gaidin posts and its buttons). It reaches Slack through `api.ts` and `socket.ts`; tests replace both (`test/fake-slack.ts`). The app's protocol is two type maps in `web.ts`, `Gets` and `Posts`: what each route answers, and what each POST takes, and `StreamEvent` for `/events`. Its route tables are checked against them, and moiraine imports them with `import type`, through a `link:` dependency on this checkout, so a route that changes its answer fails `tsc` on both sides; none of gaidin's code goes into moiraine's build. A new route is an entry in a map and in its table, and a change of shape raises `PROTOCOL`. `sandbox.ts` is the tools' execution environment.
 
 Everything gaidin tells the owner unprompted, a fired reminder, a job's report, a paused job, a budget warning or a request for approval, is a notice handed to `notifications.ts`, which holds the table of which ways each kind goes: Slack, Web Push (`push.ts`) and ntfy (`ntfy.ts`), one adapter each. A new kind of notice is a case there and in each adapter. Tests give `openHost` fake adapters with the `adapters` option, and `startHost` opens and starts a host for callers with no Slack to attach first.
 
@@ -45,7 +45,7 @@ registry.install(defineExtension({ name: "weather", tools: [weather] }));
 - Its result passes through redaction automatically.
 - A tool that runs commands should use the environment it's given (`api.env`), which is the sandbox, so it can't reach anything the sandbox hides.
 - If it reads text from outside, say so in the result, as `fetch_url` and `container_logs` do.
-- To make it switchable in the web view, add it to `switchable` in `host.ts`.
+- To make it switchable in the app, add it to `switchable` in `host.ts`.
 - A tool that needs a secret takes it from the settings: add it to `Config` and `loadConfig` in `config.ts` and to `secretsOf`, so it's redacted, and add its environment variable to `SECRET_NAMES` in `redact.ts`.
 - A tool's description should name the owner with `config.owner`, not a fixed name.
 
@@ -68,7 +68,7 @@ const guards = [
 - `refuse` says why a call can't succeed for reasons known before it runs, such as a name that doesn't exist, so it's blocked with the reason instead of being put to the owner. It runs again after an approval.
 - A tool whose results are text from outside declares `outside: true`, or uses `outsideText(name)` when it never asks, so a note written after reading it asks first. Declare it even when the tool is switched off, since past results can still be in a conversation.
 
-Slack and the web view render any request; their labels come from the request. Self-written tools are the exception: `load_extension`, `remove_extension` and a self-written tool's fetches ask from inside the tool, since they need what only the run has (the diff, or a URL a redirect leads to).
+Slack and the app render any request; their labels come from the request. Self-written tools are the exception: `load_extension`, `remove_extension` and a self-written tool's fetches ask from inside the tool, since they need what only the run has (the diff, or a URL a redirect leads to).
 
 ## Tests
 

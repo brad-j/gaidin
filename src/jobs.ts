@@ -46,7 +46,7 @@ export type Mode = "report" | "watch";
 
 /** What a gate's check found. `data` goes into the run's prompt; `topic` (default: `data`) names what it found, to tell the same findings from new ones. */
 export type GateResult = { wake: boolean; data?: string; topic?: string };
-/** A check a job can run before waking the model: the homelab extension's, or a self-written tool (`tool`), which the web view can switch off. */
+/** A check a job can run before waking the model: the homelab extension's, or a self-written tool (`tool`), which the app can switch off. */
 /** What a job gives its gate, as approved with the job. */
 export type GateArgs = { readonly [name: string]: string | number | boolean };
 /** `agent`: the job's, whose allowed hosts a self-written gate fetches from; absent, the default agent. */

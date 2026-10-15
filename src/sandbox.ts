@@ -3,7 +3,7 @@
 // - Shell commands run under bubblewrap: only the sandbox is writable, /usr, /etc and /opt are
 //   read-only, and the rest of the file system isn't there, including the data directory with the
 //   SQLite file and the Unix socket, and the app's own code. They get their own process tree, so the
-//   server's /proc/<pid>/environ is out of reach, and no network, so the web view's loopback port
+//   server's /proc/<pid>/environ is out of reach, and no network, so the app's loopback port
 //   and anything outside are too. Background processes die with the command.
 // - The file tools run in the server process, so every path they use is resolved through symlinks
 //   and refused if it lands outside the sandbox. Temp files, such as a long command's full output,

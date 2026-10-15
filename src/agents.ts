@@ -51,7 +51,7 @@ export type AgentEntry = {
 	name: string;
 	/** One line, which the owner and the agents that may message it see. */
 	job: string;
-	/** The conversation whose agent settings are this agent's, and that the CLI and web view talk to. */
+	/** The conversation whose agent settings are this agent's, and that the CLI and the app talk to. */
 	home: number;
 	/** Its Slack channel. The default agent's is the settings' when this is absent. */
 	channel?: string;
@@ -452,7 +452,7 @@ export function createRoster(options: {
 		}, background);
 	}
 
-	/** An agent's home conversation, which the CLI and web view talk to. Throws when there's no such agent. */
+	/** An agent's home conversation, which the CLI and the app talk to. Throws when there's no such agent. */
 	async function home(id: string = DEFAULT_AGENT): Promise<Conversation> {
 		if (id === DEFAULT_AGENT) return root;
 		const agent = (await read()).agents.find((a) => a.id === id && a.archived === undefined);

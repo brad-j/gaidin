@@ -44,12 +44,13 @@
 30. The app's pages: each agent's schedule, memory (shared and work notes), skills and settings (its roster entry, model, tools, instructions, hosts, workspaces, who it may message, and notification devices), and across agents an agents page that makes, archives and restores them and an activity page with spend and the timeline, which names each item's agent. `/api/workspaces` lists the workspaces, and the roster routes read and save the default agent's hosts, which the approvals keep (protocol 2).
 31. Attachments from the app: files sent ahead to `/api/files` and named by the message, images to the model and other files to the agent's sandbox, through `src/files.ts`, which Slack's files go through too; the app shrinks a large image first (protocol 3).
 32. Slack mirroring: a message sent from the app to a conversation with a Slack thread is posted there, headed *From the app:*, and then its answer, recorded before it's posted so a restart still posts both ([Surfaces](surfaces.md#slack)).
+33. The switch: the app is served at `/`, with the service worker, manifest and icons its own at the paths they had, so installed apps and devices signed up for notifications carry over; the app's old `/app/` addresses redirect, a notification opens the conversation it came from, and the web view and its tests are gone (protocol 4) ([Surfaces](surfaces.md#the-app)).
 
 ## Next
 
 Candidates:
 
-- Several named agents, designed below: Slack's channel per agent, then the app (designed below), which replaces the web view and holds the agents' pages. Then connectors (MCP servers with OAuth, tokens held by the server, granted per agent), a persistent browser with a take-over view, and owner-written allow and ask-first rules, in that order.
+- Several named agents, designed below: Slack's channel per agent, the one step left now the app (designed below) has replaced the web view and holds the agents' pages. Then connectors (MCP servers with OAuth, tokens held by the server, granted per agent), a persistent browser with a take-over view, and owner-written allow and ask-first rules, in that order.
 - Release polish: a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
 
 Not planned: branching from any message in the web view, since each thread is already a conversation of its own; push-to-talk, since the owner dictates with superwhisper; and projects or image generation in the app.
@@ -205,6 +206,6 @@ moiraine's deploy script builds on the owner's machine and copies the build over
 3. Done: the pages, with the per-agent changes (item 30). With no conversation open, a page asks for the approvals every 5 seconds rather than following an event stream. The web view's `#/<page>` addresses and `#/history/<id>` open the matching page or thread.
 4. Done: attachments (item 31). Other files go to the sandbox of the agent whose conversation it is, where Slack's still go to the default agent's until its channel per agent.
 5. Done: Slack mirroring (item 32). Every Slack thread is the default agent's until Slack's channel per agent (agents step 3), which will give other agents' threads the same.
-6. The switch: the app moves to `/`, `sw.js` moves to moiraine, `web/` is removed, and Surfaces describes the app.
+6. Done: the switch (item 33). moiraine's `pnpm ship` deploys it ([Deploying](deploy.md#the-app)).
 
 Each step ends with `pnpm check` passing in each repository it touches and is a commit of its own there.

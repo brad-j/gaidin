@@ -6,7 +6,7 @@
 //   reminder        Web Push and ntfy, which must reach the owner; Slack too, with snooze buttons
 //   report, paused  Slack if it's set up, otherwise Web Push and ntfy
 //   budget          the same
-//   request         Web Push and Slack, as they can; a request also waits in the web view
+//   request         Web Push and Slack, as they can; a request also waits in the app
 import type { ApprovalRequest } from "./approvals.ts";
 import type { Report } from "./jobs.ts";
 import type { Reminder } from "./reminders.ts";

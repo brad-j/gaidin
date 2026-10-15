@@ -20,10 +20,6 @@
 				"anti-slop/no-unsafe-dictionary-type": "off",
 				"anti-slop/require-safety-comment-for-type-assertion": "off"
 			}
-		},
-		{
-			"files": ["web/app.ts", "web/dom.ts"],
-			"rules": { "anti-slop/no-runtime-typeof": ["error", { "allowInTypeGuards": true }] }
 		}
 	],
 	"rules": {

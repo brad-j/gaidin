@@ -1,6 +1,6 @@
 // `gaidin serve`: owns the SQLite file and runs the agent. Clients talk to it over a Unix socket in the
 // data directory, one JSON object per line. With Slack in the settings it also runs Slack (src/slack/),
-// and with `web` the web view (src/web.ts).
+// and with `web` the app (src/web.ts).
 //
 // client → server: {"type":"ask","content":"...","requestId":"...","agent":"..."}, {"type":"watch","agent":"..."}, or
 //                  {"type":"agent","action":"list"|"add"|"set",...} to see and change the roster (agents.ts)
@@ -138,7 +138,7 @@ export async function serve(config: Config) {
 	if (web !== undefined) {
 		const port = config.web!.port;
 		// Loopback only: tailscale serve is the way in, and it vouches for who's asking.
-		web.listen(port, "127.0.0.1", () => console.error(`gaidin web view on 127.0.0.1:${port}`));
+		web.listen(port, "127.0.0.1", () => console.error(`gaidin app on 127.0.0.1:${port}`));
 	}
 
 	const send = (socket: Socket, message: ServerMessage) => {

@@ -207,7 +207,7 @@ test("a note that can't be written isn't put to Brad", async (t) => {
 	assert.match(out[2]!, /No note s99\./);
 });
 
-test("the web view lists, adds, edits and deletes notes", async (t) => {
+test("the app lists, adds, edits and deletes notes", async (t) => {
 	const host = await start(t, () => []);
 	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: "me", switchable: host.switchable, approvals: host.approvals });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

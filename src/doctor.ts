@@ -107,7 +107,7 @@ async function model(config: Config): Promise<Check[]> {
 }
 
 async function ntfy(config: Config, push: boolean): Promise<Check[]> {
-	if (config.ntfy === undefined) return [{ status: "skip", area: "ntfy", detail: "not set up; notifications go only to devices signed up in the web view" }];
+	if (config.ntfy === undefined) return [{ status: "skip", area: "ntfy", detail: "not set up; notifications go only to devices signed up in the app" }];
 	const headers = config.ntfy.token === undefined ? undefined : { Authorization: `Bearer ${config.ntfy.token}` };
 	if (push) {
 		const pushHeaders = new Headers(headers);
@@ -123,13 +123,13 @@ async function ntfy(config: Config, push: boolean): Promise<Check[]> {
 
 /** Web Push sends to the push services of Apple and Google (and others), so the server has to reach them. */
 async function push(config: Config): Promise<Check[]> {
-	if (config.web?.url === undefined) return [{ status: "skip", area: "push", detail: "not set up; notifications from the web view need web.url" }];
+	if (config.web?.url === undefined) return [{ status: "skip", area: "push", detail: "not set up; notifications from the app need web.url" }];
 	const services = ["web.push.apple.com", "fcm.googleapis.com"];
 	const unreachable = (
 		await Promise.all(services.map(async (host) => (await fetch(`https://${host}/`, { signal: AbortSignal.timeout(10_000) }).then(() => true, () => false)) ? [] : [host]))
 	).flat();
 	if (unreachable.length > 0) return [{ status: "fail", area: "push", detail: `can't reach ${unreachable.join(" or ")}, so notifications to those devices won't arrive` }];
-	return [{ status: "ok", area: "push", detail: "push services reachable; sign devices up with /notifications in the web view" }];
+	return [{ status: "ok", area: "push", detail: "push services reachable; sign devices up with /notifications in the app" }];
 }
 
 async function alerts(config: Config): Promise<Check[]> {
@@ -157,7 +157,7 @@ async function web(config: Config): Promise<Check[]> {
 	if (config.web === undefined) return [{ status: "skip", area: "web", detail: "not set up" }];
 	const checks: Check[] = [];
 	const result = spawnSync("tailscale", ["serve", "status", "--json"], { encoding: "utf8", timeout: 10_000 });
-	if (result.error !== undefined) checks.push({ status: "warn", area: "web", detail: `tailscale isn't installed; the web view on 127.0.0.1:${config.web.port} has no way in` });
+	if (result.error !== undefined) checks.push({ status: "warn", area: "web", detail: `tailscale isn't installed; the app on 127.0.0.1:${config.web.port} has no way in` });
 	else {
 		const served = result.stdout.includes(`127.0.0.1:${config.web.port}`);
 		checks.push({
@@ -166,7 +166,8 @@ async function web(config: Config): Promise<Check[]> {
 			detail: served ? `tailscale serve proxies to 127.0.0.1:${config.web.port}, for ${config.web.user}` : `tailscale serve isn't proxying to port ${config.web.port}; run: sudo tailscale serve --bg --yes ${config.web.port}`,
 		});
 	}
-	if (config.web.app !== undefined) {
+	if (config.web.app === undefined) checks.push({ status: "warn", area: "web", detail: "web.app isn't set, so there's no app to serve; set it to the directory of moiraine's build" });
+	else {
 		const built = existsSync(join(config.web.app, "_shell.html"));
 		checks.push({ status: built ? "ok" : "fail", area: "web", detail: built ? `the app is in ${config.web.app}` : `web.app is ${config.web.app}, which has no _shell.html; deploy moiraine's build there` });
 	}

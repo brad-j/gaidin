@@ -1,5 +1,5 @@
-// Web Push: notifications from gaidin itself, to the web view installed as an app on a phone or computer.
-// The page signs a device up (web/app.ts, /notifications) and its service worker (web/sw.js) shows what
+// Web Push: notifications from gaidin itself, to the app installed on a phone or computer.
+// The app signs a device up (its settings page, /notifications) and its service worker (/sw.js) shows what
 // arrives. A push goes to the browser maker's push service (Apple's, Google's, Mozilla's), which hands it to
 // the device; it's encrypted to the device (RFC 8291), so the push service can't read it, and signed with
 // gaidin's own key (VAPID, RFC 8292), so the push service takes it only from gaidin.
@@ -11,6 +11,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { defineDoc, type Harness } from "@earendil-works/pi-durable";
+import { DEFAULT_AGENT } from "./agents.ts";
 import type { Adapter, Notice } from "./notifications.ts";
 import { type Json, object, parseJson, string } from "./parse.ts";
 
@@ -19,7 +20,7 @@ export type PushMessage = {
 	body: string;
 	/** A later notification with the same tag replaces this one. */
 	tag?: string;
-	/** Where tapping it goes in the web view. Default: the web view itself. */
+	/** Where tapping it goes in the app: the conversation it came from. Default: the app's start. */
 	url?: string;
 	/** "high" for what's waiting on the owner; the push service may hold "normal" ones for a phone that's saving battery. */
 	urgency?: "normal" | "high";
@@ -203,20 +204,24 @@ export function createPush(options: { harness: Harness; keys: PushKeys; subject:
 export type Push = ReturnType<typeof createPush>;
 
 /** Web Push as a way to reach the owner. It reaches no one until a device signs up; a request is pushed when it opens. */
-export function pushAdapter(push: Push): Adapter {
+export function pushAdapter(push: Pick<Push, "send">): Adapter {
+	// The app's addresses: an agent's home conversation, one of its conversations (the home goes to /<agent> from
+	// there too), and activity.
+	const agent = (id: string | undefined) => `/${encodeURIComponent(id ?? DEFAULT_AGENT)}`;
+	const conversation = (id: string | undefined, conversationId: number) => `${agent(id)}/t/${conversationId}`;
 	const message = (notice: Notice): PushMessage | undefined => {
 		switch (notice.kind) {
 			case "reminder":
-				return { title: "gaidin", body: notice.reminder.text, tag: `reminder-${notice.reminder.taskId}`, urgency: "high" };
+				return { title: "gaidin", body: notice.reminder.text, tag: `reminder-${notice.reminder.taskId}`, urgency: "high", url: agent(notice.reminder.agent) };
 			case "report":
 			case "paused":
-				return { title: notice.report.title, body: notice.report.text, tag: `job-${notice.report.taskId}` };
+				return { title: notice.report.title, body: notice.report.text, tag: `job-${notice.report.taskId}`, url: conversation(notice.report.agent, notice.report.conversationId) };
 			case "budget":
-				return { title: "gaidin: budget", body: notice.text, tag: "budget" };
+				return { title: "gaidin: budget", body: notice.text, tag: "budget", url: "/activity" };
 			case "request": {
 				const { request } = notice;
 				if (request.status !== "pending") return undefined;
-				return { title: request.kind === "question" ? "gaidin asks" : "gaidin wants to", body: request.summary, tag: `approval-${request.id}`, urgency: "high" };
+				return { title: request.kind === "question" ? "gaidin asks" : "gaidin wants to", body: request.summary, tag: `approval-${request.id}`, urgency: "high", url: conversation(request.agent, request.conversationId) };
 			}
 		}
 	};

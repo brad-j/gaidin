@@ -71,7 +71,7 @@ export function blocksFor(request: ApprovalRequest): Message {
 	const what = `\`${escape(request.summary)}\``;
 	if (request.status !== "pending") {
 		const how = request.decision === "always" && request.always !== undefined ? request.always.done : request.decision === "once" ? "Allowed once" : OUTCOME[request.status];
-		const outcome = `${how}${request.by ? ` in ${request.by === "slack" ? "Slack" : "the web view"}` : ""}`;
+		const outcome = `${how}${request.by ? ` in ${request.by === "slack" ? "Slack" : "the app"}` : ""}`;
 		const text = `gaidin asked to ${request.summary}. ${outcome}.`;
 		return { text, blocks: [{ type: "section", text: { type: "mrkdwn", text: `gaidin asked to ${what}\n*${outcome}.*` } }] };
 	}
@@ -83,10 +83,10 @@ export function blocksFor(request: ApprovalRequest): Message {
 		buttons.push({ type: "button", action_id: "gaidin-approve-always", text: { type: "plain_text", text: request.always.label.slice(0, 75) }, value: value("always") });
 	}
 	buttons.push({ type: "button", action_id: "gaidin-deny", style: "danger", text: { type: "plain_text", text: "Deny" }, value: value("deny") });
-	// A section holds 3000 characters, so a long detail is cut and the web view has the rest.
+	// A section holds 3000 characters, so a long detail is cut and the app has the rest.
 	const detail = request.detail === undefined ? [] : [{
 		type: "section",
-		text: { type: "mrkdwn", text: request.detail.length > 2600 ? `\`\`\`${escape(request.detail.slice(0, 2600))}\`\`\`\n_Cut here; the web view shows all of it._` : `\`\`\`${escape(request.detail)}\`\`\`` },
+		text: { type: "mrkdwn", text: request.detail.length > 2600 ? `\`\`\`${escape(request.detail.slice(0, 2600))}\`\`\`\n_Cut here; the app shows all of it._` : `\`\`\`${escape(request.detail)}\`\`\`` },
 	}];
 	return {
 		text: `gaidin wants to ${request.summary}`,

@@ -18,8 +18,8 @@ export function ntfyReporter(ntfy: { url: string; token?: string; icon?: string 
 }
 
 /**
- * Pushes a reminder. With `web`, the web view's address, tapping the push opens the web view, and two buttons
- * snooze it; the phone calls the web view, so they work while it's on the tailnet.
+ * Pushes a reminder. With `web`, the app's address, tapping the push opens the app, and two buttons
+ * snooze it; the phone calls gaidin, so they work while it's on the tailnet.
  */
 function snoozeActions(web: string, id: number): string {
 	const snooze = (label: string, minutes: number) =>

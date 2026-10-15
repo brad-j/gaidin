@@ -2,9 +2,9 @@
 
 ## One process, one conversation
 
-`gaidin serve` (`src/server.ts`) is the only process that opens the SQLite file. It runs the agent and serves every surface: the Unix socket the CLI uses, Slack over Socket Mode, and the web view. Pi Durable allows one process per storage, so nothing else may open the file while the server runs.
+`gaidin serve` (`src/server.ts`) is the only process that opens the SQLite file. It runs the agent and serves every surface: the Unix socket the CLI uses, Slack over Socket Mode, and the app. Pi Durable allows one process per storage, so nothing else may open the file while the server runs.
 
-Everything you say from the CLI or the web view goes to the root conversation, so both see the same history, live in `gaidin watch` too. Slack is the exception: each thread there is a [conversation of its own](#threads). The root is the default agent's home; other [agents](#agents) have homes of their own, which `gaidin ask --agent` talks to.
+Everything you say from the CLI or the app goes to the root conversation, so both see the same history, live in `gaidin watch` too. Slack is the exception: each thread there is a [conversation of its own](#threads). The root is the default agent's home; other [agents](#agents) have homes of their own, which `gaidin ask --agent` talks to.
 
 ## Durability
 
@@ -26,7 +26,7 @@ Every request sends the conversation so far, so a long conversation makes every 
 
 ## Threads
 
-A thread is a conversation of its own, started by a top-level message in the Slack channel or through the web server's [API](surfaces.md#the-api). A Slack thread is answered in the message's thread, and later replies there continue it. A thread starts with its agent's home settings (model, thinking, tools and standing instructions) as they are at that moment, and none of its history, so it costs only its own messages. The agent's memory, reminders and jobs are shared with it, and `search_history` finds what was said elsewhere. A change to the settings in the web view applies to the home conversation and to threads started after it. Each thread records where it began, Slack or the API.
+A thread is a conversation of its own, started by a top-level message in the Slack channel or through the web server's [API](surfaces.md#the-api). A Slack thread is answered in the message's thread, and later replies there continue it. A thread starts with its agent's home settings (model, thinking, tools and standing instructions) as they are at that moment, and none of its history, so it costs only its own messages. The agent's memory, reminders and jobs are shared with it, and `search_history` finds what was said elsewhere. A change to the settings in the app applies to the home conversation and to threads started after it. Each thread records where it began, Slack or the API.
 
 A reply in the Slack thread of something gaidin posted on its own, such as a job's report, forks that run's conversation at the report: the thread sees the run up to there and continues on its own. Answers posted in the channel before threads were separate work the same way, forking the root conversation at that answer. Through the API, a message to a job run or to a conversation another agent started forks it the same way, at its last answer, and goes to the fork; a message to a thread or a home conversation continues it.
 
@@ -43,7 +43,7 @@ gaidin can run several named agents, each doing one kind of work for you. The or
 
 They share the skills, the self-written tools you switch on for them, and the spend limits. Every conversation belongs to one agent: a thread or job run is the agent's whose conversation it came from, and one from before agents existed is the default agent's. An agent reaches another only with `message_agent` and `hand_off`, and only those its entry lists ([Tools](tools.md#other-agents)). The roster is stored in the SQLite file, with the rest of gaidin's state; the settings file doesn't list agents.
 
-Slack and the web view talk to the default agent for now; the web server's [API](surfaces.md#the-api) reaches every agent. An agent's id is fixed once made; its name, job and grants can change.
+Slack and the app talk to the default agent for now; the web server's [API](surfaces.md#the-api) reaches every agent. An agent's id is fixed once made; its name, job and grants can change.
 
 Archiving an agent, from the API, pauses its jobs and cancels its reminders, and it can't be talked to; its conversations, notes and sandbox stay. Restoring it leaves its jobs paused, for you to resume. The default agent can't be archived.
 
@@ -53,7 +53,7 @@ The server puts the local time in brackets at the start of each message, for exa
 
 ## Settings
 
-The model, thinking level, standing instructions and which tools are switched on belong to the conversation. The web view changes them; they apply from the next request and survive restarts.
+The model, thinking level, standing instructions and which tools are switched on belong to the conversation. The app changes them; they apply from the next request and survive restarts.
 
 ## The data directory
 
