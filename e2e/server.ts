@@ -92,7 +92,8 @@ const RICH = [
 ].join("\n");
 
 const dir = mkdtempSync(join(tmpdir(), "gaidin-e2e-"));
-const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
+// FAUX_TOKENS_PER_SECOND streams answers at about that pace, as a real model does, for watching the app draw them.
+const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }], tokensPerSecond: Number(process.env.FAUX_TOKENS_PER_SECOND) || undefined });
 faux.setResponses(Array.from({ length: 500 }, () => step));
 const models = createModels();
 models.setProvider(faux.provider);
