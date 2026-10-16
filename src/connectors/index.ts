@@ -95,8 +95,11 @@ export function hashOf(tool: McpTool): string {
 	return createHash("sha256").update(JSON.stringify(sorted(pinned))).digest("hex");
 }
 
-/** A tool's setting before the owner chooses: allow for one the server calls read-only, ask for the rest. */
-const defaultSetting = (tool: McpTool): ToolSetting => (tool.annotations?.readOnlyHint === true && tool.annotations.destructiveHint !== true ? "allow" : "ask");
+/**
+ * A tool's setting before the owner chooses: allow for one the server calls read-only, ask for the rest. The spec's
+ * destructiveHint only means something for a tool that isn't read-only, and servers such as Home Assistant's set both.
+ */
+const defaultSetting = (tool: McpTool): ToolSetting => (tool.annotations?.readOnlyHint === true ? "allow" : "ask");
 
 /** About how many tokens a connector's offered tools add to each request. */
 export function tokensOf(connector: Connector): number {

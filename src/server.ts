@@ -129,7 +129,8 @@ export function describeConnector(connector: Connector): string {
 export function describeTool(tool: ConnectorTool): string {
 	const waiting = review(tool);
 	const effect = waiting === undefined ? tool.setting : `off, ${waiting} (it was ${tool.setting}; set it to review)`;
-	const hints = [tool.annotations?.readOnlyHint === true ? "read-only" : undefined, tool.annotations?.destructiveHint === true ? "destructive" : undefined].filter((h) => h !== undefined);
+	const readOnly = tool.annotations?.readOnlyHint === true;
+	const hints = [readOnly ? "read-only" : undefined, !readOnly && tool.annotations?.destructiveHint === true ? "destructive" : undefined].filter((h) => h !== undefined);
 	return `  ${tool.name} → ${tool.as}: ${effect}${hints.length === 0 ? "" : ` (says ${hints.join(", ")})`}${tool.description === undefined ? "" : ` · ${tool.description.split("\n")[0]!.slice(0, 100)}`}`;
 }
 

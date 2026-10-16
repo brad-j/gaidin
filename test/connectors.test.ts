@@ -83,6 +83,8 @@ test("tools merged: settings and names kept, new ones off unless the connector i
 		["mail_send_mail", "ask", "changed", false],
 		["mail_search_mail_2", "allow", "new", false],
 	]);
+	// Read-only decides it, as Home Assistant marks its read-only tools destructive too.
+	assert.equal(merge("home", [], [{ ...SEARCH, annotations: { readOnlyHint: true, destructiveHint: true } }] as never, true)[0]!.setting, "allow");
 	const long = merge("a-very-long-connector-name", [], [{ ...SEARCH, name: "x".repeat(80) }] as never, true);
 	assert.equal(long[0]!.as.length, 64);
 });
