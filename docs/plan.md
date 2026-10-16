@@ -58,10 +58,54 @@
 
 Candidates:
 
-- Connectors (designed below: MCP servers with OAuth, tokens held by the server, granted per agent), then owner-written allow and ask-first rules, in that order. Several named agents, the app and the browser (designed below) are done.
+- Owner-written allow and ask-first rules (designed below). Several named agents, the app, the browser and connectors (designed below) are done; trying more connectors with real services is ongoing.
 - Release polish: a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
 
 Not planned: branching from any message in the web view, since each thread is already a conversation of its own; push-to-talk, since the owner dictates with superwhisper; and projects or image generation in the app.
+
+## Design: rules
+
+For review before any code. Today what asks is fixed per tool by its guard (the table in [Security](security.md#approvals)), and the only ways to ask less are the grants built into a few tools: a host allowed for good, a site the browser acts on without asking, a workspace for an hour, and a connector tool set to allow. Rules let the owner say it directly, per agent and per tool, either way: "Lan may turn lights on and off without asking", or "always ask before Verin fetches anything from example.com", even where a grant or a tool's setting would let it through.
+
+### What a rule is
+
+- **Effect:** allow (the call goes ahead without asking) or ask (it asks every time, whatever else would let it through).
+- **Agent:** one agent, or every agent.
+- **Tool:** a tool's name, or a family by its prefix (`home_*` for a connector's tools, `workspace_*`, `browser_*`).
+- **Arguments, optional:** conditions on the call's arguments, all of which must hold: equals, one of, starts with, contains, and for a URL argument its host. "`home_intent__HassTurnOn` where `name` contains `light`."
+- **Until, optional:** a rule can end on its own: in an hour, at the end of the day, on a date. The workspace hour grant is this with a fixed hour.
+- **A note:** why the owner made it, shown on the page and in the timeline.
+
+### How a call is decided
+
+1. Refusals win. A call its guard refuses (a profile the agent wasn't given, a password field, a tool that's off or changed since the owner set it) is refused whatever the rules say. A rule can't give an agent something it hasn't been given.
+2. An ask rule that matches makes the call ask, every time, with a second button only if its guard offered one. It overrides allow rules and every grant: a host allowed for good, a site acted on without asking, a connector tool set to allow, an hour's workspace grant. It also reaches tools that never ask today, such as `bash` or `remind`.
+3. Otherwise, a call its guard would ask about goes ahead when an allow rule matches.
+4. Otherwise, as today.
+
+Whichever rule decided a call is written into the conversation with the call, as an approval's outcome is, so the timeline says "allowed by rule: lights for Lan" and the owner can see what each rule has let through.
+
+### Proposed, to decide with the owner
+
+- **Some calls no allow rule reaches.** Loading or removing self-written tools, writing or removing skills, scheduling a new job, and uploading files from the browser keep asking whatever the rules say: each puts code, instructions or the owner's files somewhere they act later or leave for good. Ask rules still reach them.
+- **Allow rules stop after outside text, unless the rule says otherwise.** Today a note write or a message to another agent asks only after outside text, because a page the agent read could be steering it. An allow rule holds only while no outside text is in the conversation, by default; the owner can tick "even after outside text" on a rule. Without the tick, a rule for a connector's write tools stops holding once the agent has read that connector, since its results are outside text too, so for connectors the tick is what makes a rule useful, and the form says so.
+- **Rules live in the database, edited on a Rules page** across agents, as connectors are, with `gaidin rule list|add|remove` on the command line. The settings file stays free of them.
+- **Made from a request too.** An approval card in the dock gains "make a rule", which opens the form with the agent, the tool and the call's arguments filled in, for the owner to widen or narrow before saving. A rule is never made by a model; there's no tool for it.
+- **The existing grants stay as they are** (hosts allowed for good, sites acted on, connector settings, workspace hours), and the Rules page lists them beside the rules, read-only with a link to where each is changed, so one page shows everything that lets a call through without asking. Folding them into rules can come later, if it's worth it.
+
+### Known gaps
+
+- An allow rule with "even after outside text" can be steered: a page or a tool's result can lead the agent to make exactly the calls the rule allows. The form says so beside the tick.
+- Argument conditions match what the model wrote, not what the tool does with it: "`name` contains `light`" lets through a device named "light switch for the garage door".
+- A family rule (`home_*`) covers tools the connector adds later, though a new connector tool is off until the owner sets it, which still stops it.
+
+### Order of work
+
+1. Rules in a document, the decision in the approvals hook for every tool, guarded or not, the rule recorded with each call it decided, and `gaidin rule`. Tests with the faux provider: each precedence step, the floor, outside text with and without the tick, expiry, and an agent's rule not reaching another agent.
+2. The app's Rules page, with the grants beside the rules, and "make a rule" on approval cards, with e2e tests.
+3. The timeline and Slack name the rule that decided a call.
+
+Each step ends with `pnpm check` passing and is a commit of its own.
 
 ## Design: connectors
 
