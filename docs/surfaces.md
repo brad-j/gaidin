@@ -27,6 +27,18 @@ gaidin agent set gaidin --can-message scout         # the agents it may message 
 gaidin agent set scout --name Seeker --job "..."    # an id can't change; an empty list clears one
 ```
 
+`gaidin rule` lists, adds and removes your [rules](security.md#your-rules) about what asks:
+
+```sh
+gaidin rule add allow home_intent__HassTurnOn --agent lan --when "name contains light" --even-after-outside --note "lights"
+gaidin rule add ask fetch_url --agent verin --when "url host example.com"
+gaidin rule add allow workspace_* --agent lan --for 2h
+gaidin rule list
+gaidin rule remove r2
+```
+
+`--when` takes an argument, `equals`, `one-of` (values split by commas), `starts-with`, `contains` or `host`, and a value; give it more than once for conditions that must all hold. `--for` ends the rule after `30m`, `2h` or `1d`.
+
 `gaidin connector` adds and manages [connectors](tools.md#connectors): `list`, `show NAME`, `add NAME URL [--token]`, `connect NAME [--client-id ID]` (sign in with OAuth: it prints the address to open), `token NAME [--token]`, `tool NAME TOOL allow|ask|off`, `refresh NAME`, `remove NAME`, and `client-document`, which prints gaidin's client id document. A token is read from standard input, so it isn't in your shell's history.
 
 ## Slack

@@ -4,7 +4,8 @@
 //
 // client → server: {"type":"ask","content":"...","requestId":"...","agent":"..."}, {"type":"watch","agent":"..."},
 //                  {"type":"agent","action":"list"|"add"|"set",...} to see and change the roster (agents.ts), or
-//                  {"type":"connector","action":"list"|"show"|"add"|"refresh"|"tool"|"token"|"remove",...} for connectors/
+//                  {"type":"connector","action":"list"|"show"|"add"|"refresh"|"tool"|"token"|"remove",...} for connectors/, or
+//                  {"type":"rule","action":"list"|"add"|"remove",...} for the owner's rules (rules.ts)
 // server → client: {"type":"line","text":"..."} and, after an ask settles or an agent command ends, {"type":"done","status":"..."}
 // Without "agent", an ask or a watch goes to the default agent's conversation, the root.
 import { randomUUID } from "node:crypto";
@@ -15,6 +16,7 @@ import { createInterface } from "node:readline";
 import { type AgentEvent, type EntryId, watchEvents } from "@earendil-works/pi-durable";
 import type { AgentChange, AgentEntry } from "./agents.ts";
 import { type Connector, type ConnectorTool, offered, review, type ToolSetting, tokensOf } from "./connectors/index.ts";
+import { describeRule, type NewRule, newRule } from "./rules.ts";
 import type { Config } from "./config.ts";
 import { assistantText, context, openHost } from "./host.ts";
 import { ReminderFired } from "./reminders.ts";
@@ -39,17 +41,21 @@ export type ClientMessage =
 	| { type: "connector"; action: "tool"; name: string; tool: string; setting: ToolSetting }
 	| { type: "connector"; action: "token"; name: string; token?: string }
 	| { type: "connector"; action: "connect"; name: string; clientId?: string }
-	| { type: "connector"; action: "client-document" };
+	| { type: "connector"; action: "client-document" }
+	| { type: "rule"; action: "list" }
+	| { type: "rule"; action: "add"; rule: NewRule }
+	| { type: "rule"; action: "remove"; id: string };
 /** What the server sends back. */
 export type ServerMessage = { type: "line"; text: string } | { type: "done"; status: string };
 
 const clientMessage = object({
-	type: literal("ask", "watch", "agent", "connector"),
+	type: literal("ask", "watch", "agent", "connector", "rule"),
 	content: optional(string),
 	requestId: optional(string),
 	agent: optional(string),
 	action: optional(literal("list", "add", "set", "show", "refresh", "tool", "token", "remove", "connect", "client-document")),
 	clientId: optional(string),
+	rule: optional(newRule),
 	url: optional(string),
 	token: optional(string),
 	tool: optional(string),
@@ -67,6 +73,15 @@ export function parseClientMessage(line: string): ClientMessage {
 		const watch: ClientMessage = { type: "watch" };
 		if (message.agent !== undefined) watch.agent = message.agent;
 		return watch;
+	}
+	if (message.type === "rule") {
+		if (message.action === "list" || message.action === undefined) return { type: "rule", action: "list" };
+		if (message.action === "add") {
+			if (message.rule === undefined) throw new ParseError("a new rule needs its rule");
+			return { type: "rule", action: "add", rule: message.rule };
+		}
+		if (message.action === "remove" && message.id !== undefined) return { type: "rule", action: "remove", id: message.id };
+		throw new ParseError("rules are listed, added, or removed by id");
 	}
 	if (message.type === "connector") {
 		const { action = "list", name } = message;
@@ -240,6 +255,21 @@ export async function serve(config: Config) {
 		socket.end();
 	}
 
+	/** Lists, adds or removes a rule, and says what it did. */
+	async function rule(socket: Socket, request: Extract<ClientMessage, { type: "rule" }>) {
+		if (request.action === "list") {
+			const rules = await host.rules.list();
+			if (rules.length === 0) send(socket, { type: "line", text: "No rules." });
+			for (const r of rules) send(socket, { type: "line", text: describeRule(r) });
+		} else if (request.action === "add") send(socket, { type: "line", text: describeRule(await host.rules.add(request.rule)) });
+		else {
+			await host.rules.remove(request.id);
+			send(socket, { type: "line", text: `Removed ${request.id}.` });
+		}
+		send(socket, { type: "done", status: "done" });
+		socket.end();
+	}
+
 	/** Lists, shows, adds or changes a connector, and says what it did. */
 	async function connector(socket: Socket, request: Extract<ClientMessage, { type: "connector" }>) {
 		const { connectors } = host;
@@ -292,6 +322,7 @@ export async function serve(config: Config) {
 		const request = parseClientMessage(line);
 		if (request.type === "agent") return manage(socket, request);
 		if (request.type === "connector") return connector(socket, request);
+		if (request.type === "rule") return rule(socket, request);
 		const conversation = await host.agents.home(request.agent);
 		const { events, shown } = await follow(socket, conversation);
 		if (request.type === "watch") return;

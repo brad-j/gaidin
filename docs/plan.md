@@ -53,6 +53,7 @@
 39. Connectors, without OAuth: remote MCP servers added with `gaidin connector`, with a bearer token or none, spoken to in the current revision (2026-07-28) or the earlier ones; their tools given per agent, each set to allow, ask or off, their definitions pinned, their results outside text, and their tokens in `<data>/connectors/vault.json` ([Tools](tools.md#connectors)).
 40. Connectors' OAuth: `gaidin connector connect` finds a server's sign-in from its metadata (RFC 9728 and 8414), checked to the connector's host or public https, and sends the owner's browser there with PKCE and the resource parameter; the callback takes only a state gaidin made and the issuer it expects. gaidin's client id is a document it serves at `<web.url>/api/connectors/client.json`, or a public copy named in `connectors.clientId`, else Dynamic Client Registration, else one the owner gives. Grants are refreshed before they expire and once after a refusal ([Tools](tools.md#connectors)).
 41. The app's Connectors page: each connector's state, its tools set to allow, ask or off with their cost, new and changed tools marked, signing in in the same tab and back, tokens, refresh and remove; agents given connectors on their settings pages, and a notice and a sidebar count when one needs signing in again (protocol 10) ([Surfaces](surfaces.md#the-app)).
+42. Rules, step 1: the owner's allow and ask rules, per agent and tool or family, with argument conditions, an end, and "even after outside text" for allow rules; ask rules reach every tool and override every grant, allow rules skip a guard's question but never a refusal or the floor (loading tools, skills, new jobs, browser uploads). The rule that let a call through is in the timeline. `gaidin rule` manages them ([Security](security.md#your-rules)).
 
 ## Next
 
@@ -65,7 +66,7 @@ Not planned: branching from any message in the web view, since each thread is al
 
 ## Design: rules
 
-For review before any code. Today what asks is fixed per tool by its guard (the table in [Security](security.md#approvals)), and the only ways to ask less are the grants built into a few tools: a host allowed for good, a site the browser acts on without asking, a workspace for an hour, and a connector tool set to allow. Rules let the owner say it directly, per agent and per tool, either way: "Lan may turn lights on and off without asking", or "always ask before Verin fetches anything from example.com", even where a grant or a tool's setting would let it through.
+Step 1 is done (item 42). Today what asks is fixed per tool by its guard (the table in [Security](security.md#approvals)), and the only ways to ask less are the grants built into a few tools: a host allowed for good, a site the browser acts on without asking, a workspace for an hour, and a connector tool set to allow. Rules let the owner say it directly, per agent and per tool, either way: "Lan may turn lights on and off without asking", or "always ask before Verin fetches anything from example.com", even where a grant or a tool's setting would let it through.
 
 ### What a rule is
 
@@ -85,7 +86,7 @@ For review before any code. Today what asks is fixed per tool by its guard (the 
 
 Whichever rule decided a call is written into the conversation with the call, as an approval's outcome is, so the timeline says "allowed by rule: lights for Lan" and the owner can see what each rule has let through.
 
-### Proposed, to decide with the owner
+### Decided with the owner
 
 - **Some calls no allow rule reaches.** Loading or removing self-written tools, writing or removing skills, scheduling a new job, and uploading files from the browser keep asking whatever the rules say: each puts code, instructions or the owner's files somewhere they act later or leave for good. Ask rules still reach them.
 - **Allow rules stop after outside text, unless the rule says otherwise.** Today a note write or a message to another agent asks only after outside text, because a page the agent read could be steering it. An allow rule holds only while no outside text is in the conversation, by default; the owner can tick "even after outside text" on a rule. Without the tick, a rule for a connector's write tools stops holding once the agent has read that connector, since its results are outside text too, so for connectors the tick is what makes a rule useful, and the form says so.
@@ -101,7 +102,7 @@ Whichever rule decided a call is written into the conversation with the call, as
 
 ### Order of work
 
-1. Rules in a document, the decision in the approvals hook for every tool, guarded or not, the rule recorded with each call it decided, and `gaidin rule`. Tests with the faux provider: each precedence step, the floor, outside text with and without the tick, expiry, and an agent's rule not reaching another agent.
+1. Done: rules in a document, the decision in the approvals hook for every tool, guarded or not, the rule recorded with each call it decided, and `gaidin rule` (item 42). The timeline already says which rule allowed a call; a request an ask rule made names the rule in its summary. Tests with the faux provider: each precedence step, the floor, outside text with and without the tick, expiry, and an agent's rule not reaching another agent.
 2. The app's Rules page, with the grants beside the rules, and "make a rule" on approval cards, with e2e tests.
 3. The timeline and Slack name the rule that decided a call.
 

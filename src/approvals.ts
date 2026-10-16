@@ -17,7 +17,9 @@ import { type ConversationId, defineDoc, defineEntry, defineExtension, defineToo
 import { AGENT_MESSAGE, agentAt, AgentOf, Agents, DEFAULT_AGENT, entryOf, hostsOf, rosterOf } from "./agents.ts";
 import type { Ask, Guard, Situation, Where } from "./guards.ts";
 import { GATE_FINDINGS } from "./jobs.ts";
-import { ParseError } from "./parse.ts";
+import { attempt, json, ParseError } from "./parse.ts";
+import { type Rule, rulesFor, rulesIn } from "./rules.ts";
+import { clip, whole } from "./guards.ts";
 import { searchedUrls } from "./search.ts";
 import { conversationId, taskId } from "./ids.ts";
 
@@ -306,6 +308,14 @@ export class ApprovalService {
 		if (closed !== undefined) this.#settled(closed);
 	}
 
+	/** Records a call an allow rule let through without asking, in its conversation, for the timeline. */
+	async ruled(at: { conversationId: number; taskId: number }, tool: string, summary: string, rule: Rule): Promise<void> {
+		await this.#commit(async (_doc, tx) => {
+			const data = { id: `rule:${at.taskId}`, tool, summary, status: "approved" as const, decision: "once" as const, by: `rule ${rule.id}`, decidedAt: Date.now() };
+			await tx.appendEntry(ApprovalSettled, conversationId(at.conversationId), { data });
+		});
+	}
+
 	/** Remembers where a surface asked, so it can show the outcome there. */
 	async note(id: string, fields: Pick<ApprovalRequest, "slackTs" | "slackChannel">): Promise<void> {
 		await this.#commit((doc) => {
@@ -439,23 +449,44 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 				beforeTool: async (call, api, context: Context) => {
 					const all = guards();
 					const guard = all.find((g) => g.tool === call.name);
-					if (guard === undefined) return undefined;
+					// The owner's rules reach every tool, guarded or not (rules.ts).
+					const rules = await rulesIn(api, context);
+					if (guard === undefined && !rules.some((r) => r.effect === "ask")) return undefined;
 					const approvals = service();
 					const { agent, roster } = await agentAt(api, api.conversationId, context);
+					const args = attempt(call.arguments, json) ?? {};
+					const ruled = rulesFor(rules, agent.id, call.name, args);
+					if (guard === undefined && ruled.ask === undefined) return undefined;
 					const where: Where = { conversationId: api.conversationId, agent, roster };
-					const impossible = await refusalOf(guard, call, api, context, where);
+					const impossible = guard === undefined ? undefined : await refusalOf(guard, call, api, context, where);
 					if (impossible !== undefined) return { block: impossible };
 					const { fetchHosts, grants = [] } = await approvals.state();
-					const ask = await askFor(guard, call, {
+					const outside = () => outsideTextIn(api, context, (tool) => all.some((g) => g.tool === tool && g.outside), call.id);
+					let ask = guard === undefined ? undefined : await askFor(guard, call, {
 						fetchHosts: hostsOf(agent, fetchHosts),
 						grants,
 						conversationId: api.conversationId,
 						callId: call.id,
 						agent,
-						outside: () => outsideTextIn(api, context, (tool) => all.some((g) => g.tool === tool && g.outside), call.id),
+						outside,
 						searched: () => searchedIn(api, context),
 						snapshot: (doc) => api.snapshot(doc, context),
 					});
+					if (ruled.ask !== undefined) {
+						// An ask rule asks whatever else would let the call through, showing all of it when no guard says what it does.
+						const rule = ruled.ask;
+						const full = JSON.stringify(args, null, 2);
+						const base = ask ?? whole(`use ${call.name} with ${clip(JSON.stringify(args), 300)}`, clip(JSON.stringify(args), 300), full);
+						ask = { ...base, summary: `${base.summary} (rule ${rule.id}${rule.note === undefined ? "" : `, ${rule.note},`} asks)` };
+					} else if (ask !== undefined && ruled.allow.length > 0) {
+						// An allow rule lets through what the guard would ask about, while no outside text is read unless it holds even after.
+						const read = ruled.allow.every((r) => r.afterOutside === true) ? [] : await outside();
+						const rule = ruled.allow.find((r) => r.afterOutside === true || read.length === 0);
+						if (rule !== undefined) {
+							await approvals.ruled({ conversationId: api.conversationId, taskId: api.taskId }, call.name, ask.summary, rule);
+							return undefined;
+						}
+					}
 					if (ask === undefined) return undefined;
 					// The same id for every run of this call's phase, so a restart doesn't ask twice.
 					const id = await api.memo<string>("gaidin.approval", randomUUID(), context);
@@ -463,7 +494,7 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 					const done = await approvals.wait(request, signalOf(api, context));
 					if (done.status === "approved") {
 						// The roster as it is now: an agent's grants can change while it waits.
-						const since = await refusalOf(guard, call, api, context, { conversationId: api.conversationId, ...(await agentAt(api, api.conversationId, context)) });
+						const since = guard === undefined ? undefined : await refusalOf(guard, call, api, context, { conversationId: api.conversationId, ...(await agentAt(api, api.conversationId, context)) });
 						return since === undefined ? undefined : { block: `${owner} allowed it, but it can't happen now: ${since}` };
 					}
 					const why = done.status === "denied" ? `${owner} said no`

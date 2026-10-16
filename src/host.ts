@@ -21,6 +21,7 @@ import { ntfyAdapter } from "./ntfy.ts";
 import { createPush, loadPushKeys, type Push, pushAdapter } from "./push.ts";
 import { growingRedactor, type Redactor, redactionExtension } from "./redact.ts";
 import { createConnectors, extensionOf } from "./connectors/index.ts";
+import { createRules } from "./rules.ts";
 import { createReminders, reminderOf, Reminders, removeReminder } from "./reminders.ts";
 import { findBwrap, inside, prepareServerDirs, SandboxEnv } from "./sandbox.ts";
 import { backendFor, type SearchBackend, searchGuards, webSearchTool } from "./search.ts";
@@ -270,6 +271,7 @@ export async function openHost(options: HostOptions = {}) {
 	});
 	await roster.start();
 	const threads = createThreads(harness, roster);
+	const rules = createRules({ harness, root: () => root, roster: () => roster });
 
 	/** Starts the tasks, with `slack` among the ways to reach the owner when the server has it. */
 	async function start(slack?: Adapter) {
@@ -309,7 +311,7 @@ export async function openHost(options: HostOptions = {}) {
 		await harness.close(context);
 	}
 
-	return { harness, root, agents: roster, workspaces: () => workspaces.names, profiles: () => config.browser?.profiles ?? [], takeOver: browser?.takeOver, connectors, close, uploads: createUploads(join(dir, "app-uploads")), avatars: createAvatars(join(dir, "avatars")), threads, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation, latest: history.latest }, skills, sandbox, push, start, stop };
+	return { harness, root, agents: roster, workspaces: () => workspaces.names, profiles: () => config.browser?.profiles ?? [], takeOver: browser?.takeOver, connectors, rules, close, uploads: createUploads(join(dir, "app-uploads")), avatars: createAvatars(join(dir, "avatars")), threads, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation, latest: history.latest }, skills, sandbox, push, start, stop };
 }
 
 export type Host = Awaited<ReturnType<typeof openHost>>;

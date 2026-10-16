@@ -2,7 +2,9 @@
 // The gaidin command.
 import { parseArgs } from "node:util";
 import type { AgentChange } from "./agents.ts";
-import { agents, ask, connectors, watch } from "./cli.ts";
+import { agents, ask, connectors, rules, watch } from "./cli.ts";
+import { literal } from "./parse.ts";
+import type { Condition, NewRule } from "./rules.ts";
 import { loadConfig, maskedConfig } from "./config.ts";
 import { printChecks, runChecks } from "./doctor.ts";
 import { serve } from "./server.ts";
@@ -32,6 +34,12 @@ const USAGE = `usage: gaidin [--config FILE] COMMAND
                             sign it in with OAuth: prints the address to open in a browser
   connector client-document print gaidin's client id document, for connectors.clientId
   connector refresh NAME    read its tools again
+  rule list                 list your allow and ask rules
+  rule add allow|ask TOOL [--agent ID] [--when "ARG OP VALUE"]... [--for 30m|2h|1d]
+           [--even-after-outside] [--note TEXT]
+                            add one: TOOL is a name or a prefix ending in *; OP is equals,
+                            one-of (VALUE a,b), starts-with, contains or host
+  rule remove ID            remove one
   connector remove NAME     remove it, its token and every agent's grant of it
   doctor [--push]           check the settings and everything the server needs
   config                    print the settings in use, secrets shortened
@@ -53,6 +61,10 @@ const { values, positionals } = parseArgs({
 		connectors: { type: "string" },
 		token: { type: "boolean" },
 		"client-id": { type: "string" },
+		when: { type: "string", multiple: true },
+		for: { type: "string" },
+		"even-after-outside": { type: "boolean" },
+		note: { type: "string" },
 		push: { type: "boolean" },
 		help: { type: "boolean", short: "h" },
 	},
@@ -146,6 +158,32 @@ switch (command) {
 			process.exit(await connectors(loaded.config, { type: "connector", action: "tool", name: name!, tool: third, setting: fourth }));
 		}
 		fail([usage]);
+	}
+	case "rule": {
+		const [action = "list", first, second] = rest;
+		const usage = 'usage: gaidin rule list | add allow|ask TOOL [--agent ID] [--when "ARG OP VALUE"]... [--for 30m|2h|1d] [--even-after-outside] [--note TEXT] | remove ID';
+		if (action === "list") process.exit(await rules(loaded.config, { type: "rule", action: "list" }));
+		if (action === "remove" && first !== undefined) process.exit(await rules(loaded.config, { type: "rule", action: "remove", id: first }));
+		if (action !== "add" || (first !== "allow" && first !== "ask") || second === undefined) fail([usage]);
+		const when: Condition[] = [];
+		for (const text of values.when ?? []) {
+			const match = /^(\S+)\s+(equals|one-of|starts-with|contains|host)\s+(.+)$/.exec(text.trim());
+			if (match === null) fail([`--when "${text}" isn't ARG OP VALUE`, usage]);
+			const [, arg, op, value] = match!;
+			const parsed = literal("equals", "one-of", "starts-with", "contains", "host")(op, "--when");
+			when.push({ arg: arg!, op: parsed, value: parsed === "one-of" ? value!.split(",").map((v) => v.trim()) : value! });
+		}
+		const rule: NewRule = { effect: first === "allow" ? "allow" : "ask", tool: second! };
+		if (values.agent !== undefined) rule.agent = values.agent;
+		if (when.length > 0) rule.when = when;
+		if (values.for !== undefined) {
+			const span = /^(\d+)(m|h|d)$/.exec(values.for);
+			if (span === null) fail([`--for ${values.for} isn't like 30m, 2h or 1d`]);
+			rule.until = Date.now() + Number(span![1]) * (new Map([["m", 60_000], ["h", 3_600_000], ["d", 86_400_000]]).get(span![2]!) ?? 0);
+		}
+		if (values["even-after-outside"] === true) rule.afterOutside = true;
+		if (values.note !== undefined) rule.note = values.note;
+		process.exit(await rules(loaded.config, { type: "rule", action: "add", rule }));
 	}
 	case "doctor":
 		process.exit(printChecks(await runChecks(loaded, { push: values.push === true })));
