@@ -17,8 +17,8 @@ import { type ConversationId, defineDoc, defineEntry, defineExtension, defineToo
 import { AGENT_MESSAGE, agentAt, AgentOf, Agents, DEFAULT_AGENT, entryOf, hostsOf, rosterOf } from "./agents.ts";
 import type { Ask, Guard, Situation, Where } from "./guards.ts";
 import { GATE_FINDINGS } from "./jobs.ts";
-import { attempt, isObject, json, type Json, ParseError, scalar } from "./parse.ts";
-import { type Rule, rulesFor, rulesIn } from "./rules.ts";
+import { attempt, isObject, json, type Json, ParseError, scalar, string } from "./parse.ts";
+import { confinedBy, folderOf, INSIDE_TOOLS, type Rule, rulesFor, rulesIn, WITHIN, type Within } from "./rules.ts";
 import { clip, whole } from "./guards.ts";
 import { searchedUrls } from "./search.ts";
 import { conversationId, taskId } from "./ids.ts";
@@ -386,8 +386,9 @@ export function signalOf(api: ToolExecutionApi | HookApi, context: Context): Abo
  * when a message there holds what a gate found. Text the model has read stays able to steer it for as long as it's in the
  * context, whoever spoke since; compaction is what takes it out. The hook's api is the tool task's runtime, which can
  * read that context. The context already holds a placeholder result for the call being decided, `callId`, which is skipped.
+ * For the inside rule `rule`, the reads it let through, confined to its folder, are the owner's own files and are skipped too.
  */
-export async function outsideTextIn(api: HookApi, context: Context, isOutside: (tool: string) => boolean, callId?: string): Promise<string[]> {
+export async function outsideTextIn(api: HookApi, context: Context, isOutside: (tool: string) => boolean, callId?: string, rule?: string): Promise<string[]> {
 	const messages = await contextOf(api, context);
 	// Without the context there's no telling what was read, so it counts as outside text.
 	if (messages === undefined) return ["a conversation it couldn't check"];
@@ -396,7 +397,8 @@ export async function outsideTextIn(api: HookApi, context: Context, isOutside: (
 		// A job run a gate woke starts with what the gate found, and a conversation another agent started with its message.
 		if (message.role === "user" && JSON.stringify(message.content).includes(GATE_FINDINGS)) found.add("the job's gate");
 		if (message.role === "user" && JSON.stringify(message.content).includes(AGENT_MESSAGE)) found.add("a message from another agent");
-		if (message.role === "toolResult" && message.toolCallId !== callId && isOutside(message.toolName)) found.add(message.toolName);
+		if (message.role !== "toolResult" || message.toolCallId === callId || !isOutside(message.toolName)) continue;
+		if (rule === undefined || confinedBy(message) !== rule) found.add(message.toolName);
 	}
 	return [...found];
 }
@@ -427,9 +429,10 @@ export function shortArgs(args: Json): Record<string, string> {
 
 /**
  * The hook. `service` is read lazily, because the Harness that the service needs is opened after the registry. `guards`
- * is read on every call, because self-written tools come and go.
+ * is read on every call, because self-written tools come and go. `firstRoot` gives a workspace's first root as its helper
+ * names it, which inside rules compare paths against (rules.ts).
  */
-export function approvalExtension(service: () => ApprovalService, owner: string, guards: () => readonly Guard[]) {
+export function approvalExtension(service: () => ApprovalService, owner: string, guards: () => readonly Guard[], firstRoot: (workspace: string) => Promise<string | undefined> = async () => undefined) {
 	const askOwner = defineTool({
 		name: "ask_owner",
 		description:
@@ -469,13 +472,16 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 					const approvals = service();
 					const { agent, roster } = await agentAt(api, api.conversationId, context);
 					const args = attempt(call.arguments, json) ?? {};
-					const ruled = rulesFor(rules, agent.id, call.name, args);
+					// A workspace's root is asked for only when an inside rule could decide the call.
+					const workspace = INSIDE_TOOLS.includes(call.name) && isObject(args) ? attempt(args.workspace, string) : undefined;
+					const root = workspace !== undefined && rules.some((r) => folderOf(r) !== undefined) ? await firstRoot(workspace) : undefined;
+					const ruled = rulesFor(rules, agent.id, call.name, args, Date.now(), root);
 					if (guard === undefined && ruled.ask === undefined) return undefined;
 					const where: Where = { conversationId: api.conversationId, agent, roster };
 					const impossible = guard === undefined ? undefined : await refusalOf(guard, call, api, context, where);
 					if (impossible !== undefined) return { block: impossible };
 					const { fetchHosts, grants = [] } = await approvals.state();
-					const outside = () => outsideTextIn(api, context, (tool) => all.some((g) => g.tool === tool && g.outside), call.id);
+					const outside = (rule?: string) => outsideTextIn(api, context, (tool) => all.some((g) => g.tool === tool && g.outside), call.id, rule);
 					let ask = guard === undefined ? undefined : await askFor(guard, call, {
 						fetchHosts: hostsOf(agent, fetchHosts),
 						grants,
@@ -494,9 +500,17 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 						ask = { ...base, summary: `${base.summary} (rule ${rule.id}${rule.note === undefined ? "" : `, ${rule.note},`} asks)` };
 					} else if (ask !== undefined && ruled.allow.length > 0) {
 						// An allow rule lets through what the guard would ask about, while no outside text is read unless it holds even after.
-						const read = ruled.allow.every((r) => r.afterOutside === true) ? [] : await outside();
-						const rule = ruled.allow.find((r) => r.afterOutside === true || read.length === 0);
+						let rule: Rule | undefined;
+						for (const r of ruled.allow) {
+							if (r.afterOutside === true || (await outside(r.id)).length === 0) {
+								rule = r;
+								break;
+							}
+						}
 						if (rule !== undefined) {
+							// The tool sends an inside rule's folder to the workspace's helper, which checks the real path against it.
+							const folder = folderOf(rule);
+							if (folder !== undefined) await api.memo<Within>(WITHIN, { rule: rule.id, folder }, context);
 							await approvals.ruled({ conversationId: api.conversationId, taskId: api.taskId }, call.name, ask.summary, rule);
 							return undefined;
 						}

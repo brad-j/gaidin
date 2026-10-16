@@ -7,7 +7,8 @@
 // (deploy/vm/add-workspace.sh writes both). On the machine, the key only runs
 // deploy/workspace/gaidin-workspace.py, which confines everything to the roots it's configured with.
 // Every call waits for the owner's approval (`workspaceGuards`) unless they allowed that workspace for an
-// hour in the conversation. With no workspaces listed there are no workspace tools.
+// hour in the conversation, or one of their rules trusts a folder for the file operations, which the helper then
+// holds them to (rules.ts). With no workspaces listed there are no workspace tools.
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -17,15 +18,19 @@ import { defineExtension, defineTool, type DocumentReader, type ToolRegistration
 import { type Ask, clip, guard, type Guard, type Situation, type Where, whole } from "./guards.ts";
 import { array, boolean, integer, object, optional, ParseError, type Parser, parseJson, string } from "./parse.ts";
 import { type Redactor, redactingStream } from "./redact.ts";
+import { WITHIN, type Within } from "./rules.ts";
 
 export type Workspace = { name: string; target: string };
 export type Operation = "run" | "read" | "write" | "edit";
-/** What an operation sends the helper, as deploy/workspace/gaidin-workspace.py reads it. */
+/**
+ * What an operation sends the helper, as deploy/workspace/gaidin-workspace.py reads it. `within` is the folder of the
+ * inside rule that let the call through, which the path's real path must be inside.
+ */
 export type HelperRequest =
 	| { command: string; cwd?: string; timeout?: number }
-	| { path: string; offset?: number; limit?: number }
-	| { path: string; content: string }
-	| { path: string; edits: { oldText: string; newText: string }[] };
+	| { path: string; offset?: number; limit?: number; within?: string }
+	| { path: string; content: string; within?: string }
+	| { path: string; edits: { oldText: string; newText: string }[]; within?: string };
 
 /** Sends one request to a workspace's helper. `run` streams through onOutput and resolves with the exit code. */
 export type Remote = (
@@ -97,6 +102,18 @@ export function sshRemote(dir: string): Remote | undefined {
 /** What the helper answers a read with: a directory's entries, or some of a file's lines. */
 export const readAnswer = object({ path: string, directory: optional(array(string)), offset: optional(integer), totalLines: optional(integer), text: optional(string) });
 
+const rootsAnswer = object({ roots: optional(array(string)) });
+/** The roots a helper's answer names, first one first, or nothing from an older helper or an answer that isn't JSON. */
+function rootsIn(output: string): string[] | undefined {
+	try {
+		const { roots } = parseJson(output, rootsAnswer, "the workspace's answer");
+		return roots !== undefined && roots.length > 0 && roots.every((r) => r.startsWith("/")) ? roots : undefined;
+	} catch (error) {
+		if (error instanceof ParseError) return undefined;
+		throw error;
+	}
+}
+
 /** A file operation's JSON answer as `parser` has it, or the helper's refusal as a thrown Error. */
 export function answer<T>(output: string, parser: Parser<T>): T {
 	try {
@@ -164,6 +181,34 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 		if (workspace === undefined) throw new Error(`No workspace ${name}; one of ${names.join(", ")}`);
 		return workspace;
 	};
+	// Each workspace's roots as its helper last named them. A helper that names them holds calls to `within`.
+	const roots = new Map<string, string[]>();
+	/** Keeps the roots an answer names, or forgets them when it names none, as an older helper's doesn't. */
+	const heard = (name: string, output: string) => {
+		const named = rootsIn(output);
+		if (named === undefined) roots.delete(name);
+		else roots.set(name, named);
+	};
+	/** Sends a file operation, hearing the roots its answer names. */
+	const send = async (name: string, operation: "read" | "write" | "edit", request: HelperRequest) => {
+		const { output } = await remote!(find(name), operation, request, {});
+		heard(name, output);
+		return output;
+	};
+	/**
+	 * The workspace's first root, asking its helper with a read of the root when it hasn't been heard from since gaidin
+	 * started. Nothing when it can't be reached or its helper doesn't name its roots.
+	 */
+	async function firstRoot(name: string): Promise<string | undefined> {
+		if (!roots.has(name) && remote !== undefined && names.includes(name)) {
+			try {
+				heard(name, (await remote(find(name), "read", { path: "." }, { signal: AbortSignal.timeout(15_000) })).output);
+			} catch {
+				// Unreachable: the call asks, and fails or teaches the roots then.
+			}
+		}
+		return roots.get(name)?.[0];
+	}
 	const workspaceParam = Type.String({ description: `One of: ${names.join(", ")}` });
 	const pathParam = Type.String({ description: "Relative to the workspace's first root, or absolute inside a root" });
 
@@ -204,13 +249,18 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 			limit: Type.Optional(Type.Number({ minimum: 1, maximum: 5000, description: "Default 2000 lines" })),
 		}),
 		replay: "safe",
-		execute: async (args) => {
-			const result = answer((await remote!(find(args.workspace), "read", { path: args.path, offset: args.offset, limit: args.limit }, {})).output, readAnswer);
-			if (result.directory !== undefined) return { output: [{ type: "text", text: `${result.path}/\n${result.directory.join("\n")}` }] };
+		execute: async (args, api, context) => {
+			// The inside rule that let the call through, if one did, memoed by the approvals hook (rules.ts).
+			const within = await api.memo<Within>(WITHIN, context);
+			const request = { path: args.path, offset: args.offset, limit: args.limit, within: within?.folder };
+			const result = answer(await send(args.workspace, "read", request), readAnswer);
+			// Marks the result as the folder's, so it isn't outside text for the rule that let it through.
+			const details = within === undefined ? undefined : { within };
+			if (result.directory !== undefined) return { output: [{ type: "text", text: `${result.path}/\n${result.directory.join("\n")}` }], details };
 			const { offset = 1, totalLines = 0, text: lines = "" } = result;
 			const last = Math.min(offset + (lines === "" ? 0 : lines.split("\n").length) - 1, totalLines);
 			const text = `${result.path} (lines ${offset}-${last} of ${totalLines})\n${lines}`;
-			return { output: [{ type: "text", text }] };
+			return { output: [{ type: "text", text }], details };
 		},
 	});
 
@@ -218,8 +268,9 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 		name: "workspace_write",
 		description: `Create or replace a file in a workspace's projects. ${asks}`,
 		parameters: Type.Object({ workspace: workspaceParam, path: pathParam, content: Type.String() }),
-		execute: async (args) => {
-			const result = answer((await remote!(find(args.workspace), "write", { path: args.path, content: args.content }, {})).output, object({ path: string, created: boolean, bytes: integer }));
+		execute: async (args, api, context) => {
+			const request = { path: args.path, content: args.content, within: (await api.memo<Within>(WITHIN, context))?.folder };
+			const result = answer(await send(args.workspace, "write", request), object({ path: string, created: boolean, bytes: integer }));
 			return { output: [{ type: "text", text: `${result.created ? "Created" : "Replaced"} ${result.path} (${result.bytes} bytes)` }] };
 		},
 	});
@@ -232,8 +283,9 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 			path: pathParam,
 			edits: Type.Array(Type.Object({ oldText: Type.String(), newText: Type.String() }), { minItems: 1 }),
 		}),
-		execute: async (args) => {
-			const result = answer((await remote!(find(args.workspace), "edit", { path: args.path, edits: args.edits }, {})).output, object({ path: string, edits: integer }));
+		execute: async (args, api, context) => {
+			const request = { path: args.path, edits: args.edits, within: (await api.memo<Within>(WITHIN, context))?.folder };
+			const result = answer(await send(args.workspace, "edit", request), object({ path: string, edits: integer }));
 			return { output: [{ type: "text", text: `Edited ${result.path} (${result.edits} changes)` }] };
 		},
 	});
@@ -242,6 +294,7 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 	return {
 		tools,
 		names,
+		firstRoot,
 		// With or without the tools: a workspace's past reads still count as outside text.
 		guards: workspaceGuards(names),
 		extension: defineExtension({

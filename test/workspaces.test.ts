@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -196,6 +196,92 @@ test("every workspace call asks; an hour's grant covers that conversation only",
 	const grants = (await h.approvals.state()).grants ?? [];
 	assert.equal(grants.length, 1);
 	assert.ok(grants[0]!.until > Date.now() + 59 * 60_000);
+});
+
+/** A machine with notes/Ideas, its sibling notes/Ideas2, and a symlink in notes/Ideas that leads out to app/. */
+function notes(t: TestContext) {
+	const { home, root } = machine(t);
+	mkdirSync(join(root, "notes", "Ideas"), { recursive: true });
+	mkdirSync(join(root, "notes", "Ideas2"));
+	writeFileSync(join(root, "notes", "Ideas", "a.md"), "idea one\n");
+	symlinkSync(join(root, "app"), join(root, "notes", "Ideas", "out"));
+	return { home, root };
+}
+
+const trustIdeas = { effect: "allow", tool: "workspace_*", when: [{ arg: "workspace", op: "equals", value: "desk" }, { arg: "path", op: "inside", value: "notes/Ideas" }] } as const;
+
+test("folder trust lets reads, writes and edits in the folder through, a read there not ending it, refuses a symlink out, and stops after a fetch", async (t) => {
+	const { home, root } = notes(t);
+	const h = await host(t, home, [
+		call("workspace_read", { workspace: "desk", path: "notes/Ideas/a.md" }), done,
+		call("workspace_write", { workspace: "desk", path: "notes/Ideas/b.md", content: "- b\n" }), done,
+		call("workspace_edit", { workspace: "desk", path: "notes/Ideas/b.md", edits: [{ oldText: "b", newText: "c" }] }), done,
+		call("workspace_write", { workspace: "desk", path: "notes/Ideas/out/evil.md", content: "x" }), done,
+		call("workspace_write", { workspace: "desk", path: "notes/Ideas2/c.md", content: "c" }), done,
+		call("fetch_url", { url: "https://example.com/" }), done,
+		call("workspace_write", { workspace: "desk", path: "notes/Ideas/d.md", content: "d" }), done,
+	]);
+	await h.rules.add({ ...trustIdeas, when: [...trustIdeas.when] });
+	const asked: string[] = [];
+	h.approvals.onChange((r) => {
+		if (r.status !== "pending") return;
+		asked.push(r.summary);
+		void h.approvals.decide(r.id, r.tool === "fetch_url" ? "deny" : "once", "test");
+	});
+	for (let i = 0; i < 7; i += 1) await (await h.root.submit({ type: "input", content: `step ${i}` }, context)).wait(context);
+	const out = await results(h);
+	assert.match(out[0]!, /idea one/);
+	assert.equal(readFileSync(join(root, "notes", "Ideas", "b.md"), "utf8"), "- c\n");
+	assert.match(out[3]!, /isn't inside notes\/Ideas, the folder the rule trusts, once symlinks are resolved/);
+	assert.equal(existsSync(join(root, "app", "evil.md")), false);
+	// Only the sibling folder, the fetch, and the write after the fetch asked.
+	assert.equal(asked.length, 3, asked.join("\n"));
+	assert.ok(asked[0]!.startsWith("write notes/Ideas2/c.md on desk"), asked[0]);
+	assert.match(asked[1]!, /example\.com/);
+	assert.ok(asked[2]!.startsWith("write notes/Ideas/d.md on desk"), asked[2]);
+});
+
+test("folder trust written relative to the first root covers the same folder given absolutely", async (t) => {
+	const { home, root } = notes(t);
+	const h = await host(t, home, [call("workspace_write", { workspace: "desk", path: join(root, "notes", "Ideas", "abs.md"), content: "a" }), done]);
+	await h.rules.add({ ...trustIdeas, when: [...trustIdeas.when] });
+	const asked: string[] = [];
+	h.approvals.onChange((r) => void (r.status === "pending" && asked.push(r.summary) && h.approvals.decide(r.id, "deny", "test")));
+	await (await h.root.submit({ type: "input", content: "go" }, context)).wait(context);
+	assert.deepEqual(asked, []);
+	assert.equal(readFileSync(join(root, "notes", "Ideas", "abs.md"), "utf8"), "a");
+});
+
+test("folder trust ends after a read outside the folder", async (t) => {
+	const { home } = notes(t);
+	const h = await host(t, home, [
+		call("workspace_write", { workspace: "desk", path: "notes/Ideas/b.md", content: "b" }), done,
+		call("workspace_read", { workspace: "desk", path: "app/README.md" }), done,
+		call("workspace_write", { workspace: "desk", path: "notes/Ideas/c.md", content: "c" }), done,
+	]);
+	await h.rules.add({ ...trustIdeas, when: [...trustIdeas.when] });
+	const asked: string[] = [];
+	h.approvals.onChange((r) => void (r.status === "pending" && asked.push(r.summary) && h.approvals.decide(r.id, "once", "test")));
+	for (let i = 0; i < 3; i += 1) await (await h.root.submit({ type: "input", content: `step ${i}` }, context)).wait(context);
+	assert.deepEqual(asked.map((s) => s.split(" (")[0]), ["read app/README.md on desk", "write notes/Ideas/c.md on desk"]);
+});
+
+test("the helper refuses a path whose real path isn't inside the folder it's given, and reads as before without one", async (t) => {
+	const { home, root } = notes(t);
+	const desk = { name: "desk", target: "me@desk" };
+	const read = async (request: Record<string, unknown>) => JSON.parse((await localRemote(home)(desk, "read", request as never, {})).output) as { ok: boolean; error?: string };
+	assert.equal((await read({ path: "notes/Ideas/out/README.md" })).ok, true);
+	assert.match((await read({ path: "notes/Ideas/out/README.md", within: "notes/Ideas" })).error!, /isn't inside notes\/Ideas/);
+	assert.match((await read({ path: "notes/Ideas/../Ideas2", within: "notes/Ideas" })).error!, /isn't inside/);
+	assert.match((await read({ path: "notes/Ideas2", within: "notes/Ideas" })).error!, /isn't inside/);
+	assert.equal((await read({ path: "notes/Ideas/a.md", within: "notes/Ideas/" })).ok, true);
+	assert.equal((await read({ path: join(root, "notes", "Ideas"), within: "notes/Ideas" })).ok, true);
+	assert.equal((await read({ path: "notes/Ideas/a.md", within: join(root, "notes", "Ideas") })).ok, true);
+	assert.match((await read({ path: "notes/Ideas/a.md", within: 3 })).error!, /within should be a folder/);
+	// Answers and refusals name the roots, which tells gaidin this helper holds calls to the folder.
+	const real = realpathSync(root);
+	assert.deepEqual((await read({ path: "." }) as { roots?: string[] }).roots, [real]);
+	assert.deepEqual((await read({ path: "notes/Ideas2", within: "notes/Ideas" }) as { roots?: string[] }).roots, [real]);
 });
 
 test("a call to a workspace that isn't in the settings isn't put to Brad", async (t) => {

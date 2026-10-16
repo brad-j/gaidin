@@ -8,6 +8,14 @@
 //      and only while no outside text is in the conversation unless the rule says even after.
 //
 // Rules are made by the owner only, from the app or the command line; there's no tool for them.
+//
+// Folder trust is an allow rule with `path inside <folder>` and `workspace equals <name>`: a workspace's file
+// operations inside the folder go through. The folder is compared as text here, against the workspace's first root as
+// its helper last reported it; when the rule lets a call through, the hook memos it (WITHIN) and the tool sends it to the
+// helper, which refuses a path whose real path isn't inside it. Until gaidin has heard the roots, from a helper new enough
+// to hold calls to the folder, no inside rule lets a call through. A workspace_read let through that way is the owner's
+// own files, so it isn't outside text for that rule (`confinedBy`).
+import { posix } from "node:path";
 import { defineDoc, type DocumentReader, type Harness } from "@earendil-works/pi-durable";
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as background } from "@earendil-works/chord/context";
@@ -16,7 +24,7 @@ import { DEFAULT_AGENT, type RosterService } from "./agents.ts";
 import { array, attempt, isObject, type Json, literal, object, optional, type Parser, number, boolean, scalar, string } from "./parse.ts";
 
 /** A condition on one of the call's arguments, by its name, or a dotted path into an object argument. */
-export type Condition = { arg: string; op: "equals" | "one-of" | "starts-with" | "contains" | "host"; value: string | string[] };
+export type Condition = { arg: string; op: "equals" | "one-of" | "starts-with" | "contains" | "host" | "inside"; value: string | string[] };
 
 export type Rule = {
 	/** r1, r2, ... */
@@ -47,7 +55,47 @@ export const Rules = defineDoc<{ items: Rule[]; next: number }>({
 export const FLOOR = ["load_extension", "remove_extension", "write_skill", "remove_skill", "schedule_job", "browser_upload"];
 
 const TOOL = /^[A-Za-z0-9_.-]+\*?$|^\*$/;
-const OPS = ["equals", "one-of", "starts-with", "contains", "host"] as const;
+const OPS = ["equals", "one-of", "starts-with", "contains", "host", "inside"] as const;
+
+/**
+ * The tools an inside condition reaches: a workspace's file operations, whose path the helper confines to the folder.
+ * Never workspace_run, whose command can touch any file whatever its cwd.
+ */
+export const INSIDE_TOOLS = ["workspace_read", "workspace_write", "workspace_edit"];
+/** The tools an inside rule may name. */
+const INSIDE_RULE_TOOLS = [...INSIDE_TOOLS, "workspace_*"];
+
+/** The memo on a tool task an inside rule let through: the rule and its folder, which the workspace tools send the helper. */
+export const WITHIN = "gaidin.within";
+export type Within = { rule: string; folder: string };
+
+const clean = (path: string) => posix.normalize(path).replace(/(.)\/+$/, "$1");
+const leavesRoot = (path: string) => path === ".." || path.startsWith("../");
+
+/**
+ * Whether `path` is `folder` or inside it, as text after resolving `.` and `..`. Relative paths are relative to the
+ * workspace's first root, `root`, as the helper reads them. Without the root, a relative path and an absolute folder, or
+ * the other way round, don't match.
+ */
+export function inside(path: string, folder: string, root?: string): boolean {
+	const absolute = (p: string) => (root === undefined || !root.startsWith("/") || p.startsWith("/") ? p : posix.join(root, p));
+	const [p, f] = [clean(absolute(path)), clean(absolute(folder))];
+	if (p.startsWith("/") !== f.startsWith("/") || leavesRoot(p) || leavesRoot(f)) return false;
+	if (f === "." || f === "/") return true;
+	return p === f || p.startsWith(`${f}/`);
+}
+
+/** The folder of `rule`'s inside condition, if it has one. */
+export function folderOf(rule: Rule): string | undefined {
+	const value = rule.when?.find((c) => c.op === "inside")?.value;
+	return Array.isArray(value) ? undefined : value;
+}
+
+const withinDetails = object({ within: object({ rule: string, folder: string }) });
+/** The rule whose folder a workspace_read's result was confined to, from its details, which the model can't write. */
+export function confinedBy(result: { toolName: string; details?: Json }): string | undefined {
+	return result.toolName === "workspace_read" ? attempt(result.details, withinDetails)?.within.rule : undefined;
+}
 
 /** Whether `pattern` names `tool`: the same name, or a prefix ending in *. */
 export const toolMatches = (pattern: string, tool: string) => (pattern.endsWith("*") ? tool.startsWith(pattern.slice(0, -1)) : pattern === tool);
@@ -59,8 +107,11 @@ function argument(args: Json, path: string): string | undefined {
 	return value === undefined ? undefined : attempt(value, scalar);
 }
 
-/** Whether `condition` holds for `args`. Text compares without case, except equals; a host is a URL's, exactly. */
-export function holds(condition: Condition, args: Json): boolean {
+/**
+ * Whether `condition` holds for `args`. Text compares without case, except equals; a host is a URL's, exactly; a folder
+ * against `root`, the call's workspace's first root, when it's known.
+ */
+export function holds(condition: Condition, args: Json, root?: string): boolean {
 	const value = argument(args, condition.arg);
 	if (value === undefined) return false;
 	const wanted = Array.isArray(condition.value) ? condition.value : [condition.value];
@@ -75,22 +126,29 @@ export function holds(condition: Condition, args: Json): boolean {
 			return value.toLowerCase().includes((wanted[0] ?? "").toLowerCase());
 		case "host":
 			return URL.parse(value)?.hostname.toLowerCase() === (wanted[0] ?? "").toLowerCase();
+		case "inside":
+			return !Array.isArray(condition.value) && inside(value, condition.value, root);
 	}
 }
 
-/** Whether `rule` covers a call of `tool` with `args` by `agent` at `now`. */
-export function covers(rule: Rule, agent: string, tool: string, args: Json, now: number): boolean {
+/** Whether `rule` covers a call of `tool` with `args` by `agent` at `now`; `root` is the call's workspace's first root, when it's known. */
+export function covers(rule: Rule, agent: string, tool: string, args: Json, now: number, root?: string): boolean {
 	if (rule.until !== undefined && rule.until <= now) return false;
 	if (rule.agent !== undefined && rule.agent !== agent) return false;
 	if (!toolMatches(rule.tool, tool)) return false;
-	return (rule.when ?? []).every((c) => holds(c, args));
+	if ((rule.when ?? []).some((c) => c.op === "inside") && !INSIDE_TOOLS.includes(tool)) return false;
+	return (rule.when ?? []).every((c) => holds(c, args, root));
 }
 
-/** The rules that decide a call: the first ask rule that covers it, and the allow rules that do. */
-export function rulesFor(rules: readonly Rule[], agent: string, tool: string, args: Json, now = Date.now()): { ask?: Rule; allow: Rule[] } {
-	const covering = rules.filter((r) => covers(r, agent, tool, args, now));
+/**
+ * The rules that decide a call: the first ask rule that covers it, and the allow rules that do. `root` is the call's
+ * workspace's first root as its helper reported it; without it no inside rule allows, since the helper may be one that
+ * doesn't hold calls to the folder.
+ */
+export function rulesFor(rules: readonly Rule[], agent: string, tool: string, args: Json, now = Date.now(), root?: string): { ask?: Rule; allow: Rule[] } {
+	const covering = rules.filter((r) => covers(r, agent, tool, args, now, root));
 	const ask = covering.find((r) => r.effect === "ask");
-	const allow = FLOOR.includes(tool) ? [] : covering.filter((r) => r.effect === "allow");
+	const allow = FLOOR.includes(tool) ? [] : covering.filter((r) => r.effect === "allow" && (root !== undefined || folderOf(r) === undefined));
 	return ask === undefined ? { allow } : { ask, allow };
 }
 
@@ -142,6 +200,16 @@ export function createRules(options: { harness: Harness; root: () => Conversatio
 			if (!OPS.includes(c.op)) return `A condition is one of ${OPS.join(", ")}, not ${c.op}.`;
 			if (c.arg.trim() === "") return "A condition names an argument.";
 			if ((Array.isArray(c.value) ? c.value : [c.value]).some((v) => v === "")) return `The condition on ${c.arg} has no value.`;
+		}
+		const folders = (rule.when ?? []).filter((c) => c.op === "inside");
+		for (const c of folders) {
+			if (folders.length > 1) return "A rule has one inside condition.";
+			if (c.arg !== "path") return "An inside condition is on path, a workspace file's.";
+			if (Array.isArray(c.value)) return "An inside condition names one folder.";
+			if (leavesRoot(clean(c.value))) return `${c.value} leaves the workspace's first root; give a folder inside it, or an absolute one.`;
+			if (!INSIDE_RULE_TOOLS.includes(rule.tool)) return `An inside rule is for ${INSIDE_RULE_TOOLS.join(", ")}.`;
+			const named = (rule.when ?? []).some((w) => w.arg === "workspace" && w.op === "equals" && !Array.isArray(w.value));
+			if (!named) return "An inside rule names its workspace too: workspace equals <name>.";
 		}
 		if (rule.until !== undefined && rule.until <= Date.now()) return "That rule would end before it starts.";
 		if (rule.afterOutside === true && rule.effect === "ask") return "Even after outside text is for allow rules; an ask rule always asks.";

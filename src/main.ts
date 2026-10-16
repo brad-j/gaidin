@@ -38,7 +38,9 @@ const USAGE = `usage: gaidin [--config FILE] COMMAND
   rule add allow|ask TOOL [--agent ID] [--when "ARG OP VALUE"]... [--for 30m|2h|1d]
            [--even-after-outside] [--note TEXT]
                             add one: TOOL is a name or a prefix ending in *; OP is equals,
-                            one-of (VALUE a,b), starts-with, contains or host
+                            one-of (VALUE a,b), starts-with, contains, host or inside
+                            (a workspace folder: "path inside notes/Ideas" with
+                            "workspace equals NAME")
   rule remove ID            remove one
   connector remove NAME     remove it, its token and every agent's grant of it
   doctor [--push]           check the settings and everything the server needs
@@ -167,10 +169,10 @@ switch (command) {
 		if (action !== "add" || (first !== "allow" && first !== "ask") || second === undefined) fail([usage]);
 		const when: Condition[] = [];
 		for (const text of values.when ?? []) {
-			const match = /^(\S+)\s+(equals|one-of|starts-with|contains|host)\s+(.+)$/.exec(text.trim());
+			const match = /^(\S+)\s+(equals|one-of|starts-with|contains|host|inside)\s+(.+)$/.exec(text.trim());
 			if (match === null) fail([`--when "${text}" isn't ARG OP VALUE`, usage]);
 			const [, arg, op, value] = match!;
-			const parsed = literal("equals", "one-of", "starts-with", "contains", "host")(op, "--when");
+			const parsed = literal("equals", "one-of", "starts-with", "contains", "host", "inside")(op, "--when");
 			when.push({ arg: arg!, op: parsed, value: parsed === "one-of" ? value!.split(",").map((v) => v.trim()) : value! });
 		}
 		const rule: NewRule = { effect: first === "allow" ? "allow" : "ask", tool: second! };

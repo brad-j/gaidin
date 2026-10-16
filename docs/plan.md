@@ -55,6 +55,7 @@
 41. The app's Connectors page: each connector's state, its tools set to allow, ask or off with their cost, new and changed tools marked, signing in in the same tab and back, tokens, refresh and remove; agents given connectors on their settings pages, and a notice and a sidebar count when one needs signing in again (protocol 10) ([Surfaces](surfaces.md#the-app)).
 42. Rules, step 1: the owner's allow and ask rules, per agent and tool or family, with argument conditions, an end, and "even after outside text" for allow rules; ask rules reach every tool and override every grant, allow rules skip a guard's question but never a refusal or the floor (loading tools, skills, new jobs, browser uploads). The rule that let a call through is in the timeline. `gaidin rule` manages them ([Security](security.md#your-rules)).
 43. Rules, step 2: the app's Rules page lists the rules with remove, the grants that also let calls through (hosts, sites acted on, connector tools set to allow, workspace hours) with where each is changed, and makes rules; an approval card's "make a rule" fills the form in from the request, a URL argument as its host (protocol 11) ([Surfaces](surfaces.md#the-app)).
+44. Folder trust, gaidin's side: an `inside` condition on a workspace path, so one allow rule lets an agent's reads, writes and edits in a folder and every folder below it through. The folder goes to the workspace's helper, which refuses a path whose real path, symlinks resolved, isn't inside it; a read the rule let through isn't outside text for that rule; `workspace_run` never goes through on one. `gaidin rule` takes it (protocol 12) ([Security](security.md#your-rules)).
 
 ## Next
 
@@ -135,7 +136,7 @@ Steps 1 and 2 are done (items 42 and 43). Today what asks is fixed per tool by i
 - **Effect:** allow (the call goes ahead without asking) or ask (it asks every time, whatever else would let it through).
 - **Agent:** one agent, or every agent.
 - **Tool:** a tool's name, or a family by its prefix (`home_*` for a connector's tools, `workspace_*`, `browser_*`).
-- **Arguments, optional:** conditions on the call's arguments, all of which must hold: equals, one of, starts with, contains, and for a URL argument its host. "`home_intent__HassTurnOn` where `name` contains `light`."
+- **Arguments, optional:** conditions on the call's arguments, all of which must hold: equals, one of, starts with, contains, for a URL argument its host, and for a workspace path a folder it's inside. "`home_intent__HassTurnOn` where `name` contains `light`."
 - **Until, optional:** a rule can end on its own: in an hour, at the end of the day, on a date. The workspace hour grant is this with a fixed hour.
 - **A note:** why the owner made it, shown on the page and in the timeline.
 
@@ -155,18 +156,28 @@ Whichever rule decided a call is written into the conversation with the call, as
 - **Rules live in the database, edited on a Rules page** across agents, as connectors are, with `gaidin rule list|add|remove` on the command line. The settings file stays free of them.
 - **Made from a request too.** An approval card in the dock gains "make a rule", which opens the form with the agent, the tool and the call's arguments filled in, for the owner to widen or narrow before saving. A rule is never made by a model; there's no tool for it.
 - **The existing grants stay as they are** (hosts allowed for good, sites acted on, connector settings, workspace hours), and the Rules page lists them beside the rules, read-only with a link to where each is changed, so one page shows everything that lets a call through without asking. Folding them into rules can come later, if it's worth it.
+- **Folder trust** (2026-10-16). An agent writing notes on a workspace asked file by file, and an allow rule on the workspace didn't help: `workspace_read` is outside text, so the first read ended the rule, and `starts-with` compares text the helper reads differently (relative to the first root, absolute in any root, `..`, symlinks). So a condition `inside`, on `path`:
+  - The call's path is the folder or inside it, compared as text after resolving `.` and `..`, case-sensitive, a trailing slash ignored. A relative path is relative to the workspace's first root, as the helper reads it. The folder is stored as the owner gives it, relative like `notes/Ideas` or absolute; one that leaves the first root is refused. `..` that leaves the folder and comes back in matches, since the helper also resolves `..` as text, and opens the same file.
+  - The helper names its roots in every answer, and gaidin keeps the latest per workspace in memory, asking with a read of the root when it hasn't heard since it started. With the first root known, a relative path and an absolute folder, or the other way round, are compared as the helper reads them, so a rule written `notes/Ideas` covers the absolute paths the helper's answers show the model.
+  - When an inside rule lets a call through, the hook memos the rule and its folder on the tool task and the tool sends the folder to the helper as `within`; the helper refuses a path whose real path, symlinks resolved, isn't inside it. A call the owner approved sends none, and a helper request without it works as before. An older helper ignores `within` and names no roots, so until gaidin has heard a workspace's roots no inside rule lets a call through there, and an answer without them forgets them: a helper that names them holds calls to the folder.
+  - Outside text still ends the rule, by default, except a `workspace_read` that rule let through: those are the owner's own files. The read's result carries the rule in its details, which only the tool writes and the model never sees, as `web_search` marks its URLs, and the outside-text check skips those results for that rule only. A fetch, a read outside the folder or one the owner approved, a `workspace_run`, the browser's text and a connector's still end it.
+  - An inside rule names `workspace_read`, `workspace_write`, `workspace_edit` or `workspace_*`, has one inside condition, and pairs it with `workspace equals <name>`. `workspace_run` never goes through on one, even under `workspace_*`, since a command can touch any file whatever its cwd. Ask rules still win and the floor is unchanged.
+  - The app offers "Trust <folder> for <agent>" on a workspace card, the folder being the path's parent, from the request's `ruleArgs` (`path` and `workspace`); the protocol carries `inside` in the rule types.
 
 ### Known gaps
 
 - An allow rule with "even after outside text" can be steered: a page or a tool's result can lead the agent to make exactly the calls the rule allows. The form says so beside the tick.
 - Argument conditions match what the model wrote, not what the tool does with it: "`name` contains `light`" lets through a device named "light switch for the garage door".
 - A family rule (`home_*`) covers tools the connector adds later, though a new connector tool is off until the owner sets it, which still stops it.
+- A trusted folder's reads aren't outside text for its rule, so whatever got into the folder is trusted with it: a page summary the owner approved writing there, an approved `workspace_run`'s output, another program's sync. It can steer the agent into exactly what the rule allows, writes and edits in that folder; other tools still count the read as outside text.
+- A write replaces a whole file without asking, so a trusted folder's files are only as safe as their history (git or backups). Trust folders of notes and data, not code: a script or config there runs later as the owner.
 
 ### Order of work
 
 1. Done: rules in a document, the decision in the approvals hook for every tool, guarded or not, the rule recorded with each call it decided, and `gaidin rule` (item 42). The timeline already says which rule allowed a call; a request an ask rule made names the rule in its summary. Tests with the faux provider: each precedence step, the floor, outside text with and without the tick, expiry, and an agent's rule not reaching another agent.
 2. Done: the app's Rules page, with the grants beside the rules, and "make a rule" on approval cards, with e2e tests (item 43). A request carries its short arguments (text, numbers and booleans up to 200 characters) for the form.
 3. The timeline and Slack name the rule that decided a call.
+4. Folder trust: gaidin's side is done (item 44); the app's "Trust <folder> for <agent>" on a card is next, in its own commit there.
 
 Each step ends with `pnpm check` passing and is a commit of its own.
 

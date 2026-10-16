@@ -17,6 +17,11 @@ The operation is SSH_ORIGINAL_COMMAND; its request is the first line of stdin, a
   write  {path, content}          create or replace a file
   edit   {path, edits}            replace each oldText, which must occur exactly once
 
+read, write and edit take an optional `within`: the folder of the owner's rule that let the call through without
+asking, relative to the first root or absolute. The path's real path, symlinks resolved, must be that folder's or
+inside it. Their answers, refusals included, name the `roots`, first one first, which gaidin compares paths against;
+a helper that names them holds calls to `within`, so gaidin lets no call through on a folder rule without them.
+
 Commands see the roots read-write, with secret files masked and every repo's config and hooks read-only,
 submodules' and worktrees' included, the readOnly directories, a scratch home of their own, and the network. Nothing else of the
 user's home is there, so no SSH keys or tokens for pushing. The file operations refuse paths outside the
@@ -81,11 +86,24 @@ def is_secret(name: str) -> bool:
     return bool(SECRET.match(name)) and not NOT_SECRET.search(name)
 
 
-def confine(path: str) -> str:
-    """The real path, symlinks resolved, if it's inside a root and not secret or inside .git."""
-    absolute = os.path.normpath(path if os.path.isabs(path) else os.path.join(ROOTS[0], path))
-    real = os.path.realpath(absolute)
-    root = next((r for r in ROOTS if real == r or real.startswith(r + os.sep)), None)
+def resolve(path: str) -> str:
+    """The real path, symlinks resolved, read relative to the first root unless it's absolute."""
+    return os.path.realpath(os.path.normpath(path if os.path.isabs(path) else os.path.join(ROOTS[0], path)))
+
+
+def is_within(real: str, folder: str) -> bool:
+    return real == folder or real.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+def confine(path: str, within=None) -> str:
+    """The real path, symlinks resolved, if it's inside a root, and inside `within` when it's given, and not secret or inside .git."""
+    real = resolve(path)
+    if within is not None:
+        if not isinstance(within, str) or within == "":
+            raise Refused("within should be a folder")
+        if not is_within(real, resolve(within)):
+            raise Refused(f"{path} isn't inside {within}, the folder the rule trusts, once symlinks are resolved")
+    root = next((r for r in ROOTS if is_within(real, r)), None)
     if root is None:
         raise Refused(f"{path} is outside {', '.join(ROOTS)}")
     parts = os.path.relpath(real, root).split(os.sep)
@@ -214,7 +232,7 @@ def run(request: dict) -> int:
 
 
 def read(request: dict) -> dict:
-    path = confine(request["path"])
+    path = confine(request["path"], request.get("within"))
     if os.path.isdir(path):
         entries = sorted(os.listdir(path))
         shown = [e + ("/" if os.path.isdir(os.path.join(path, e)) else "") for e in entries if not is_secret(e)]
@@ -232,7 +250,7 @@ def read(request: dict) -> dict:
 
 
 def write(request: dict) -> dict:
-    path = confine(request["path"])
+    path = confine(request["path"], request.get("within"))
     if os.path.isdir(path):
         raise Refused(f"{path} is a directory")
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -243,7 +261,7 @@ def write(request: dict) -> dict:
 
 
 def edit(request: dict) -> dict:
-    path = confine(request["path"])
+    path = confine(request["path"], request.get("within"))
     with open(path, encoding="utf-8") as file:
         text = file.read()
     for number, change in enumerate(request["edits"], 1):
@@ -287,7 +305,7 @@ def main() -> int:
             sys.stdout.flush()
             os._exit(code)
         fcntl.flock(lock, fcntl.LOCK_EX)
-        print(json.dumps(handlers[operation](request)))
+        print(json.dumps({**handlers[operation](request), "roots": ROOTS}))
         return 0
     except Refused as refused:
         message = str(refused)
@@ -297,7 +315,7 @@ def main() -> int:
         sys.stdout.write(f"[refused] {message}\n")
         sys.stdout.flush()
         os._exit(126)
-    print(json.dumps({"ok": False, "error": message}))
+    print(json.dumps({"ok": False, "error": message, **({"roots": ROOTS} if ROOTS else {})}))
     return 1
 
 

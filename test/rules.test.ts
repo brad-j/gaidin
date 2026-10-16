@@ -10,7 +10,7 @@ import type { Conversation } from "@earendil-works/pi-durable";
 import type { ApprovalRequest } from "../src/approvals.ts";
 import { configFor } from "../src/config.ts";
 import { assistantText, context, startHost } from "../src/host.ts";
-import { covers, describeRule, type Rule, rulesFor } from "../src/rules.ts";
+import { covers, describeRule, inside, type Rule, rulesFor } from "../src/rules.ts";
 import { parseClientMessage } from "../src/server.ts";
 import { createWebServer } from "../src/web.ts";
 import { fakeMcp } from "./fake-mcp.ts";
@@ -31,6 +31,65 @@ test("a rule covers its agent, its tool or family, and arguments that meet every
 	assert.equal(covers(rule({ until: 1000 }), "lan", "home_x", args, 999), true);
 	assert.equal(covers(rule({ until: 1000 }), "lan", "home_x", args, 1000), false);
 	assert.equal(describeRule(rule({ agent: "lan", when: [{ arg: "name", op: "contains", value: "light" }], note: "lights" })), "r1: allow home_* for lan, when name contains light, until outside text is read, (lights)");
+});
+
+test("inside matches the folder and paths in it, as text after . and .., relative to the first root or absolute", () => {
+	const matching = [
+		["notes/Ideas/a.md", "notes/Ideas"],
+		["notes/Ideas", "notes/Ideas"],
+		["notes/Ideas/", "notes/Ideas"],
+		["./notes/Ideas/sub/b.md", "notes/Ideas/"],
+		["notes/Ideas/../Ideas/a.md", "notes/Ideas"],
+		["notes/../notes/Ideas/a.md", "notes/Ideas"],
+		["/home/brad/notes/Ideas/a.md", "/home/brad/notes/Ideas"],
+		["/home/brad/notes/Ideas/x/../a.md", "/home/brad/notes/Ideas/"],
+		["notes/a.md", "."],
+	];
+	const not = [
+		["notes/Ideas2/a.md", "notes/Ideas"],
+		["/home/brad/notes/Ideas2", "/home/brad/notes/Ideas"],
+		["notes/Ideas/../Other/a.md", "notes/Ideas"],
+		["notes/Ideas/../../a.md", "notes/Ideas"],
+		["notes", "notes/Ideas"],
+		["notes/ideas/a.md", "notes/Ideas"],
+		["../notes/Ideas/a.md", "notes/Ideas"],
+		["../a.md", "."],
+		// gaidin doesn't know the first root, so a relative path and an absolute folder can't be compared.
+		["/home/brad/notes/Ideas/a.md", "notes/Ideas"],
+		["notes/Ideas/a.md", "/home/brad/notes/Ideas"],
+	];
+	for (const [path, folder] of matching) assert.equal(inside(path!, folder!), true, `${path} in ${folder}`);
+	for (const [path, folder] of not) assert.equal(inside(path!, folder!), false, `${path} in ${folder}`);
+
+	// With the workspace's first root, both are made absolute first, as the helper reads them.
+	const rooted = [
+		["/r/notes/Ideas/a.md", "notes/Ideas", true],
+		["notes/Ideas/a.md", "/r/notes/Ideas", true],
+		["../r/notes/Ideas/a.md", "notes/Ideas", true],
+		["/r/a.md", ".", true],
+		["/r/notes/Ideas2/a.md", "notes/Ideas", false],
+		["/s/notes/Ideas/a.md", "notes/Ideas", false],
+		["../a.md", ".", false],
+	] as const;
+	for (const [path, folder, is] of rooted) assert.equal(inside(path, folder, "/r"), is, `${path} in ${folder} under /r`);
+
+	const trust = rule({ tool: "workspace_*", when: [{ arg: "workspace", op: "equals", value: "egwene" }, { arg: "path", op: "inside", value: "notes/Ideas" }] });
+	assert.equal(covers(trust, "min", "workspace_write", { workspace: "egwene", path: "notes/Ideas/a.md", content: "x" }, 0), true);
+	assert.equal(covers(trust, "min", "workspace_write", { workspace: "egwene", path: "/r/notes/Ideas/a.md", content: "x" }, 0, "/r"), true);
+	assert.equal(covers(trust, "min", "workspace_write", { workspace: "desk", path: "notes/Ideas/a.md", content: "x" }, 0), false);
+	// A run never, even with a path the model added.
+	assert.equal(covers(trust, "min", "workspace_run", { workspace: "egwene", command: "ls", cwd: "notes/Ideas", path: "notes/Ideas" }, 0), false);
+	assert.equal(describeRule(trust), "r1: allow workspace_* for every agent, when workspace equals egwene and path inside notes/Ideas, until outside text is read");
+});
+
+test("no inside rule allows until the workspace's helper has named its roots, while an inside ask rule still asks", () => {
+	const when = [{ arg: "workspace", op: "equals", value: "egwene" }, { arg: "path", op: "inside", value: "notes" }] as const;
+	const args = { workspace: "egwene", path: "notes/a.md", content: "x" };
+	const trust = rule({ tool: "workspace_write", when: [...when] });
+	assert.deepEqual(rulesFor([trust], "min", "workspace_write", args).allow, []);
+	assert.deepEqual(rulesFor([trust], "min", "workspace_write", args, Date.now(), "/r").allow.map((r) => r.id), ["r1"]);
+	const mine = rule({ id: "r2", effect: "ask", tool: "workspace_write", when: [...when] });
+	assert.equal(rulesFor([mine], "min", "workspace_write", args).ask?.id, "r2");
 });
 
 test("an ask rule decides before allow rules, and no allow rule reaches the floor", () => {
@@ -67,8 +126,12 @@ async function say(conversation: Conversation, text: string): Promise<string> {
 	return assistantText(await conversation.commit((tx) => tx.entry(settled.answer), context)) ?? "";
 }
 
-/** gaidin with Lan, given the home connector, whose tools are a read (allow) and a switch (ask); requests answered by `decide` (default: deny). */
-async function start(t: TestContext, decide: (r: ApprovalRequest) => "once" | "always" | "deny" = () => "deny") {
+/**
+ * gaidin with Lan, given the home connector, whose tools are a read (allow) and a switch (ask), and a workspace egwene whose
+ * helper requests are kept in `sent`, a current helper's or an older one that names no roots; requests answered by `decide`
+ * (default: deny).
+ */
+async function start(t: TestContext, decide: (r: ApprovalRequest) => "once" | "always" | "deny" = () => "deny", helper: "current" | "older" = "current") {
 	const server = await fakeMcp(t, {
 		era: "modern",
 		tools: () => [
@@ -79,13 +142,21 @@ async function start(t: TestContext, decide: (r: ApprovalRequest) => "once" | "a
 	});
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const sent: { operation: string; request: unknown }[] = [];
 	const host = await startHost({
 		config: configFor({ owner: "Brad" }),
 		dataDir: dir,
 		sandbox: "none",
 		...scripted(),
 		adapters: { push: { send: async () => true } },
-		workspaces: { list: [{ name: "egwene", target: "me@egwene" }], remote: async () => ({ code: 0, output: '{"ok":true,"path":"README.md","text":"x","offset":1,"totalLines":1}' }) },
+		workspaces: {
+			list: [{ name: "egwene", target: "me@egwene" }],
+			remote: async (_workspace, operation, request) => {
+				sent.push({ operation, request });
+				const roots = helper === "current" ? ',"roots":["/home/me"]' : "";
+				return { code: 0, output: `{"ok":true,"path":"README.md","text":"x","offset":1,"totalLines":1${roots}}` };
+			},
+		},
 	});
 	t.after(() => host.close());
 	const asked: ApprovalRequest[] = [];
@@ -98,7 +169,7 @@ async function start(t: TestContext, decide: (r: ApprovalRequest) => "once" | "a
 	await host.connectors.add({ name: "home", url: server.url });
 	await host.agents.update("lan", { connectors: ["home"] });
 	const lan = await host.agents.home("lan");
-	return { host, lan, asked };
+	return { host, lan, asked, sent };
 }
 
 test("an allow rule lets a call through that would ask, records which rule did, and stops after outside text unless it holds even after", async (t) => {
@@ -160,6 +231,48 @@ test("a rule is checked when it's made", async (t) => {
 	assert.equal(hour.id, "r1");
 	assert.deepEqual((await host.rules.list()).map((r) => r.id), ["r1"]);
 	await assert.rejects(host.rules.remove("r9"), /There's no rule r9\./);
+});
+
+test("folder trust lets a workspace write inside the folder through, sending the folder to the helper, and a run still asks", async (t) => {
+	const { host, asked, sent } = await start(t, (r) => (r.tool === "workspace_run" ? "deny" : "once"));
+	const trust = await host.rules.add({ effect: "allow", tool: "workspace_*", when: [{ arg: "workspace", op: "equals", value: "egwene" }, { arg: "path", op: "inside", value: "notes/Ideas" }] });
+	await say(host.root, CALL("workspace_write", { workspace: "egwene", path: "notes/Ideas/a.md", content: "x" }));
+	assert.equal(asked.length, 0);
+	assert.deepEqual(sent.at(-1), { operation: "write", request: { path: "notes/Ideas/a.md", content: "x", within: "notes/Ideas" } });
+	const timeline = await host.timeline();
+	assert.ok(timeline.items.some((i) => i.kind === "approval" && i.name === "workspace_write" && i.outcome === `allowed once by rule ${trust.id}`));
+
+	// A run asks, even with a path inside the folder; a write elsewhere asks, carrying what the app needs for "Trust <folder>",
+	// and once allowed it goes without a folder.
+	await say(host.root, CALL("workspace_run", { workspace: "egwene", command: "cat a.md", cwd: "notes/Ideas", path: "notes/Ideas/a.md" }));
+	await say(host.root, CALL("workspace_write", { workspace: "egwene", path: "notes/Ideas2/b.md", content: "y" }));
+	assert.deepEqual(asked.map((r) => r.tool), ["workspace_run", "workspace_write"]);
+	assert.deepEqual(asked[1]!.ruleArgs, { workspace: "egwene", path: "notes/Ideas2/b.md", content: "y" });
+	assert.equal(JSON.stringify(sent.at(-1)!.request), '{"path":"notes/Ideas2/b.md","content":"y"}', "what ssh sends");
+});
+
+test("with a helper that names no roots, which may not hold calls to the folder, an inside rule lets nothing through", async (t) => {
+	const { host, asked, sent } = await start(t, () => "deny", "older");
+	await host.rules.add({ effect: "allow", tool: "workspace_*", when: [{ arg: "workspace", op: "equals", value: "egwene" }, { arg: "path", op: "inside", value: "notes" }] });
+	await say(host.root, CALL("workspace_write", { workspace: "egwene", path: "notes/a.md", content: "x" }));
+	assert.deepEqual(asked.map((r) => r.tool), ["workspace_write"]);
+	// It asked the helper for its roots, and nothing was written.
+	assert.deepEqual(sent, [{ operation: "read", request: { path: "." } }]);
+});
+
+test("an inside rule is checked when it's made: one folder, on path, inside the first root, for a workspace's file tools, with its workspace", async (t) => {
+	const { host } = await start(t);
+	const workspace = { arg: "workspace", op: "equals", value: "egwene" } as const;
+	const folder = (value: string | string[], arg = "path") => ({ arg, op: "inside", value }) as const;
+	const add = (tool: string, when: { arg: string; op: "equals" | "inside"; value: string | string[] }[]) => host.rules.add({ effect: "allow", tool, when });
+	await assert.rejects(add("workspace_write", [folder("notes")]), /names its workspace too: workspace equals <name>/);
+	await assert.rejects(add("workspace_write", [{ ...workspace, op: "inside" }, folder("notes")]), /one inside condition/);
+	await assert.rejects(add("workspace_run", [workspace, folder("notes")]), /for workspace_read, workspace_write, workspace_edit, workspace_\*/);
+	await assert.rejects(add("fetch_url", [workspace, folder("notes")]), /for workspace_read/);
+	await assert.rejects(add("workspace_write", [workspace, folder("notes", "cwd")]), /on path/);
+	await assert.rejects(add("workspace_write", [workspace, folder(["a", "b"])]), /one folder/);
+	await assert.rejects(add("workspace_write", [workspace, folder("notes/../../x")]), /leaves the workspace's first root/);
+	assert.equal((await add("workspace_edit", [workspace, folder("/home/brad/notes/")])).when?.[1]?.value, "/home/brad/notes/");
 });
 
 test("the CLI's rule commands read right", () => {

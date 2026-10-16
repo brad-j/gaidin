@@ -70,7 +70,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 11;
+export const PROTOCOL = 12;
 
 /** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
 export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };

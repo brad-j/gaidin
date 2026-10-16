@@ -208,7 +208,7 @@ A workspace is another machine where gaidin works on projects as that machine's 
 - `workspace_write` creates or replaces a file.
 - `workspace_edit` replaces each `oldText` with `newText`; each must occur exactly once.
 
-Commands run under bubblewrap on that machine with the project roots writable, secret files hidden, and network on, but without the user's SSH keys or tokens, so `git push` fails and stays with you. Commits made there are authored by gaidin and committed as you. An agent can use only the workspaces its roster entry gives it, every one for the default agent and none for a new agent; a call to another is refused. Every call asks first; you can allow a workspace for an hour in one conversation. [Security](security.md#workspaces) has the details and [Deploying](deploy.md#adding-a-workspace) the setup. With no workspaces configured, these tools don't exist.
+Commands run under bubblewrap on that machine with the project roots writable, secret files hidden, and network on, but without the user's SSH keys or tokens, so `git push` fails and stays with you. Commits made there are authored by gaidin and committed as you. An agent can use only the workspaces its roster entry gives it, every one for the default agent and none for a new agent; a call to another is refused. Every call asks first; you can allow a workspace for an hour in one conversation, or trust a folder for an agent's reads, writes and edits with a [rule](security.md#your-rules). [Security](security.md#workspaces) has the details and [Deploying](deploy.md#adding-a-workspace) the setup. With no workspaces configured, these tools don't exist.
 
 ## Self-written tools
 

@@ -221,7 +221,7 @@ export async function openHost(options: HostOptions = {}) {
 	let approvals: ApprovalService | undefined;
 	// Each tool's approval rules, from the module that owns it; read per call, since self-written tools come and go.
 	const guards = [...agents.guards, ...memory.guards, ...reminders.guards, ...jobs.guards, ...homelabGuards, ...web.guards, ...searchGuards, ...workspaces.guards, ...history.guards, ...skills.guards, ...(browser?.guards ?? [])];
-	registry.install(approvalExtension(() => approvals!, owner, () => [...guards, ...(self?.guards() ?? []), ...connectors.guards()]));
+	registry.install(approvalExtension(() => approvals!, owner, () => [...guards, ...(self?.guards() ?? []), ...connectors.guards()], workspaces.firstRoot));
 	// Last, so its afterTool sees what every other hook left.
 	registry.install(budget.extension);
 	registry.install(redactionExtension(redactor));

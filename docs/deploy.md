@@ -88,6 +88,8 @@ A workspace needs bubblewrap, python3 and an SSH server that gaidin can reach.
 3. Let gaidin's address reach port 22, for example `sudo ufw allow from <gaidin's address> to any port 22 proto tcp`.
 4. On the gaidin server: `sudo sh /var/lib/gaidin/app/deploy/vm/add-workspace.sh NAME USER@HOST`. It pins the machine's host key, prints its fingerprint, tests a read and restarts gaidin. Compare the fingerprint with the machine's own (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`).
 
+To update the helper after pulling, rerun the installer on the machine with the same key, address and roots, or copy it over: `install -m 755 deploy/workspace/gaidin-workspace.py ~/.local/libexec/gaidin-workspace`. Until a workspace's helper is updated, folder-trust rules let nothing through there and its calls ask as before.
+
 The workspace list is `/var/lib/gaidin/keys/workspaces`, one `name user@host` per line. The address has to stay the same, so reserve it in DHCP. To remove a workspace, delete its line there and its key line in the machine's `authorized_keys`.
 
 ## Settings

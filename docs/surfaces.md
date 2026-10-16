@@ -33,11 +33,12 @@ gaidin agent set scout --name Seeker --job "..."    # an id can't change; an emp
 gaidin rule add allow home_intent__HassTurnOn --agent lan --when "name contains light" --even-after-outside --note "lights"
 gaidin rule add ask fetch_url --agent verin --when "url host example.com"
 gaidin rule add allow workspace_* --agent lan --for 2h
+gaidin rule add allow workspace_* --agent min --when "workspace equals egwene" --when "path inside notes/Ideas"
 gaidin rule list
 gaidin rule remove r2
 ```
 
-`--when` takes an argument, `equals`, `one-of` (values split by commas), `starts-with`, `contains` or `host`, and a value; give it more than once for conditions that must all hold. `--for` ends the rule after `30m`, `2h` or `1d`.
+`--when` takes an argument, `equals`, `one-of` (values split by commas), `starts-with`, `contains`, `host` or `inside`, and a value; give it more than once for conditions that must all hold. `path inside FOLDER` trusts a workspace folder and everything below it for reads, writes and edits, never runs, and needs `workspace equals NAME` beside it ([Security](security.md#your-rules)). `--for` ends the rule after `30m`, `2h` or `1d`.
 
 `gaidin connector` adds and manages [connectors](tools.md#connectors): `list`, `show NAME`, `add NAME URL [--token]`, `connect NAME [--client-id ID]` (sign in with OAuth: it prints the address to open), `token NAME [--token]`, `tool NAME TOOL allow|ask|off`, `refresh NAME`, `remove NAME`, and `client-document`, which prints gaidin's client id document. A token is read from standard input, so it isn't in your shell's history.
 
