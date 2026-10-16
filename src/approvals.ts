@@ -452,7 +452,7 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 			const text = done.status === "answered" ? `${owner} answered: ${done.answer}`
 				: done.status === "expired" ? `${owner} didn't answer in time.`
 				: "No answer: the run was stopped.";
-			return { content: [{ type: "text", text }], isError: done.status !== "answered" };
+			return { output: [{ type: "text", text }], isError: done.status !== "answered" };
 		},
 	});
 	return defineExtension({

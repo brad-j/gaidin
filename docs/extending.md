@@ -38,7 +38,7 @@ const weather = defineTool({
 	description: "Today's forecast for a city.",
 	parameters: Type.Object({ city: Type.String() }),
 	replay: "safe",
-	execute: async (args) => ({ content: [{ type: "text", text: await forecast(args.city) }] }),
+	execute: async (args) => ({ output: [{ type: "text", text: await forecast(args.city) }] }),
 });
 registry.install(defineExtension({ name: "weather", tools: [weather] }));
 ```

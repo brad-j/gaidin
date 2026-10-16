@@ -284,7 +284,7 @@ export function createSkills(localDir: string | undefined, owner = "the owner", 
 			if (skill === undefined) throw new Error(`No skill ${args.name}. Skills: ${skills.map((s) => s.name).join(", ")}`);
 			const text = readSkillFile(skill, args.file);
 			const others = skill.files.filter((f) => f !== (args.file ?? "SKILL.md"));
-			return { content: [{ type: "text", text: (args.file ?? "SKILL.md") === "SKILL.md" ? `${text}\n\n[files: ${others.join(", ")}]` : text }] };
+			return { output: [{ type: "text", text: (args.file ?? "SKILL.md") === "SKILL.md" ? `${text}\n\n[files: ${others.join(", ")}]` : text }] };
 		},
 	});
 
@@ -304,7 +304,7 @@ export function createSkills(localDir: string | undefined, owner = "the owner", 
 		execute: async (args) => {
 			const file = args.file ?? "SKILL.md";
 			const skill = await apply({ name: args.name, file, text: args.text }, "gaidin");
-			return { content: [{ type: "text", text: `Wrote ${args.name}/${file}. Its files: ${skill?.files.join(", ") ?? "none"}` }] };
+			return { output: [{ type: "text", text: `Wrote ${args.name}/${file}. Its files: ${skill?.files.join(", ") ?? "none"}` }] };
 		},
 	});
 
@@ -319,7 +319,7 @@ export function createSkills(localDir: string | undefined, owner = "the owner", 
 		execute: async (args) => {
 			const file = args.file ?? "SKILL.md";
 			await apply({ name: args.name, file }, "gaidin");
-			return { content: [{ type: "text", text: file === "SKILL.md" ? `Removed skill ${args.name}.` : `Removed ${file} from ${args.name}.` }] };
+			return { output: [{ type: "text", text: file === "SKILL.md" ? `Removed skill ${args.name}.` : `Removed ${file} from ${args.name}.` }] };
 		},
 	});
 

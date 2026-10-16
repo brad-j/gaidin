@@ -94,7 +94,7 @@ export function containerLogsTool(hostNames: string[], run: RunRemote, owner: st
 						return `${host}: couldn't list (${error instanceof Error ? error.message : error})`;
 					}
 				}));
-				return { content: [{ type: "text", text: sections.join("\n\n") }] };
+				return { output: [{ type: "text", text: sections.join("\n\n") }] };
 			}
 
 			if (!NAME.test(args.container)) throw new Error(`Not a container name: ${args.container}`);
@@ -116,7 +116,7 @@ export function containerLogsTool(hostNames: string[], run: RunRemote, owner: st
 				"---",
 				output || "(no log lines)",
 			].join("\n");
-			return { content: [{ type: "text", text }] };
+			return { output: [{ type: "text", text }] };
 		},
 	});
 }

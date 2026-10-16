@@ -8,9 +8,10 @@
 // This catches the values as they are. It doesn't stop a command from encoding or sending them, since
 // tools run as the server's user; the sandbox (sandbox.ts) is what keeps those values out of reach.
 import type { Context } from "@earendil-works/chord";
-import { defineExtension, hook, ToolTask } from "@earendil-works/pi-durable";
+import { defineExtension, hook, type ToolExecutionResult, ToolTask } from "@earendil-works/pi-durable";
 import type { ShellExecOptions, ShellOutputInfo } from "@earendil-works/pi-durable/env";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { attempt, isObject, string } from "./parse.ts";
 
 /** Environment variables that hold credentials. */
 export const SECRET_NAMES = ["ANTHROPIC_API_KEY", "NTFY_URL", "NTFY_TOKEN", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "TAVILY_API_KEY", "ALERTS_URL", "ALERTS_TOKEN"] as const;
@@ -144,6 +145,17 @@ export function redactingStream(redactor: Redactor, emit: (text: string, info: S
 	};
 }
 
+type Json = Exclude<ToolExecutionResult["structuredOutput"], undefined>;
+
+/** `value` with every string in it redacted. */
+function redactJson(value: Json, redactor: Redactor): Json {
+	const text = attempt(value, string);
+	if (text !== undefined) return redactor.redact(text);
+	if (Array.isArray(value)) return value.map((item) => redactJson(item, redactor));
+	if (isObject(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactJson(item, redactor)]));
+	return value;
+}
+
 /** Redacts every tool's final result before it's stored. */
 export function redactionExtension(redactor: Redactor) {
 	return defineExtension({
@@ -151,8 +163,10 @@ export function redactionExtension(redactor: Redactor) {
 		hooks: [
 			hook(ToolTask, {
 				afterTool: (_call, result) => {
-					if (redactor.longest === 0 || result.content === undefined) return undefined;
-					const redacted = { ...result, content: result.content.map((part) => (part.type === "text" ? { ...part, text: redactor.redact(part.text) } : part)) };
+					if (redactor.longest === 0 || result.output === undefined) return undefined;
+					const redacted = { ...result, output: result.output.map((part) => (part.type === "text" ? { ...part, text: redactor.redact(part.text) } : part)) };
+					// A schema tool's structuredOutput holds the same text for programs (bash's has its output and file path).
+					if (result.structuredOutput !== undefined) redacted.structuredOutput = redactJson(result.structuredOutput, redactor);
 					if (result.diagnostics !== undefined) redacted.diagnostics = result.diagnostics.map((d) => ({ ...d, message: redactor.redact(d.message) }));
 					return redacted;
 				},

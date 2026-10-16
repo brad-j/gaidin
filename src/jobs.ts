@@ -628,7 +628,7 @@ export function createJobs(options: {
 			const fields: Parameters<typeof addJob>[2] = { title: args.title, instruction: args.instruction, schedule: parsed, mode: args.mode ?? "report", agent };
 			if (args.gate !== undefined) fields.gate = args.gate;
 			const created = await api.commit((tx) => addJob(tx, api.conversationId, fields), context);
-			return { content: [{ type: "text", text: `Job ${created.taskId} "${created.title}" scheduled ${describeSchedule(created.schedule)}${created.mode === "watch" ? ", as a watch" : ""}. First run ${formatTime(created.nextAt!)}.` }] };
+			return { output: [{ type: "text", text: `Job ${created.taskId} "${created.title}" scheduled ${describeSchedule(created.schedule)}${created.mode === "watch" ? ", as a watch" : ""}. First run ${formatTime(created.nextAt!)}.` }] };
 		},
 	});
 
@@ -641,7 +641,7 @@ export function createJobs(options: {
 			const agent = await agentIdOf(api, api.conversationId, context);
 			const items = ((await api.snapshot(Jobs, context))?.items ?? []).filter((j) => jobOf(j, agent));
 			const text = items.length === 0 ? "No scheduled jobs." : items.map(describeJob).join("\n");
-			return { content: [{ type: "text", text }] };
+			return { output: [{ type: "text", text }] };
 		},
 	});
 
@@ -653,7 +653,7 @@ export function createJobs(options: {
 		execute: async (args, api, context) => {
 			const agent = await agentIdOf(api, api.conversationId, context);
 			const removed = await api.commit((tx) => removeJob(tx, args.id, agent), context);
-			return { content: [{ type: "text", text: removed ? `Cancelled job ${args.id}: ${removed.title}` : `No job ${args.id}.` }] };
+			return { output: [{ type: "text", text: removed ? `Cancelled job ${args.id}: ${removed.title}` : `No job ${args.id}.` }] };
 		},
 	});
 

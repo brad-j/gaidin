@@ -411,7 +411,7 @@ export function createSelf(options: {
 				const signal = signalOf(api, context);
 				const agent = await agentIdOf(api, api.conversationId, context);
 				const reply = await runner.call(described.name, args, (url) => fetchFor(url, described.name, agent, api, signal), signal, options.callTimeoutMs ?? 60_000);
-				return "result" in reply ? { content: [{ type: "text", text: reply.result }] } : { content: [{ type: "text", text: reply.error }], isError: true };
+				return "result" in reply ? { output: [{ type: "text", text: reply.result }] } : { output: [{ type: "text", text: reply.error }], isError: true };
 			},
 		});
 	}
@@ -428,7 +428,7 @@ export function createSelf(options: {
 		await run("git", ["-C", approved, "-c", "user.name=gaidin", "-c", "user.email=gaidin@localhost", "commit", "-q", "-m", message]);
 	}
 
-	const fail = (text: string) => ({ content: [{ type: "text" as const, text }], isError: true });
+	const fail = (text: string) => ({ output: [{ type: "text" as const, text }], isError: true });
 
 	/** Why `agent` can't change extension `name`: it's loaded and another agent's. */
 	async function ownedElsewhere(name: string, agent: string, api: ToolExecutionApi, context: Context): Promise<string | undefined> {
@@ -515,7 +515,7 @@ export function createSelf(options: {
 					if (agent !== DEFAULT_AGENT) roster.owners[args.name] ??= agent;
 					await hideTools(tx, roster, tools.map((t) => t.name), (a) => extensionOn(roster, args.name, a.id));
 				}, context);
-				return { content: [{ type: "text", text: `Loaded ${args.name}. ${names} can be used from the next step.` }] };
+				return { output: [{ type: "text", text: `Loaded ${args.name}. ${names} can be used from the next step.` }] };
 			} finally {
 				rmSync(stage, { recursive: true, force: true });
 			}
@@ -543,7 +543,7 @@ export function createSelf(options: {
 			runners.delete(args.name);
 			rmSync(join(approved, args.name), { recursive: true, force: true });
 			await commit(`remove ${args.name}`);
-			return { content: [{ type: "text", text: `Removed ${args.name}.` }] };
+			return { output: [{ type: "text", text: `Removed ${args.name}.` }] };
 		},
 	});
 

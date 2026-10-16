@@ -378,4 +378,10 @@ export async function serve(config: Config) {
 	}
 	process.once("SIGINT", shutdown);
 	process.once("SIGTERM", shutdown);
+	// A storage error closes the Harness for good; exit so systemd (Restart=on-failure) starts gaidin on a fresh one.
+	void harness.closed.then((end) => {
+		if (end.reason !== "failed") return;
+		console.error("gaidin's storage failed; exiting to restart:", end.error);
+		process.exit(1);
+	});
 }

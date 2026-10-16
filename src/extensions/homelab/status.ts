@@ -256,7 +256,7 @@ export function homelabStatusTool(config: HomelabConfig, owner: string, get: Fet
 		replay: "safe",
 		execute: async (args) => {
 			const text = report(await fetchFeeds(config, get), args.details === true);
-			return { content: [{ type: "text", text: config.dashboard === undefined ? text : `${text}\n\nDashboard: ${config.dashboard}` }] };
+			return { output: [{ type: "text", text: config.dashboard === undefined ? text : `${text}\n\nDashboard: ${config.dashboard}` }] };
 		},
 	});
 }

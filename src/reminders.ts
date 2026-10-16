@@ -130,7 +130,7 @@ export function createReminders(notify: Notify, owner = "the user") {
 			if (at < Date.now() - 60_000) throw new Error(`${formatTime(at)} is in the past.`);
 			const agent = await agentIdOf(api, api.conversationId, context);
 			const taskId = await api.commit((tx) => add(tx, api.conversationId, args.text, at, agent), context);
-			return { content: [{ type: "text", text: `Reminder ${taskId} set for ${formatTime(at)}: ${args.text}` }] };
+			return { output: [{ type: "text", text: `Reminder ${taskId} set for ${formatTime(at)}: ${args.text}` }] };
 		},
 	});
 
@@ -145,7 +145,7 @@ export function createReminders(notify: Notify, owner = "the user") {
 			const text = items.length === 0
 				? "No open reminders."
 				: items.sort((a, b) => a.at - b.at).map((r) => `${r.taskId}: ${formatTime(r.at)}: ${r.text}`).join("\n");
-			return { content: [{ type: "text", text }] };
+			return { output: [{ type: "text", text }] };
 		},
 	});
 
@@ -158,7 +158,7 @@ export function createReminders(notify: Notify, owner = "the user") {
 			const agent = await agentIdOf(api, api.conversationId, context);
 			const removed = await api.commit((tx) => removeReminder(tx, args.id, agent), context);
 			const text = removed ? `Cancelled ${args.id}: ${removed.text}` : `No open reminder ${args.id}.`;
-			return { content: [{ type: "text", text }] };
+			return { output: [{ type: "text", text }] };
 		},
 	});
 

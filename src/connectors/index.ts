@@ -166,7 +166,7 @@ export function render(connector: string, tool: string, result: CallResult, owne
 		...notes.map((n) => `Note: ${n}.`),
 		"---",
 	].join("\n");
-	return { content: [{ type: "text", text: `${head}\n${body}` }, ...parts], isError: result.isError };
+	return { output: [{ type: "text", text: `${head}\n${body}` }, ...parts], isError: result.isError };
 }
 
 /** Why `url` can't be a connector's, or nothing: HTTPS, or HTTP to loopback or a private address, and no user in it. */

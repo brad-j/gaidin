@@ -170,7 +170,7 @@ export function createMemory(owner: string) {
 			const agent = await agentIdOf(api, api.conversationId, context);
 			const shelf = shelfFor(args.shared === true, agent);
 			const note = await api.commit((tx) => addNote(tx, args.text, agent, shelf), context);
-			return { content: [{ type: "text", text: `Noted [${label(shelf, note.id)}]: ${note.text}` }] };
+			return { output: [{ type: "text", text: `Noted [${label(shelf, note.id)}]: ${note.text}` }] };
 		},
 	});
 
@@ -185,7 +185,7 @@ export function createMemory(owner: string) {
 			const { shared, id } = noteId(args.id, "id");
 			const shelf = shelfFor(shared, agent);
 			const note = await api.commit((tx) => updateNote(tx, id, args.text, agent, shelf), context);
-			return { content: [{ type: "text", text: note ? `Updated [${label(shelf, id)}]: ${note.text}` : `No note ${label(shelf, id)}.` }] };
+			return { output: [{ type: "text", text: note ? `Updated [${label(shelf, id)}]: ${note.text}` : `No note ${label(shelf, id)}.` }] };
 		},
 	});
 
@@ -199,7 +199,7 @@ export function createMemory(owner: string) {
 			const { shared, id } = noteId(args.id, "id");
 			const shelf = shelfFor(shared, agent);
 			const removed = await api.commit((tx) => forgetNote(tx, id, shelf), context);
-			return { content: [{ type: "text", text: removed ? `Forgot [${label(shelf, id)}]: ${removed.text}` : `No note ${label(shelf, id)}.` }] };
+			return { output: [{ type: "text", text: removed ? `Forgot [${label(shelf, id)}]: ${removed.text}` : `No note ${label(shelf, id)}.` }] };
 		},
 	});
 

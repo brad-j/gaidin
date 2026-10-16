@@ -249,7 +249,7 @@ export function createFetch(options: FetchOptions = {}, owner = "the user") {
 		replay: "safe",
 		execute: async (args) => {
 			const fetched = await fetchPublic(args.url, options);
-			return { content: [{ type: "text", text: render(fetched, args.maxChars ?? 20_000, owner) }], isError: fetched.status >= 400 };
+			return { output: [{ type: "text", text: render(fetched, args.maxChars ?? 20_000, owner) }], isError: fetched.status >= 400 };
 		},
 	});
 	// A host the owner hasn't allowed for good asks, offering to allow it, unless web_search returned the exact URL.

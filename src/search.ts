@@ -111,7 +111,7 @@ export function webSearchTool(backend: SearchBackend, owner: string) {
 				"---",
 				lines.length === 0 ? "(no results)" : lines.join("\n\n"),
 			].join("\n");
-			return { content: [{ type: "text", text }], details: { urls: results.map((r) => r.url) } };
+			return { output: [{ type: "text", text }], details: { urls: results.map((r) => r.url) } };
 		},
 	});
 }

@@ -243,13 +243,13 @@ export function createHistory(file: string, owner: string) {
 			const agent = await agentIdOf(api, api.conversationId, context);
 			await work;
 			const words = args.query.match(/[\p{L}\p{N}]+/gu) ?? [];
-			if (words.length === 0) return { content: [{ type: "text", text: "Give some words to search for." }], isError: true };
+			if (words.length === 0) return { output: [{ type: "text", text: "Give some words to search for." }], isError: true };
 			// SAFETY: rows of the tables createHistory makes, with the columns it gives them.
 			const rows = db
 				.prepare("SELECT m.*, snippet(search, 0, '«', '»', '…', 24) AS snippet FROM search JOIN messages m ON m.id = search.rowid WHERE search MATCH ? AND m.agent = ? ORDER BY m.id DESC LIMIT 10")
 				.all(words.map((w) => `"${w}"`).join(" "), agent) as (Row & { snippet: string })[];
 			const text = rows.length === 0 ? `Nothing in past conversations matches "${args.query}".` : rows.map((row) => line(row, row.snippet)).join("\n");
-			return { content: [{ type: "text", text }] };
+			return { output: [{ type: "text", text }] };
 		},
 	});
 
@@ -263,11 +263,11 @@ export function createHistory(file: string, owner: string) {
 			await work;
 			// SAFETY: rows of the tables createHistory makes, with the columns it gives them.
 			const before = db.prepare("SELECT * FROM messages WHERE conversation = (SELECT conversation FROM messages WHERE id = ?1 AND agent = ?2) AND id <= ?1 ORDER BY id DESC LIMIT 5").all(args.id, agent) as Row[];
-			if (before.length === 0) return { content: [{ type: "text", text: `There's no message #${args.id}.` }], isError: true };
+			if (before.length === 0) return { output: [{ type: "text", text: `There's no message #${args.id}.` }], isError: true };
 			// SAFETY: rows of the tables createHistory makes, with the columns it gives them.
 			const after = db.prepare("SELECT * FROM messages WHERE conversation = ? AND id > ? ORDER BY id LIMIT 4").all(before[0]!.conversation, args.id) as Row[];
 			const clip = (text: string) => (text.length > 2000 ? `${text.slice(0, 2000)}…` : text);
-			return { content: [{ type: "text", text: [...before.reverse(), ...after].map((row) => line(row, clip(row.text))).join("\n\n") }] };
+			return { output: [{ type: "text", text: [...before.reverse(), ...after].map((row) => line(row, clip(row.text))).join("\n\n") }] };
 		},
 	});
 

@@ -238,7 +238,7 @@ export function createBrowser(options: {
 				}
 				return describe(profile);
 			}, false);
-			return { content: [{ type: "text", text }] };
+			return { output: [{ type: "text", text }] };
 		},
 	});
 
@@ -250,7 +250,7 @@ export function createBrowser(options: {
 		parameters: Type.Object({ profile: profileParameter, ref: Type.Optional(Type.String({ description: "Such as e12" })) }),
 		execute: async (args, api, context) => {
 			const text = await withProfile(api, context, args.profile, (profile) => describe(profile, args.ref));
-			return { content: [{ type: "text", text }] };
+			return { output: [{ type: "text", text }] };
 		},
 	});
 
@@ -264,7 +264,7 @@ export function createBrowser(options: {
 				data: (await profile.page.screenshot({ type: "jpeg", quality: 70, timeout: 15_000 })).toString("base64"),
 			}));
 			const text = `Screenshot of ${url}, which shows a page from the web, not from ${owner}.`;
-			return { content: [{ type: "text", text }, { type: "image", data, mimeType: "image/jpeg" }] };
+			return { output: [{ type: "text", text }, { type: "image", data, mimeType: "image/jpeg" }] };
 		},
 	});
 
@@ -293,7 +293,7 @@ export function createBrowser(options: {
 				const lines = await Promise.all(profile.tabs().map(async (page, i) => `${i + 1}. ${JSON.stringify(await page.title())} ${page.url()}${page === profile.page ? " (current)" : ""}`));
 				return [`Tabs in profile ${profile.name}, whose titles are from the web:`, ...lines].join("\n");
 			});
-			return { content: [{ type: "text", text }] };
+			return { output: [{ type: "text", text }] };
 		},
 	});
 
@@ -301,7 +301,7 @@ export function createBrowser(options: {
 		name: "browser_click",
 		description: `Click an element of a browser profile's page by its ref, and return the page as it's left. Asks ${owner} unless you may act on that site without asking.`,
 		parameters: Type.Object({ profile: profileParameter, ref: refParameter }),
-		execute: async (args, api, context) => ({ content: [{ type: "text", text: await act(api, context, args, "click", (element) => element.click({ timeout: 10_000 })) }] }),
+		execute: async (args, api, context) => ({ output: [{ type: "text", text: await act(api, context, args, "click", (element) => element.click({ timeout: 10_000 })) }] }),
 	});
 
 	const type = defineTool({
@@ -316,7 +316,7 @@ export function createBrowser(options: {
 				await element.fill(args.text, { timeout: 10_000 });
 				if (args.submit === true) await element.press("Enter", { timeout: 10_000 });
 			});
-			return { content: [{ type: "text", text }] };
+			return { output: [{ type: "text", text }] };
 		},
 	});
 
@@ -328,7 +328,7 @@ export function createBrowser(options: {
 			const text = await act(api, context, args, "choose in", async (element) => {
 				await element.selectOption(args.values, { timeout: 10_000 });
 			});
-			return { content: [{ type: "text", text }] };
+			return { output: [{ type: "text", text }] };
 		},
 	});
 
@@ -342,7 +342,7 @@ export function createBrowser(options: {
 				await profile.settle();
 				return describe(profile);
 			});
-			return { content: [{ type: "text", text }] };
+			return { output: [{ type: "text", text }] };
 		},
 	});
 
@@ -357,7 +357,7 @@ export function createBrowser(options: {
 			const text = await act(api, context, args, "put files in", async (element) => {
 				await element.setInputFiles(files.map((f) => ({ ...f, mimeType: "application/octet-stream" })), { timeout: 10_000 });
 			});
-			return { content: [{ type: "text", text }] };
+			return { output: [{ type: "text", text }] };
 		},
 	});
 
@@ -380,10 +380,10 @@ export function createBrowser(options: {
 			if (done.status !== "approved") {
 				const why = done.status === "denied" ? `${owner} couldn't do it` : done.status === "expired" ? `${owner} didn't get to it in time`
 					: done.status === "superseded" ? `${owner} sent a new message instead` : "the run was stopped";
-				return { content: [{ type: "text", text: `Not taken over: ${why}.` }], isError: true };
+				return { output: [{ type: "text", text: `Not taken over: ${why}.` }], isError: true };
 			}
 			const text = await withProfile(api, context, args.profile, (profile) => describe(profile));
-			return { content: [{ type: "text", text: `${owner} is done with profile ${args.profile}.\n${text}` }] };
+			return { output: [{ type: "text", text: `${owner} is done with profile ${args.profile}.\n${text}` }] };
 		},
 	});
 

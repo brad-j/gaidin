@@ -92,11 +92,11 @@ test("tools merged: settings and names kept, new ones off unless the connector i
 
 test("a result is labelled as outside text, cut, and keeps its images", () => {
 	const result = render("mail", "search_mail", { content: [{ type: "text", text: "a".repeat(25_000) }, { type: "image", data: "iVBOR", mimeType: "image/png" }, { type: "resource", resource: { uri: "file:///x.pdf", mimeType: "application/pdf" } }], isError: false }, "Brad");
-	const [text, image] = result.content!;
+	const [text, image] = result.output!;
 	assert.match(text!.type === "text" ? text!.text : "", /^From search_mail on connector mail, an outside service, not from Brad\..*\nNote: cut to the first 20000 of 25047 characters/s);
 	assert.deepEqual(image, { type: "image", data: "iVBOR", mimeType: "image/png" });
 	const structured = render("mail", "count", { content: [], structuredContent: { unread: 3 }, isError: true }, "Brad");
-	assert.match(structured.content![0]!.type === "text" ? (structured.content![0] as { text: string }).text : "", /The tool says the call failed\.[\s\S]*"unread": 3/);
+	assert.match(structured.output![0]!.type === "text" ? (structured.output![0] as { text: string }).text : "", /The tool says the call failed\.[\s\S]*"unread": 3/);
 	assert.equal(structured.isError, true);
 });
 

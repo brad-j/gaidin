@@ -206,11 +206,11 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 		replay: "safe",
 		execute: async (args) => {
 			const result = answer((await remote!(find(args.workspace), "read", { path: args.path, offset: args.offset, limit: args.limit }, {})).output, readAnswer);
-			if (result.directory !== undefined) return { content: [{ type: "text", text: `${result.path}/\n${result.directory.join("\n")}` }] };
+			if (result.directory !== undefined) return { output: [{ type: "text", text: `${result.path}/\n${result.directory.join("\n")}` }] };
 			const { offset = 1, totalLines = 0, text: lines = "" } = result;
 			const last = Math.min(offset + (lines === "" ? 0 : lines.split("\n").length) - 1, totalLines);
 			const text = `${result.path} (lines ${offset}-${last} of ${totalLines})\n${lines}`;
-			return { content: [{ type: "text", text }] };
+			return { output: [{ type: "text", text }] };
 		},
 	});
 
@@ -220,7 +220,7 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 		parameters: Type.Object({ workspace: workspaceParam, path: pathParam, content: Type.String() }),
 		execute: async (args) => {
 			const result = answer((await remote!(find(args.workspace), "write", { path: args.path, content: args.content }, {})).output, object({ path: string, created: boolean, bytes: integer }));
-			return { content: [{ type: "text", text: `${result.created ? "Created" : "Replaced"} ${result.path} (${result.bytes} bytes)` }] };
+			return { output: [{ type: "text", text: `${result.created ? "Created" : "Replaced"} ${result.path} (${result.bytes} bytes)` }] };
 		},
 	});
 
@@ -234,7 +234,7 @@ export function createWorkspaces(options: { workspaces: Workspace[]; remote: Rem
 		}),
 		execute: async (args) => {
 			const result = answer((await remote!(find(args.workspace), "edit", { path: args.path, edits: args.edits }, {})).output, object({ path: string, edits: integer }));
-			return { content: [{ type: "text", text: `Edited ${result.path} (${result.edits} changes)` }] };
+			return { output: [{ type: "text", text: `Edited ${result.path} (${result.edits} changes)` }] };
 		},
 	});
 
