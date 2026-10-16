@@ -50,6 +50,9 @@ export const MAX_PASSED_FILES = 10;
 /** Starts a message or hand-off from another agent; approvals.ts treats it as outside text. */
 export const AGENT_MESSAGE = "[from another agent]";
 const ID = /^[a-z][a-z0-9-]{0,30}$/;
+/** The colors an agent can be shown in, by name; the app draws each, and gives an agent without one a color by its place in the roster. */
+export const AGENT_COLORS = ["ice", "blue", "violet", "orchid", "pink", "teal", "lime", "silver"] as const;
+export type AgentColor = (typeof AGENT_COLORS)[number];
 
 export type AgentEntry = {
 	/** Fixed once made: lowercase letters, digits and -. */
@@ -77,6 +80,8 @@ export type AgentEntry = {
 	extensions: string[];
 	/** Its picture's file in <data>/avatars (files.ts), named for its bytes, so a new one has a new name. */
 	avatar?: string;
+	/** The color the app shows it in. */
+	color?: AgentColor;
 	createdAt: number;
 	archived?: number;
 };
@@ -424,8 +429,8 @@ export function createAgents(options: {
 }
 
 /** What the owner can change about an agent. */
-/** `avatar: ""` takes the picture away. */
-export type AgentChange = Partial<Pick<AgentEntry, "name" | "job" | "channel" | "canMessage" | "workspaces" | "profiles" | "actHosts" | "connectors" | "hosts" | "extensions" | "avatar">>;
+/** `avatar: ""` takes the picture away, and `color: ""` the color. */
+export type AgentChange = Partial<Pick<AgentEntry, "name" | "job" | "channel" | "canMessage" | "workspaces" | "profiles" | "actHosts" | "connectors" | "hosts" | "extensions" | "avatar">> & { color?: AgentColor | "" };
 
 /** The roster as the server manages it: the default agent's entry, adding and changing agents, and their home conversations. */
 export function createRoster(options: {
@@ -503,6 +508,7 @@ export function createRoster(options: {
 			if (other === id) throw new Error("An agent can't message itself.");
 			if (!roster.agents.some((a) => a.id === other)) throw new Error(`There's no agent ${other}.`);
 		}
+		if (change.color !== undefined && change.color !== "" && !AGENT_COLORS.includes(change.color)) throw new Error(`An agent's color is one of ${AGENT_COLORS.join(", ")}.`);
 		const known = options.workspaces();
 		for (const workspace of change.workspaces ?? []) if (!known.includes(workspace)) throw new Error(`There's no workspace ${workspace}.`);
 		for (const profile of change.profiles ?? []) if (!profiles().includes(profile)) throw new Error(`There's no browser profile ${profile}.`);
@@ -566,6 +572,10 @@ export function createRoster(options: {
 			if (change.avatar !== undefined) {
 				if (change.avatar === "") delete agent.avatar;
 				else agent.avatar = change.avatar;
+			}
+			if (change.color !== undefined) {
+				if (change.color === "") delete agent.color;
+				else agent.color = change.color;
 			}
 			if (change.canMessage !== undefined) agent.canMessage = [...new Set(change.canMessage)];
 			if (change.hosts !== undefined) agent.hosts = [...new Set(change.hosts)];

@@ -289,6 +289,33 @@ test("an agent's picture is set from a file sent to /api/files, served from its 
 	assert.equal((await call("/api/agents/avatar?id=nobody")).status, 404);
 });
 
+test("an agent's color is one of the app's, set, kept with the roster, refused when it isn't one, and taken away", async (t) => {
+	const { call, post } = await start(t);
+	type Entry = { id: string; color?: string };
+	const save = async (body: Record<string, unknown>) => {
+		const response = await post("/api/agents/save", body);
+		return { status: response.status, entry: response.ok ? ((await response.json()) as Entry) : undefined, text: response.ok ? "" : await response.text() };
+	};
+	const listed = async (id: string) => ((await (await call("/api/agents")).json()) as Entry[]).find((a) => a.id === id);
+	await save({ id: "scout", name: "Scout", job: "" });
+	assert.equal((await listed("scout"))?.color, undefined);
+
+	assert.equal((await save({ id: "scout", color: "violet" })).entry?.color, "violet");
+	assert.equal((await listed("scout"))?.color, "violet");
+	// Changing another field keeps it.
+	await save({ id: "scout", job: "Finds things" });
+	assert.equal((await listed("scout"))?.color, "violet");
+
+	const odd = await save({ id: "scout", color: "#ff8800" });
+	assert.equal(odd.status, 400);
+	assert.match(odd.text, /"violet"/);
+	assert.equal((await listed("scout"))?.color, "violet");
+
+	assert.equal((await save({ id: "scout", color: "" })).entry?.color, undefined);
+	assert.equal((await listed("scout"))?.color, undefined);
+	assert.equal((await save({ id: "gaidin", color: "teal" })).entry?.color, "teal");
+});
+
 test("each agent's activity: its newest message, from any of its conversations, and whether it's running", async (t) => {
 	const { host, call, post } = await start(t);
 	await post("/api/agents/save", { id: "scout", name: "Scout", job: "" });

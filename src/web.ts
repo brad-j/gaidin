@@ -11,7 +11,7 @@ import { readFile, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { type AgentEvent, type Conversation, type ConversationId, type Harness, type ModelRef, type SnapshotEvent, type ToolRegistration, type Tx, type UsageState, watchEvents } from "@earendil-works/pi-durable";
-import { type AgentEntry, agentIdOf, DEFAULT_AGENT, type RosterService } from "./agents.ts";
+import { AGENT_COLORS, type AgentColor, type AgentEntry, agentIdOf, DEFAULT_AGENT, type RosterService } from "./agents.ts";
 import { BrowserState } from "./browser/index.ts";
 import type { LiveEvent, TakeOver } from "./browser/takeover.ts";
 import { CALLBACK_PATH, CLIENT_PATH, type Connector, type ConnectorService, offered, review, tokensOf, type ToolSetting } from "./connectors/index.ts";
@@ -70,7 +70,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 12;
+export const PROTOCOL = 13;
 
 /** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
 export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
@@ -104,6 +104,8 @@ const agentSave = object({
 	extensions: optional(array(string)),
 	/** A file sent to /api/files, to be its picture, or "" to take its picture away. */
 	avatar: optional(string),
+	/** The color the app shows it in, or "" to go back to the one its place in the roster gives it. */
+	color: optional(literal<AgentColor | "">("", ...AGENT_COLORS)),
 });
 const agentArchive = object({ id: string, archived: boolean });
 const profileBody = object({ profile: string });
