@@ -119,7 +119,7 @@ Files go with a message: each is sent ahead of it to `/api/files`, up to 20 MB, 
 
 ### Installing it
 
-The app installs: on an iPhone or iPad, Share, then Add to Home Screen; in Chrome or Edge, Install from the address bar or menu. It opens in its own window, without the browser's bars, and keeps clear of the notch and the home bar. Its service worker (`/sw.js`, where the web view had it, so devices signed up then stay signed up) shows notifications, opens the conversation one came from when it's tapped, and, when the server can't be reached, such as from a phone off the tailnet, answers with a page that says so with a button to try again. It caches nothing, so what you see is always the server's.
+The app installs: on an iPhone or iPad, Share, then Add to Home Screen; in Chrome or Edge, Install from the address bar or menu. It opens in its own window, without the browser's bars, and keeps clear of the notch and the home bar. Its service worker (`/sw.js`, where the web view had it, so devices signed up then stay signed up) shows notifications, opens the conversation one came from when it's tapped, and, when the server can't be reached, such as from a phone off the tailnet, still opens and shows what it last had, saying gaidin can't be reached and since when; on a device that hasn't opened it before, it answers with a page that says so with a button to try again. Its icon shows how many requests are waiting on you, where the device shows badges (on an iPhone, once notifications are allowed).
 
 ## Notifications
 
