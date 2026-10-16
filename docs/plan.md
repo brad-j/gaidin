@@ -61,9 +61,70 @@
 Candidates:
 
 - Owner-written allow and ask-first rules (designed below). Several named agents, the app, the browser and connectors (designed below) are done; trying more connectors with real services is ongoing.
-- Release polish: a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
+- Release polish (designed below): a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
 
 Not planned: branching from any message in the web view, since each thread is already a conversation of its own; push-to-talk, since the owner dictates with superwhisper; and projects or image generation in the app.
+
+## Design: release
+
+For review before any code. Today gaidin runs for one person, set up by hand: a settings file written from the example, a VM prepared by `setup.sh` that clones a private repository with a deploy key, and the app built on the owner's machine and copied over. A release lets someone else do it from the documentation alone, in under an hour, on their own VM.
+
+### Proposed, to decide with the owner
+
+- **Publish both repositories**, gaidin and moiraine, on GitHub, under the MIT license as Pi Durable is. Neither is public or licensed now. History stays as it is; a check for secrets in it comes first (below).
+- **Two repositories still, with the app as a release asset.** Each gaidin release names the protocol it speaks; each moiraine release attaches its build (`dist/client`) as a tarball with its SHA-256, built for one protocol. The installer fetches the newest moiraine build for the installed gaidin's protocol and checks it. The VM still needs no build tools. The owner's own `pnpm ship` stays for deploying straight from a checkout.
+- **Upgrade Pi Durable first.** It's at 1.3.0 and gaidin is pinned at 1.1.0. A release shouldn't start two versions behind; the upgrade is its own commit, tested with a restart in the middle of a run, as [Deploying](deploy.md#upgrading-pi-durable) says.
+- **Versions:** gaidin and moiraine start at 0.1.0, tagged, with `gaidin --version`. Each release's notes are its items from the Done list above, which already reads as a changelog.
+- **Ubuntu 24.04 and Debian 12** are the installer's targets; other Linux runs from a checkout as now. Node comes from nodejs.org's official tarball for a pinned version, checked against its published SHA-256, and pnpm through Corepack.
+
+### `gaidin setup`
+
+An interactive command that writes the settings file, mode 600, one section at a time, each skippable and each checked as it's entered with what `gaidin doctor` already checks:
+
+1. The owner's name and time zone (the system's, offered).
+2. The model: the API key, checked by looking the model up; the default model; daily and monthly limits, with a note on the Console's own limit.
+3. The app: the Tailscale login and the tailnet name, read from `tailscale status`, giving `web.user` and `web.url`; `web.app` where the installer put the build.
+4. Notifications: an ntfy topic with a long random name it makes, or none (the app's Web Push needs nothing here).
+5. Slack (below).
+6. Search: a Tavily key, checked.
+
+Run again, it shows each section as it is (secrets shortened) and changes only what's chosen. It never prints a whole secret. It ends with `gaidin doctor`.
+
+### Slack from a configuration token
+
+Slack's Manifest API makes the app from `deploy/slack-manifest.yaml` with an app configuration token (made at api.slack.com/apps, valid 12 hours). It can't install the app or make the Socket Mode token, so setup does what it can and says exactly what's left:
+
+1. The owner pastes a configuration token; setup creates the app (`apps.manifest.create`), with the app's name the owner picks, and prints its settings page.
+2. The owner presses Install to Workspace there and pastes the bot token (`xoxb-`), which setup checks with `auth.test`.
+3. The owner generates an app-level token with `connections:write` and pastes it (`xapp-`), checked by opening a Socket Mode connection.
+4. The owner makes a channel, invites the app, and pastes the channel's ID and their own member ID; setup checks the bot can post there.
+
+The configuration token isn't kept. Without one, setup prints the manual steps from [Surfaces](surfaces.md#setting-up-slack) instead.
+
+### The installer
+
+`deploy/install.sh`, which `setup.sh` becomes: run as root on a fresh VM, after reading it (the documentation says to download and read it, not to pipe it into a shell).
+
+- It takes the repository to install from, the official one by default, cloned over HTTPS when it's public, so no deploy key; a private fork keeps the deploy key path that's there now.
+- It installs Node, pnpm, bubblewrap and its AppArmor profile, poppler, the `gaidin` user, unit and command, as `setup.sh` does now, and Chromium only when the settings name browser profiles.
+- It fetches the app's build for the installed protocol, checked, into `/var/lib/gaidin/moiraine`.
+- On a first install it runs `gaidin setup`, then starts the service; afterwards it's how you update, as now, keeping the settings.
+
+### Before publishing
+
+- **Nothing specific left in the code:** the repository URL in the installer, the manifest's "Tar Valon" comment, and the README's first lines; the homelab extension stays, optional and described as written for one deployment.
+- **No secrets in the history:** a scan of every commit of both repositories for keys and tokens, and for the owner's private identifiers (tailnet name, LAN addresses, Slack IDs), with whatever turns up removed or rewritten before the first push to a public remote. The owner decides on anything found.
+- **A getting-started path** in the README: try it locally with the faux model, then a VM with the installer and `gaidin setup`, then Slack, connectors and the browser as they're wanted.
+
+### Order of work
+
+1. Pi Durable 1.3.0, on a branch, with the restart test.
+2. `gaidin setup` without Slack, and `gaidin --version`.
+3. Slack from a configuration token.
+4. The installer, moiraine's release build and its check, and the getting-started docs, tried on a fresh VM.
+5. The history scan and the specific leftovers; then the owner publishes, or says to.
+
+Each step ends with `pnpm check` passing and is a commit of its own. Publishing is the owner's call and happens last.
 
 ## Design: rules
 
