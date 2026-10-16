@@ -137,6 +137,7 @@ const web = createWebServer({
 	profiles: host.profiles,
 	takeOver: host.takeOver,
 	connectors: host.connectors,
+	rules: host.rules,
 	uploads: host.uploads,
 	avatars: host.avatars,
 	threads: host.threads,

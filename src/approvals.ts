@@ -17,7 +17,7 @@ import { type ConversationId, defineDoc, defineEntry, defineExtension, defineToo
 import { AGENT_MESSAGE, agentAt, AgentOf, Agents, DEFAULT_AGENT, entryOf, hostsOf, rosterOf } from "./agents.ts";
 import type { Ask, Guard, Situation, Where } from "./guards.ts";
 import { GATE_FINDINGS } from "./jobs.ts";
-import { attempt, json, ParseError } from "./parse.ts";
+import { attempt, isObject, json, type Json, ParseError, scalar } from "./parse.ts";
 import { type Rule, rulesFor, rulesIn } from "./rules.ts";
 import { clip, whole } from "./guards.ts";
 import { searchedUrls } from "./search.ts";
@@ -47,6 +47,11 @@ export type ApprovalRequest = {
 	choices?: string[];
 	/** The owner's answer to a question. */
 	answer?: string;
+	/**
+	 * The call's arguments that are short text, numbers or true and false, for the app to make a rule from the request.
+	 * Longer ones, such as a file's content, are left out.
+	 */
+	ruleArgs?: Record<string, string>;
 	/** The wider grant the second button gives, when one is offered. `label` is the button, `done` the outcome. */
 	always?: { kind: "fetch-host" | "workspace-hour" | "act-host"; value: string; label: string; done: string };
 	createdAt: number;
@@ -191,7 +196,7 @@ export class ApprovalService {
 	}
 
 	/** Records a request under `id` unless it exists, and returns it as stored. */
-	async open(id: string, at: { conversationId: number; taskId: number }, tool: string, ask: Pick<ApprovalRequest, "summary" | "detail" | "always" | "kind" | "choices" | "profile">): Promise<ApprovalRequest> {
+	async open(id: string, at: { conversationId: number; taskId: number }, tool: string, ask: Pick<ApprovalRequest, "summary" | "detail" | "always" | "kind" | "choices" | "profile" | "ruleArgs">): Promise<ApprovalRequest> {
 		const now = Date.now();
 		const agent = (await this.#harness.snapshot(AgentOf, conversationId(at.conversationId), background))?.agent ?? DEFAULT_AGENT;
 		const { request, created } = await this.#commit((doc) => {
@@ -411,6 +416,15 @@ async function contextOf(api: HookApi, context: Context): Promise<readonly Messa
 	return (await read.call(api, api.conversationId, context)).messages;
 }
 
+/** The arguments of `args` a rule can match on: its top-level text, numbers and booleans, up to 200 characters. */
+export function shortArgs(args: Json): Record<string, string> {
+	if (!isObject(args)) return {};
+	return Object.fromEntries(Object.entries(args).flatMap(([key, value]) => {
+		const text = attempt(value, scalar);
+		return text !== undefined && text.length <= 200 ? [[key, text]] : [];
+	}));
+}
+
 /**
  * The hook. `service` is read lazily, because the Harness that the service needs is opened after the registry. `guards`
  * is read on every call, because self-written tools come and go.
@@ -490,7 +504,7 @@ export function approvalExtension(service: () => ApprovalService, owner: string,
 					if (ask === undefined) return undefined;
 					// The same id for every run of this call's phase, so a restart doesn't ask twice.
 					const id = await api.memo<string>("gaidin.approval", randomUUID(), context);
-					const request = await approvals.open(id, { conversationId: api.conversationId, taskId: api.taskId }, call.name, ask);
+					const request = await approvals.open(id, { conversationId: api.conversationId, taskId: api.taskId }, call.name, { ...ask, ruleArgs: shortArgs(args) });
 					const done = await approvals.wait(request, signalOf(api, context));
 					if (done.status === "approved") {
 						// The roster as it is now: an agent's grants can change while it waits.

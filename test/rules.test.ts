@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -11,6 +12,7 @@ import { configFor } from "../src/config.ts";
 import { assistantText, context, startHost } from "../src/host.ts";
 import { covers, describeRule, type Rule, rulesFor } from "../src/rules.ts";
 import { parseClientMessage } from "../src/server.ts";
+import { createWebServer } from "../src/web.ts";
 import { fakeMcp } from "./fake-mcp.ts";
 
 const rule = (fields: Partial<Rule>): Rule => ({ id: "r1", effect: "allow", tool: "home_*", createdAt: 0, ...fields });
@@ -166,4 +168,39 @@ test("the CLI's rule commands read right", () => {
 	const added = parseClientMessage('{"type":"rule","action":"add","rule":{"effect":"allow","tool":"home_*","when":[{"arg":"name","op":"one-of","value":["a","b"]}],"afterOutside":true}}');
 	assert.deepEqual(added, { type: "rule", action: "add", rule: { effect: "allow", tool: "home_*", when: [{ arg: "name", op: "one-of", value: ["a", "b"] }], afterOutside: true } });
 	assert.throws(() => parseClientMessage('{"type":"rule","action":"add","rule":{"effect":"maybe","tool":"x"}}'));
+});
+
+test("the app's routes list the rules beside the grants and the floor, add and remove rules, and a request carries its short arguments", async (t) => {
+	const { host, lan, asked } = await start(t);
+	const web = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: "brad@example.com", connectors: host.connectors, rules: host.rules, switchable: host.switchable, approvals: host.approvals });
+	await new Promise<void>((resolve) => web.listen(0, "127.0.0.1", resolve));
+	t.after(async () => {
+		web.closeAllConnections();
+		await new Promise((resolve) => web.close(resolve));
+	});
+	const base = `http://127.0.0.1:${(web.address() as AddressInfo).port}`;
+	const headers = { "Tailscale-User-Login": "brad@example.com" };
+	const post = (path: string, body: unknown) => fetch(base + path, { method: "POST", body: JSON.stringify(body), headers: { ...headers, "Content-Type": "application/json" } });
+	await host.approvals.setFetchHosts(["example.com"]);
+	await host.agents.update("lan", { hosts: ["news.example"], actHosts: { personal: ["shop.example"] } });
+	type Listed = { rules: { id: string }[]; grants: { kind: string; agent?: string; what: string }[]; floor: string[] };
+	let listed = (await (await fetch(`${base}/api/rules`, { headers })).json()) as Listed;
+	assert.deepEqual(listed.rules, []);
+	assert.deepEqual(listed.grants, [
+		{ kind: "host", agent: "gaidin", what: "example.com" },
+		{ kind: "host", agent: "lan", what: "news.example" },
+		{ kind: "act-host", agent: "lan", what: "shop.example in personal" },
+		{ kind: "connector-tool", what: "home: homeassistant__GetLiveContext" },
+	]);
+	assert.ok(listed.floor.includes("schedule_job"));
+
+	assert.equal((await post("/api/rules/add", { effect: "allow", tool: "schedule_job" })).status, 400);
+	const made = (await (await post("/api/rules/add", { effect: "ask", agent: "lan", tool: "remind", note: "mine" })).json()) as { id: string };
+	listed = (await (await fetch(`${base}/api/rules`, { headers })).json()) as Listed;
+	assert.deepEqual(listed.rules.map((r) => r.id), [made.id]);
+
+	await say(lan, CALL("remind", { text: "stretch", inMinutes: 5 }));
+	assert.deepEqual(asked.at(-1)!.ruleArgs, { text: "stretch", inMinutes: "5" });
+	assert.equal((await post("/api/rules/remove", { id: made.id })).status, 200);
+	assert.equal((await post("/api/rules/remove", { id: made.id })).status, 400);
 });

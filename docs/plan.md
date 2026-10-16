@@ -54,6 +54,7 @@
 40. Connectors' OAuth: `gaidin connector connect` finds a server's sign-in from its metadata (RFC 9728 and 8414), checked to the connector's host or public https, and sends the owner's browser there with PKCE and the resource parameter; the callback takes only a state gaidin made and the issuer it expects. gaidin's client id is a document it serves at `<web.url>/api/connectors/client.json`, or a public copy named in `connectors.clientId`, else Dynamic Client Registration, else one the owner gives. Grants are refreshed before they expire and once after a refusal ([Tools](tools.md#connectors)).
 41. The app's Connectors page: each connector's state, its tools set to allow, ask or off with their cost, new and changed tools marked, signing in in the same tab and back, tokens, refresh and remove; agents given connectors on their settings pages, and a notice and a sidebar count when one needs signing in again (protocol 10) ([Surfaces](surfaces.md#the-app)).
 42. Rules, step 1: the owner's allow and ask rules, per agent and tool or family, with argument conditions, an end, and "even after outside text" for allow rules; ask rules reach every tool and override every grant, allow rules skip a guard's question but never a refusal or the floor (loading tools, skills, new jobs, browser uploads). The rule that let a call through is in the timeline. `gaidin rule` manages them ([Security](security.md#your-rules)).
+43. Rules, step 2: the app's Rules page lists the rules with remove, the grants that also let calls through (hosts, sites acted on, connector tools set to allow, workspace hours) with where each is changed, and makes rules; an approval card's "make a rule" fills the form in from the request, a URL argument as its host (protocol 11) ([Surfaces](surfaces.md#the-app)).
 
 ## Next
 
@@ -66,7 +67,7 @@ Not planned: branching from any message in the web view, since each thread is al
 
 ## Design: rules
 
-Step 1 is done (item 42). Today what asks is fixed per tool by its guard (the table in [Security](security.md#approvals)), and the only ways to ask less are the grants built into a few tools: a host allowed for good, a site the browser acts on without asking, a workspace for an hour, and a connector tool set to allow. Rules let the owner say it directly, per agent and per tool, either way: "Lan may turn lights on and off without asking", or "always ask before Verin fetches anything from example.com", even where a grant or a tool's setting would let it through.
+Steps 1 and 2 are done (items 42 and 43). Today what asks is fixed per tool by its guard (the table in [Security](security.md#approvals)), and the only ways to ask less are the grants built into a few tools: a host allowed for good, a site the browser acts on without asking, a workspace for an hour, and a connector tool set to allow. Rules let the owner say it directly, per agent and per tool, either way: "Lan may turn lights on and off without asking", or "always ask before Verin fetches anything from example.com", even where a grant or a tool's setting would let it through.
 
 ### What a rule is
 
@@ -103,7 +104,7 @@ Whichever rule decided a call is written into the conversation with the call, as
 ### Order of work
 
 1. Done: rules in a document, the decision in the approvals hook for every tool, guarded or not, the rule recorded with each call it decided, and `gaidin rule` (item 42). The timeline already says which rule allowed a call; a request an ask rule made names the rule in its summary. Tests with the faux provider: each precedence step, the floor, outside text with and without the tick, expiry, and an agent's rule not reaching another agent.
-2. The app's Rules page, with the grants beside the rules, and "make a rule" on approval cards, with e2e tests.
+2. Done: the app's Rules page, with the grants beside the rules, and "make a rule" on approval cards, with e2e tests (item 43). A request carries its short arguments (text, numbers and booleans up to 200 characters) for the form.
 3. The timeline and Slack name the rule that decided a call.
 
 Each step ends with `pnpm check` passing and is a commit of its own.

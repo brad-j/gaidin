@@ -14,7 +14,8 @@ import { type AgentEvent, type Conversation, type ConversationId, type Harness, 
 import { type AgentEntry, agentIdOf, DEFAULT_AGENT, type RosterService } from "./agents.ts";
 import { BrowserState } from "./browser/index.ts";
 import type { LiveEvent, TakeOver } from "./browser/takeover.ts";
-import { CALLBACK_PATH, CLIENT_PATH, type Connector, type ConnectorService, review, tokensOf, type ToolSetting } from "./connectors/index.ts";
+import { CALLBACK_PATH, CLIENT_PATH, type Connector, type ConnectorService, offered, review, tokensOf, type ToolSetting } from "./connectors/index.ts";
+import { FLOOR, newRule, type Rule, type RuleService } from "./rules.ts";
 import type { ApprovalRequest, ApprovalService, Decision } from "./approvals.ts";
 import type { BudgetGuard, BudgetStatus } from "./budget.ts";
 import { context } from "./host.ts";
@@ -69,7 +70,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 10;
+export const PROTOCOL = 11;
 
 /** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
 export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
@@ -107,6 +108,7 @@ const agentSave = object({
 const agentArchive = object({ id: string, archived: boolean });
 const profileBody = object({ profile: string });
 const connectorName = object({ name: string });
+const ruleId = object({ id: string });
 const connectorAdd = object({ name: string, url: string, token: optional(string) });
 const connectorConnect = object({ name: string, clientId: optional(string) });
 /** A token to use from now on, or none to take it away. */
@@ -179,6 +181,8 @@ export type Gets = {
 	"/api/browser": BrowserProfile[];
 	/** Each connector, its tools and how they're set; never a token. */
 	"/api/connectors": ListedConnector[];
+	/** The owner's rules in force, the grants beside them that also let calls through, and the tools no allow rule reaches. */
+	"/api/rules": { rules: Rule[]; grants: RuleGrant[]; floor: string[] };
 	/** `?agent=` for each of these: that agent's, the default agent's without it. */
 	"/api/settings": Settings;
 	"/api/reminders": Reminder[];
@@ -217,6 +221,13 @@ const listedConnector = (connector: Connector): ListedConnector => ({
 		return waiting === undefined ? tool : { ...tool, review: waiting };
 	}),
 });
+
+/**
+ * Something besides a rule that lets calls through without asking, where it's changed: a host an agent fetches from
+ * (settings), a site it acts on in a browser profile (settings), a connector tool set to allow (connectors), or a
+ * workspace allowed for an hour in one conversation.
+ */
+export type RuleGrant = { kind: "host" | "act-host" | "connector-tool" | "workspace-hour"; agent?: string; what: string; until?: number; conversation?: number };
 
 /** A browser profile as the app lists it. */
 export type BrowserProfile = { name: string; url?: string; agent?: string; at?: number; held: boolean };
@@ -282,6 +293,9 @@ export type Posts = {
 	"/api/connectors/tool": { body: BodyOf<typeof connectorTool>; answer: ListedConnector };
 	/** Removes a connector, its tokens and every agent's grant of it. */
 	"/api/connectors/remove": { body: BodyOf<typeof connectorName>; answer: Ok };
+	/** A new rule, checked as it's made. */
+	"/api/rules/add": { body: BodyOf<typeof newRule>; answer: Rule };
+	"/api/rules/remove": { body: BodyOf<typeof ruleId>; answer: Ok };
 };
 
 /** A POST route: how its body is read, and what it does with it. */
@@ -304,6 +318,8 @@ export function createWebServer(options: {
 	takeOver?: TakeOver;
 	/** The connectors, whose sign-ins come back to CALLBACK_PATH. */
 	connectors?: ConnectorService;
+	/** The owner's rules. */
+	rules?: RuleService;
 	threads: Threads;
 	user: string;
 	/** The directory of moiraine's build, the app, served at /. */
@@ -559,6 +575,24 @@ export function createWebServer(options: {
 		"/api/workspaces": async () => ({ names: [...(options.workspaces?.() ?? [])] }),
 		"/api/profiles": async () => ({ names: [...(options.profiles?.() ?? [])] }),
 		"/api/connectors": async () => (options.connectors?.list() ?? []).map(listedConnector),
+		"/api/rules": async () => {
+			const { fetchHosts, grants = [] } = await approvals.state();
+			const now = Date.now();
+			const listed: RuleGrant[] = [];
+			for (const agent of await agents.list()) {
+				for (const host of agent.id === DEFAULT_AGENT ? fetchHosts : agent.hosts) listed.push({ kind: "host", agent: agent.id, what: host });
+				for (const [profile, hosts] of Object.entries(agent.actHosts ?? {})) for (const host of hosts) listed.push({ kind: "act-host", agent: agent.id, what: `${host} in ${profile}` });
+			}
+			for (const connector of options.connectors?.list() ?? []) {
+				for (const tool of connector.tools) if (offered(tool) && tool.setting === "allow") listed.push({ kind: "connector-tool", what: `${connector.name}: ${tool.name}` });
+			}
+			for (const grant of grants) {
+				if (grant.until <= now) continue;
+				const agent = await agentIdOf(harness, grant.conversationId, context);
+				listed.push({ kind: "workspace-hour", agent, what: grant.workspace, until: grant.until, conversation: grant.conversationId });
+			}
+			return { rules: (await options.rules?.list()) ?? [], grants: listed, floor: FLOOR };
+		},
 		"/api/browser": async () => {
 			const state = (await harness.snapshot(BrowserState, context))?.profiles ?? {};
 			return (options.profiles?.() ?? []).map((name): BrowserProfile => ({ name, ...state[name], held: options.takeOver?.held(name) === true }));
@@ -806,6 +840,29 @@ export function createWebServer(options: {
 				await found.takeOver.release(found.profile, "you're done");
 				for (const request of await approvals.pending()) {
 					if (request.kind === "handover" && request.profile === found.profile) await approvals.decide(request.id, "once", "web");
+				}
+				return { ok: true };
+			},
+		},
+		"/api/rules/add": {
+			body: newRule,
+			handle: async (rule) => {
+				if (options.rules === undefined) throw new HttpError(404, "There are no rules here.");
+				try {
+					return await options.rules.add(rule);
+				} catch (error) {
+					throw new HttpError(400, error instanceof Error ? error.message : String(error));
+				}
+			},
+		},
+		"/api/rules/remove": {
+			body: ruleId,
+			handle: async ({ id }) => {
+				if (options.rules === undefined) throw new HttpError(404, "There are no rules here.");
+				try {
+					await options.rules.remove(id);
+				} catch (error) {
+					throw new HttpError(400, error instanceof Error ? error.message : String(error));
 				}
 				return { ok: true };
 			},
