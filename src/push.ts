@@ -218,6 +218,8 @@ export function pushAdapter(push: Pick<Push, "send">): Adapter {
 				return { title: notice.report.title, body: notice.report.text, tag: `job-${notice.report.taskId}`, url: conversation(notice.report.agent, notice.report.conversationId) };
 			case "budget":
 				return { title: "gaidin: budget", body: notice.text, tag: "budget", url: "/activity" };
+			case "connector":
+				return { title: `gaidin: ${notice.name} needs signing in`, body: notice.problem, tag: `connector-${notice.name}`, url: "/connectors" };
 			case "request": {
 				const { request } = notice;
 				if (request.status !== "pending") return undefined;

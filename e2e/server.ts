@@ -11,6 +11,7 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { configFor } from "../src/config.ts";
 import { BrowserState } from "../src/browser/index.ts";
+import { fakeMcp } from "../test/fake-mcp.ts";
 import { blockedRanges } from "../src/fetch.ts";
 import { context, startHost } from "../src/host.ts";
 import { createWebServer } from "../src/web.ts";
@@ -95,7 +96,24 @@ const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
 faux.setResponses(Array.from({ length: 500 }, () => step));
 const models = createModels();
 models.setProvider(faux.provider);
+// The app's port, found ahead, so a connector's sign-in can come back to it.
+const probe = createServer();
+await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+const webPort = (probe.address() as AddressInfo).port;
+await new Promise((resolve) => probe.close(resolve));
+// A connector like Home Assistant's: an MCP server with OAuth on its own host, its tools a read-only search and a send.
+const cleanups: (() => unknown)[] = [];
+const mcp = await fakeMcp({ after: (cleanup) => cleanups.push(cleanup) }, {
+	era: "legacy",
+	oauth: {},
+	tools: () => [
+		{ name: "GetLiveContext", description: "The state of the house", inputSchema: { type: "object", properties: {} }, annotations: { readOnlyHint: true } },
+		{ name: "HassTurnOn", description: "Turns on a device", inputSchema: { type: "object", properties: { name: { type: "string" } } } },
+	],
+});
+
 const host = await startHost({
+	connectorAppUrl: `http://127.0.0.1:${webPort}`,
 	// A browser profile to give agents; Chromium only starts when a tool uses it, which these tests don't.
 	config: configFor({ owner: "Brad", browser: { profiles: ["personal"] } }, {}),
 	dataDir: dir,
@@ -105,6 +123,8 @@ const host = await startHost({
 	fetch: { blocked: blockedRanges({ allowLoopback: true }), resolve: async () => [{ address: "127.0.0.1", family: 4 }] },
 	chromium: { args: ["--host-resolver-rules=MAP *.test 127.0.0.1"] },
 });
+// The connector, added and waiting for its first sign-in.
+await host.connectors.add({ name: "home", url: mcp.url });
 // Taking profile personal over opens it at site.test's form, as if an agent had left it there.
 await host.root.commit(async (tx) => {
 	(await tx.doc(BrowserState)).profiles.personal = { url: `http://site.test:${sitePort}/form`, agent: "gaidin", at: Date.now() };
@@ -116,6 +136,7 @@ const web = createWebServer({
 	workspaces: host.workspaces,
 	profiles: host.profiles,
 	takeOver: host.takeOver,
+	connectors: host.connectors,
 	uploads: host.uploads,
 	avatars: host.avatars,
 	threads: host.threads,
@@ -130,13 +151,14 @@ const web = createWebServer({
 	stop: host.stop,
 	snooze: host.reminders.snooze,
 });
-await new Promise<void>((resolve) => web.listen(0, "127.0.0.1", resolve));
+await new Promise<void>((resolve) => web.listen(webPort, "127.0.0.1", resolve));
 console.log(`port ${(web.address() as AddressInfo).port}`);
 
 async function stop() {
 	web.closeAllConnections();
 	web.close();
 	site.close();
+	for (const cleanup of cleanups) await cleanup();
 	await host.close();
 	rmSync(dir, { recursive: true, force: true });
 	process.exit(0);

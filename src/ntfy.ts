@@ -59,6 +59,9 @@ export function ntfyAdapter(ntfy: { url: string; token?: string; icon?: string }
 				case "budget":
 					await report({ title: "budget", text: notice.text });
 					return true;
+				case "connector":
+					await report({ title: `connector ${notice.name}`, text: `It needs signing in again: ${notice.problem}` });
+					return true;
 				case "request":
 					return false;
 			}

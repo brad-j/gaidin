@@ -14,6 +14,7 @@ import { configFor, loadConfig } from "../src/config.ts";
 import { createOAuth } from "../src/connectors/oauth.ts";
 import { createWebServer } from "../src/web.ts";
 import { assistantText, context, startHost } from "../src/host.ts";
+import type { Notice } from "../src/notifications.ts";
 import { parseClientMessage } from "../src/server.ts";
 import { fakeMcp, type FakeTool } from "./fake-mcp.ts";
 
@@ -236,10 +237,11 @@ test("the CLI's connector commands read right", () => {
 async function signingHost(t: TestContext) {
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
-	const host = await startHost({ config: configFor({ owner: "Brad", web: { user: "brad@example.com", port: 0, url: "https://gaidin.example.ts.net" } }), dataDir: dir, sandbox: "none", ...scripted(), adapters: { push: { send: async () => true } } });
+	const notices: Notice[] = [];
+	const host = await startHost({ config: configFor({ owner: "Brad", web: { user: "brad@example.com", port: 0, url: "https://gaidin.example.ts.net" } }), dataDir: dir, sandbox: "none", ...scripted(), adapters: { push: { send: async (notice) => (notices.push(notice), true) } } });
 	t.after(() => host.close());
 	await host.agents.add({ id: "scout", name: "Scout", job: "" });
-	return { host, dir };
+	return { host, dir, notices };
 }
 
 /** What the owner's browser does with the address gaidin gives: signs in, and is sent back with the code. */
@@ -253,9 +255,11 @@ async function signIn(address: string): Promise<URLSearchParams> {
 
 test("a server like Home Assistant's: signed in with OAuth and gaidin's own URL as its client id, refreshed when the token expires, and needing the owner when refresh is refused", async (t) => {
 	const server = await fakeMcp(t, { era: "modern", tools: () => [SEARCH], oauth: {}, call: (_name, _args, headers) => ({ content: [{ type: "text", text: `called with ${String(headers.authorization)}` }] }) });
-	const { host, dir } = await signingHost(t);
+	const { host, dir, notices } = await signingHost(t);
 	const added = await host.connectors.add({ name: "home", url: server.url });
 	assert.equal(added.state, "needs-owner");
+	// Brad is there for the first sign-in; nothing is sent about it.
+	assert.equal(notices.filter((n) => n.kind === "connector").length, 0);
 
 	const address = new URL(await host.connectors.connect("home"));
 	assert.equal(`${address.origin}${address.pathname}`, `${new URL(server.url).origin}/auth/authorize`);
@@ -281,6 +285,10 @@ test("a server like Home Assistant's: signed in with OAuth and gaidin's own URL 
 	server.revoke();
 	assert.match(await say(scout, CALL("home_search_mail", { q: "x" })), /The home connector needs Brad|has to sign it in again/);
 	assert.equal(host.connectors.list()[0]!.state, "needs-owner");
+	await say(scout, CALL("home_search_mail", { q: "x" }));
+	await new Promise((resolve) => setTimeout(resolve, 100));
+	// Told once, not for each call that fails.
+	assert.deepEqual(notices.filter((n) => n.kind === "connector").map((n) => n.kind === "connector" && n.name), ["home"]);
 	assert.equal((await host.connectors.callback(await signIn(await host.connectors.connect("home")))).state, "connected");
 });
 
@@ -336,7 +344,7 @@ test("discovery holds a server to its own host or public https, its issuer to th
 	await assert.rejects(oauth.discover(server), /for another resource/);
 });
 
-test("the callback route answers in plain text, and gaidin serves its client id document", async (t) => {
+test("the app's routes add, sign in, set and remove a connector, the callback goes back to its page, and gaidin serves its client id document", async (t) => {
 	const server = await fakeMcp(t, { era: "modern", tools: () => [SEARCH, SEND], oauth: {} });
 	const { host } = await signingHost(t);
 	const web = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: "brad@example.com", connectors: host.connectors, switchable: host.switchable, approvals: host.approvals });
@@ -356,13 +364,29 @@ test("the callback route answers in plain text, and gaidin serves its client id 
 		token_endpoint_auth_method: "none",
 		application_type: "web",
 	});
-	await host.connectors.add({ name: "home", url: server.url });
-	const back = await signIn(await host.connectors.connect("home"));
-	const done = await fetch(`${base}/api/connectors/callback?${back}`, { headers });
-	assert.equal(await done.text(), "home is signed in, with 2 tools. You can close this page.");
+	const post = async (path: string, body: unknown) => fetch(base + path, { method: "POST", body: JSON.stringify(body), headers: { ...headers, "Content-Type": "application/json" } });
+	assert.equal((await post("/api/connectors/add", { name: "Home", url: server.url })).status, 400);
+	const added = (await (await post("/api/connectors/add", { name: "home", url: server.url })).json()) as { state: string };
+	assert.equal(added.state, "needs-owner");
+	const { url } = (await (await post("/api/connectors/connect", { name: "home" })).json()) as { url: string };
+	const back = await signIn(url);
+	const done = await fetch(`${base}/api/connectors/callback?${back}`, { headers, redirect: "manual" });
+	assert.equal(done.status, 303);
+	assert.equal(done.headers.get("location"), "/connectors?signed_in=home");
+	type Listed = { name: string; state: string; tokens: number; tools: { name: string; setting: string; review?: string }[] };
+	const [listed] = (await (await fetch(`${base}/api/connectors`, { headers })).json()) as Listed[];
+	assert.deepEqual([listed!.state, listed!.tools.map((t) => [t.name, t.setting, t.review])], ["connected", [["search_mail", "allow", undefined], ["send_mail", "ask", undefined]]]);
+	assert.ok(listed!.tokens > 0);
+	assert.doesNotMatch(JSON.stringify(listed), /access-|refresh-/);
+	const set = (await (await post("/api/connectors/tool", { name: "home", tool: "send_mail", setting: "off" })).json()) as Listed;
+	assert.equal(set.tools[1]!.setting, "off");
+	assert.equal((await post("/api/agents/save", { id: "scout", connectors: ["home"] })).status, 200);
+	assert.equal((await post("/api/agents/save", { id: "scout", connectors: ["nope"] })).status, 400);
 	const again = await fetch(`${base}/api/connectors/callback?${back}`, { headers });
 	assert.equal(again.status, 400);
 	assert.match(await again.text(), /^Signing in didn't finish: /);
+	assert.equal((await post("/api/connectors/remove", { name: "home" })).status, 200);
+	assert.deepEqual(await (await fetch(`${base}/api/connectors`, { headers })).json(), []);
 });
 
 test("connectors.clientId is an https URL with a path", () => {

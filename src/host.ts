@@ -130,6 +130,8 @@ export type HostOptions = {
 	pushFetch?: typeof fetch;
 	/** Replaces how connectors reach their servers; tests use it. */
 	connectorFetch?: typeof fetch;
+	/** Replaces web.url as where connectors' sign-ins come back to; the e2e server, which has no web.url, uses it. */
+	connectorAppUrl?: string;
 	/** Chromium's arguments, and how long profiles stay open and how many may be; tests use it. */
 	chromium?: Pick<ChromiumOptions, "args" | "idleMs" | "maxOpen">;
 };
@@ -207,7 +209,7 @@ export async function openHost(options: HostOptions = {}) {
 	const browser = config.browser === undefined ? undefined : createBrowser({ profiles: config.browser.profiles, dir: resolve(dir, "browser"), dataDir: dir, owner, fetch: options.fetch, chromium: options.chromium, approvals: () => approvals!, read: () => harness });
 	if (browser !== undefined) registry.install(browser.extension);
 	// Their extensions are installed once the Harness is open and their document can be read.
-	const connectors = createConnectors({ dir: resolve(dir, "connectors"), owner, registry, redactor: growing, root: () => root, roster: () => roster, fetch: options.connectorFetch, resolve: options.fetch?.resolve, appUrl: config.web?.url, clientId: config.connectors?.clientId });
+	const connectors = createConnectors({ dir: resolve(dir, "connectors"), owner, registry, redactor: growing, root: () => root, roster: () => roster, fetch: options.connectorFetch, resolve: options.fetch?.resolve, appUrl: options.connectorAppUrl ?? config.web?.url, clientId: config.connectors?.clientId, tell: (notice) => tell(notice) });
 	// Self-written tools only ever run in a box, so without bubblewrap there are none.
 	const self = bwrap === undefined ? undefined : createSelf({ dataDir: dir, sandbox, bwrap, hide, registry, approvals: () => approvals!, owner, fetch: options.fetch });
 	if (self !== undefined) {

@@ -14,7 +14,7 @@ import { type AgentEvent, type Conversation, type ConversationId, type Harness, 
 import { type AgentEntry, agentIdOf, DEFAULT_AGENT, type RosterService } from "./agents.ts";
 import { BrowserState } from "./browser/index.ts";
 import type { LiveEvent, TakeOver } from "./browser/takeover.ts";
-import { CALLBACK_PATH, CLIENT_PATH, type ConnectorService } from "./connectors/index.ts";
+import { CALLBACK_PATH, CLIENT_PATH, type Connector, type ConnectorService, review, tokensOf, type ToolSetting } from "./connectors/index.ts";
 import type { ApprovalRequest, ApprovalService, Decision } from "./approvals.ts";
 import type { BudgetGuard, BudgetStatus } from "./budget.ts";
 import { context } from "./host.ts";
@@ -69,7 +69,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 9;
+export const PROTOCOL = 10;
 
 /** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
 export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
@@ -96,6 +96,7 @@ const agentSave = object({
 	canMessage: optional(array(string)),
 	workspaces: optional(array(string)),
 	profiles: optional(array(string)),
+	connectors: optional(array(string)),
 	/** By profile, the hosts it acts on without asking: each profile's whole list, the profiles not named left as they are. */
 	actHosts: optional(array(object({ profile: string, hosts: array(string) }))),
 	hosts: optional(array(string)),
@@ -105,6 +106,12 @@ const agentSave = object({
 });
 const agentArchive = object({ id: string, archived: boolean });
 const profileBody = object({ profile: string });
+const connectorName = object({ name: string });
+const connectorAdd = object({ name: string, url: string, token: optional(string) });
+const connectorConnect = object({ name: string, clientId: optional(string) });
+/** A token to use from now on, or none to take it away. */
+const connectorToken = object({ name: string, token: optional(string) });
+const connectorTool = object({ name: string, tool: string, setting: literal<ToolSetting>("allow", "ask", "off") });
 const liveInput = object({
 	type: literal("click", "down", "up", "move", "wheel", "key", "text"),
 	x: optional(number),
@@ -170,6 +177,8 @@ export type Gets = {
 	"/api/profiles": { names: string[] };
 	/** Each browser profile: the page it was last on and the agent there, and whether the owner has it taken over. */
 	"/api/browser": BrowserProfile[];
+	/** Each connector, its tools and how they're set; never a token. */
+	"/api/connectors": ListedConnector[];
 	/** `?agent=` for each of these: that agent's, the default agent's without it. */
 	"/api/settings": Settings;
 	"/api/reminders": Reminder[];
@@ -195,6 +204,20 @@ type Ok = { ok: boolean };
 
 export type { Uploaded };
 export type { LiveEvent };
+/**
+ * A connector as the app lists it: what's stored, with each tool's review (new or changed since the owner set it) and
+ * about how many tokens its offered tools add to each request.
+ */
+export type ListedConnector = Omit<Connector, "tools"> & { tokens: number; tools: (Connector["tools"][number] & { review?: "new" | "changed" })[] };
+const listedConnector = (connector: Connector): ListedConnector => ({
+	...connector,
+	tokens: tokensOf(connector),
+	tools: connector.tools.map((tool) => {
+		const waiting = review(tool);
+		return waiting === undefined ? tool : { ...tool, review: waiting };
+	}),
+});
+
 /** A browser profile as the app lists it. */
 export type BrowserProfile = { name: string; url?: string; agent?: string; at?: number; held: boolean };
 /**
@@ -249,6 +272,16 @@ export type Posts = {
 	"/api/browser/go": { body: BodyOf<typeof goBody>; answer: Ok };
 	/** The owner is done with a profile: the agents' calls on it go ahead, and any hand-over of it is done. */
 	"/api/browser/release": { body: BodyOf<typeof profileBody>; answer: Ok };
+	/** A new connector, connected and its tools read; kept even when connecting fails. */
+	"/api/connectors/add": { body: BodyOf<typeof connectorAdd>; answer: ListedConnector };
+	/** Starts signing a connector in: the address to send the browser to. It comes back to the Connectors page. */
+	"/api/connectors/connect": { body: BodyOf<typeof connectorConnect>; answer: { url: string } };
+	"/api/connectors/refresh": { body: BodyOf<typeof connectorName>; answer: ListedConnector };
+	"/api/connectors/token": { body: BodyOf<typeof connectorToken>; answer: ListedConnector };
+	/** Sets a tool to allow, ask or off, and accepts its definition as it is now. */
+	"/api/connectors/tool": { body: BodyOf<typeof connectorTool>; answer: ListedConnector };
+	/** Removes a connector, its tokens and every agent's grant of it. */
+	"/api/connectors/remove": { body: BodyOf<typeof connectorName>; answer: Ok };
 };
 
 /** A POST route: how its body is read, and what it does with it. */
@@ -470,18 +503,30 @@ export function createWebServer(options: {
 
 	/**
 	 * Where the owner's browser comes back to from signing a connector in. The state it carries is the one gaidin made, so
-	 * another site can't finish a sign-in it didn't start; the answer is a line of text.
+	 * another site can't finish a sign-in it didn't start. It goes on to the app's Connectors page, or says what failed.
 	 */
 	async function signedIn(url: URL, response: ServerResponse) {
 		if (options.connectors === undefined) throw new HttpError(404, "There are no connectors.");
 		try {
 			const connector = await options.connectors.callback(url.searchParams);
-			const tools = connector.tools.length;
-			reply(response, 200, connector.state === "connected" ? `${connector.name} is signed in, with ${tools} ${tools === 1 ? "tool" : "tools"}. You can close this page.` : `${connector.name} signed in, but connecting failed: ${connector.problem ?? connector.state}.`, "text/plain; charset=utf-8");
+			// Back to the app's page, which says how it went.
+			response.writeHead(303, { ...SECURITY_HEADERS, Location: `/connectors?signed_in=${encodeURIComponent(connector.name)}`, "Cache-Control": "no-store" });
+			response.end();
 		} catch (error) {
 			reply(response, 400, `Signing in didn't finish: ${error instanceof Error ? error.message : String(error)}`, "text/plain; charset=utf-8");
 		}
 	}
+
+	/** Runs `work` with the connectors; what it refuses, such as a bad URL or an unknown connector, is a 400. */
+	async function owned<T>(work: (connectors: ConnectorService) => Promise<T>): Promise<T> {
+		if (options.connectors === undefined) throw new HttpError(404, "There are no connectors.");
+		try {
+			return await work(options.connectors);
+		} catch (error) {
+			throw error instanceof HttpError ? error : new HttpError(400, error instanceof Error ? error.message : String(error));
+		}
+	}
+	const asConnector = (work: (connectors: ConnectorService) => Promise<Connector>) => owned(async (c) => listedConnector(await work(c)));
 
 	/** A conversation's events: `?conversation=`, or the home of `?agent=`. */
 	async function events(url: URL, response: ServerResponse) {
@@ -513,6 +558,7 @@ export function createWebServer(options: {
 		"/api/agents": async () => Promise.all((await agents.list()).map(shown)),
 		"/api/workspaces": async () => ({ names: [...(options.workspaces?.() ?? [])] }),
 		"/api/profiles": async () => ({ names: [...(options.profiles?.() ?? [])] }),
+		"/api/connectors": async () => (options.connectors?.list() ?? []).map(listedConnector),
 		"/api/browser": async () => {
 			const state = (await harness.snapshot(BrowserState, context))?.profiles ?? {};
 			return (options.profiles?.() ?? []).map((name): BrowserProfile => ({ name, ...state[name], held: options.takeOver?.held(name) === true }));
@@ -764,6 +810,19 @@ export function createWebServer(options: {
 				return { ok: true };
 			},
 		},
+		"/api/connectors/add": { body: connectorAdd, handle: (body) => asConnector(async (c) => c.add(body)) },
+		"/api/connectors/connect": { body: connectorConnect, handle: ({ name, clientId }) => owned(async (c) => ({ url: await c.connect(name, clientId) })) },
+		"/api/connectors/refresh": { body: connectorName, handle: ({ name }) => asConnector((c) => c.refresh(name)) },
+		"/api/connectors/token": { body: connectorToken, handle: ({ name, token }) => asConnector((c) => c.setToken(name, token)) },
+		"/api/connectors/tool": {
+			body: connectorTool,
+			handle: ({ name, tool, setting }) =>
+				asConnector(async (c) => {
+					await c.setTool(name, tool, setting);
+					return c.list().find((found) => found.name === name)!;
+				}),
+		},
+		"/api/connectors/remove": { body: connectorName, handle: ({ name }) => owned(async (c) => (await c.remove(name), { ok: true })) },
 		"/api/settings": {
 			body: settingsChange,
 			handle: async (change) => {

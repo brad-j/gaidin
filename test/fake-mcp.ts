@@ -4,12 +4,12 @@
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { TestContext } from "node:test";
 
 export type FakeTool = { name: string; description?: string; inputSchema: Record<string, unknown>; annotations?: Record<string, boolean> };
 export type Seen = { method: string; headers: IncomingMessage["headers"]; body: any };
 
-export async function fakeMcp(t: TestContext, options: {
+/** `t`: what runs cleanup at the end, a test's context or the e2e server's own. */
+export async function fakeMcp(t: { after: (cleanup: () => unknown) => void }, options: {
 	era: "modern" | "legacy";
 	tools: () => FakeTool[];
 	call?: (name: string, args: any, headers: IncomingMessage["headers"]) => any;

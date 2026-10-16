@@ -25,6 +25,7 @@ import type { GrowingRedactor } from "../redact.ts";
 import { AuthRequired, type CallResult, type McpClient, mcpClient, type McpTool } from "./client.ts";
 import { createOAuth, type Grant } from "./oauth.ts";
 import { createVault } from "./vault.ts";
+import type { Notice } from "../notifications.ts";
 
 /** How a tool's calls go: without asking, asking each time, or not offered. */
 export type ToolSetting = "allow" | "ask" | "off";
@@ -199,6 +200,8 @@ export function createConnectors(options: {
 	appUrl?: string;
 	/** The client id document's URL, when the owner hosts a copy in public (connectors.clientId). */
 	clientId?: string;
+	/** Tells the owner a connected connector needs signing in again, once each time it comes to. */
+	tell?: (notice: Extract<Notice, { kind: "connector" }>) => Promise<void>;
 }) {
 	const { owner, registry } = options;
 	const vault = createVault(options.dir, options.redactor);
@@ -335,6 +338,7 @@ export function createConnectors(options: {
 	}
 
 	async function mark(name: string, state: Connector["state"], problem?: string) {
+		const before = find(name)?.state;
 		await change((all) => {
 			const connector = all.find((c) => c.name === name);
 			if (connector === undefined) return;
@@ -343,6 +347,10 @@ export function createConnectors(options: {
 			else connector.problem = problem;
 			connector.checkedAt = Date.now();
 		});
+		// Only one that worked: a connector just added waits for its first sign-in, and the owner is there for that.
+		if (state === "needs-owner" && before === "connected" && options.tell !== undefined) {
+			options.tell({ kind: "connector", name, problem: problem ?? "it wants signing in" }).catch((error) => console.error("[connectors]", error));
+		}
 	}
 
 	/** Each connector tool's rules, read on every call, as connectors and their tools change. */

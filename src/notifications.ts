@@ -6,6 +6,7 @@
 //   reminder        Web Push and ntfy, which must reach the owner; Slack too, with snooze buttons
 //   report, paused  Slack if it's set up, otherwise Web Push and ntfy
 //   budget          the same
+//   connector       the same: a connector that needs signing in again
 //   request         Web Push and Slack, as they can; a request also waits in the app
 import type { ApprovalRequest } from "./approvals.ts";
 import type { Report } from "./jobs.ts";
@@ -17,6 +18,8 @@ export type Notice =
 	/** A job that paused after failing in a row, which the owner can resume. */
 	| { kind: "paused"; report: Report }
 	| { kind: "budget"; text: string }
+	/** A connector whose service refused its token for good, which needs the owner to sign it in again. */
+	| { kind: "connector"; name: string; problem: string }
 	/** A request for approval or a question, when it opens and again when it's settled. */
 	| { kind: "request"; request: ApprovalRequest };
 
@@ -34,6 +37,8 @@ function describe(notice: Notice): string {
 			return `${notice.report.title}: ${notice.report.text}`;
 		case "budget":
 			return `budget: ${notice.text}`;
+		case "connector":
+			return `connector ${notice.name} needs signing in: ${notice.problem}`;
 		case "request":
 			return `request: ${notice.request.summary}`;
 	}

@@ -216,6 +216,11 @@ export function createSlackNotifications(options: {
 				case "budget":
 					await post(channels.home, notice.text);
 					return true;
+				case "connector": {
+					const page = options.app === undefined ? "the app's Connectors page" : `<${options.app}/connectors|the Connectors page>`;
+					await post(channels.home, `The *${notice.name}* connector needs signing in again (${notice.problem}). Sign it in from ${page}.`);
+					return true;
+				}
 				case "request":
 					if (notice.request.status === "pending") await ask(notice.request);
 					else await show(notice.request);

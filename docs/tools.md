@@ -172,7 +172,7 @@ A hand-over shows in the app's dock with Take over, Done and Can't, is pushed to
 
 A connector is a remote MCP server you add, such as a mail, calendar or notes service's: its tools become tools of the agents you give it to. It's for services that offer one; the [browser](#browser) is for sites that don't.
 
-You add one from the command line for now, with its name and its server's URL. A server that signs in with OAuth is connected with `connector connect`, which prints an address to open in a browser; one that takes a token you paste gets it on standard input:
+You add and manage them on the app's [Connectors page](surfaces.md#the-app), or from the command line, with a name and the server's URL. A server that signs in with OAuth is connected with `connector connect`, which prints an address to open in a browser; one that takes a token you paste gets it on standard input:
 
 ```sh
 gaidin connector add home http://192.168.3.105/api/mcp           # then:
