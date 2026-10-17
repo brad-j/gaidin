@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { PROTOCOL } from "../src/web.ts";
 
 const MAIN = join(import.meta.dirname, "..", "src", "main.ts");
 
@@ -47,4 +49,13 @@ test("ask with no message exits 1 with its usage line", () => {
 	const run = gaidin("ask");
 	assert.equal(run.status, 1);
 	assert.match(run.stderr, /usage: gaidin ask/);
+});
+
+test("--version and version print the version and protocol and exit 0", () => {
+	const { version } = JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8"));
+	for (const args of [["--version"], ["version"]]) {
+		const run = gaidin(...args);
+		assert.equal(run.status, 0);
+		assert.equal(run.stdout, `gaidin ${version} (protocol ${PROTOCOL})\n`);
+	}
 });

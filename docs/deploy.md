@@ -11,6 +11,7 @@ gaidin watch                    # print everything the agent does, until Ctrl+C
 gaidin doctor                   # check the settings and everything the server needs
 gaidin doctor --push            # the same, and send a test notification through ntfy
 gaidin config                   # print the settings in use, secrets shortened
+gaidin version                  # print the version and the app protocol; --version does the same
 ```
 
 From a checkout, `pnpm gaidin ...` runs it, and `pnpm serve`, `pnpm ask`, `pnpm watch` and `pnpm doctor` are shortcuts. On the VM, `setup.sh` installs `/usr/local/bin/gaidin`, which runs it as the service's user with the service's settings.
