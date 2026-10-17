@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request replaces the run in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # The version comes from packageManager in package.json.
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+
+      # The oldest Node line gaidin supports (README).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - run: pnpm install --frozen-lockfile
+
+      # The sandbox's bubblewrap and the browser's Chromium headless shell, as deploy/vm/setup.sh installs them. Ubuntu
+      # 24.04 confines unprivileged user namespaces, which both need; the VM has AppArmor profiles for that, and this
+      # throwaway runner lifts the restriction instead.
+      - name: Install bubblewrap and Chromium
+        run: |
+          sudo apt-get install -y -qq bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          pnpm exec playwright-core install --with-deps --only-shell chromium
+
+      - name: Type check, lint and tests
+        shell: bash
+        run: pnpm check 2>&1 | tee check.log
+
+      # The sandbox and browser tests skip themselves where bubblewrap or Chromium can't start, so a skip here means the
+      # step above stopped working.
+      - name: No tests skipped
+        run: grep -Eqx '(# |ℹ )skipped 0' check.log
