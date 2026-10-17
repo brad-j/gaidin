@@ -49,29 +49,40 @@ const USAGE = `usage: gaidin [--config FILE] COMMAND
 Settings come from --config, GAIDIN_CONFIG, ./gaidin.json or /etc/gaidin/config.json,
 with environment variables on top. docs/deploy.md lists them.`;
 
-const { values, positionals } = parseArgs({
-	options: {
-		config: { type: "string" },
-		id: { type: "string" },
-		agent: { type: "string" },
-		name: { type: "string" },
-		job: { type: "string" },
-		channel: { type: "string" },
-		"can-message": { type: "string" },
-		workspaces: { type: "string" },
-		profiles: { type: "string" },
-		connectors: { type: "string" },
-		token: { type: "boolean" },
-		"client-id": { type: "string" },
-		when: { type: "string", multiple: true },
-		for: { type: "string" },
-		"even-after-outside": { type: "boolean" },
-		note: { type: "string" },
-		push: { type: "boolean" },
-		help: { type: "boolean", short: "h" },
-	},
-	allowPositionals: true,
-});
+const OPTIONS = {
+	config: { type: "string" },
+	id: { type: "string" },
+	agent: { type: "string" },
+	name: { type: "string" },
+	job: { type: "string" },
+	channel: { type: "string" },
+	"can-message": { type: "string" },
+	workspaces: { type: "string" },
+	profiles: { type: "string" },
+	connectors: { type: "string" },
+	token: { type: "boolean" },
+	"client-id": { type: "string" },
+	when: { type: "string", multiple: true },
+	for: { type: "string" },
+	"even-after-outside": { type: "boolean" },
+	note: { type: "string" },
+	push: { type: "boolean" },
+	help: { type: "boolean", short: "h" },
+} as const;
+
+const parsed = (() => {
+	try {
+		return parseArgs({ options: OPTIONS, allowPositionals: true });
+	} catch (error) {
+		const unknown = error instanceof Error && "code" in error && error.code === "ERR_PARSE_ARGS_UNKNOWN_OPTION" ? /Unknown option '([^']+)'/.exec(error.message) : null;
+		if (unknown === null) throw error;
+		console.error(`unknown option ${unknown[1]}`);
+		console.error("");
+		console.error(USAGE);
+		process.exit(1);
+	}
+})();
+const { values, positionals } = parsed;
 const [command, ...rest] = positionals;
 if (values.help || command === undefined || command === "help") {
 	console.log(USAGE);
