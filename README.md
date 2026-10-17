@@ -33,6 +33,24 @@ pnpm check                                   # type check, lint and tests
 
 `pnpm gaidin --help` lists the commands, and `deploy/config.example.json` shows every section of the settings. `GAIDIN_MODEL=faux pnpm serve` runs a scripted model with no key and no network. Without `web.url` or `ntfy.url`, reminders print to the server's output.
 
+## Try it locally
+
+To see gaidin work before you have a key, run it on the scripted model. It needs no key, no network and no settings file, but still needs Node 22.18 or later, pnpm and bubblewrap, because the script runs a command in the sandbox.
+
+```sh
+git clone <repository URL> gaidin && cd gaidin
+pnpm install
+GAIDIN_MODEL=faux pnpm serve        # leave this running
+```
+
+In a second terminal, in the same directory:
+
+```sh
+pnpm ask "hello"
+```
+
+Whatever you ask, the faux model answers the same way: it runs one `bash` command in the sandbox (a short `sleep`, then it prints `slept`) and replies `Tool came back:` with that output. The server prints a warning that reminders go to its output, since no `web.url` or `ntfy.url` is set; that's expected. Stop the server with Ctrl-C. For a real model, follow the Quick start.
+
 ## Documentation
 
 - [Concepts](docs/concepts.md): the durable conversation, threads, agents, and what survives a restart
