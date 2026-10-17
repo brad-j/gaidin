@@ -34,6 +34,7 @@ const USAGE = `usage: gaidin [--config FILE] COMMAND
                             sign it in with OAuth: prints the address to open in a browser
   connector client-document print gaidin's client id document, for connectors.clientId
   connector refresh NAME    read its tools again
+  connector remove NAME     remove it, its token and every agent's grant of it
   rule list                 list your allow and ask rules
   rule add allow|ask TOOL [--agent ID] [--when "ARG OP VALUE"]... [--for 30m|2h|1d]
            [--even-after-outside] [--note TEXT]
@@ -42,7 +43,6 @@ const USAGE = `usage: gaidin [--config FILE] COMMAND
                             (a workspace folder: "path inside notes/Ideas" with
                             "workspace equals NAME")
   rule remove ID            remove one
-  connector remove NAME     remove it, its token and every agent's grant of it
   doctor [--push]           check the settings and everything the server needs
   config                    print the settings in use, secrets shortened
 
