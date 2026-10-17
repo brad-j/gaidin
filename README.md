@@ -37,19 +37,20 @@ pnpm check                                   # type check, lint and tests
 
 To see gaidin work before you have a key, run it on the scripted model. It needs no key, no network and no settings file, but still needs Node 22.18 or later, pnpm and bubblewrap, because the script runs a command in the sandbox.
 
+In a checkout of this repository:
+
 ```sh
-git clone <repository URL> gaidin && cd gaidin
 pnpm install
 GAIDIN_MODEL=faux pnpm serve        # leave this running
 ```
 
-In a second terminal, in the same directory:
+In a second terminal, in the same checkout:
 
 ```sh
 pnpm ask "hello"
 ```
 
-Whatever you ask, the faux model answers the same way: it runs one `bash` command in the sandbox (a short `sleep`, then it prints `slept`) and replies `Tool came back:` with that output. The server prints a warning that reminders go to its output, since no `web.url` or `ntfy.url` is set; that's expected. Stop the server with Ctrl-C. For a real model, follow the Quick start.
+Whatever you ask, the faux model answers the same way: it runs one `bash` command in the sandbox (a short `sleep`, then it appends a timestamp to `slept.log` in the command's working directory and prints `slept`, so each ask adds a line) and replies `Tool came back:` with that output. The server prints a warning that reminders go to its output, since no `web.url` or `ntfy.url` is set; that's expected. Stop the server with Ctrl-C. For a real model, follow the Quick start.
 
 ## Documentation
 
