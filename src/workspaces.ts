@@ -1,7 +1,7 @@
 // Workspaces: machines where gaidin works on projects as their user, such as a desktop. Each one is a
 // name and an SSH target, listed in the keys directory's `workspaces` file, one per line:
 //
-//   egwene brad@192.168.1.36
+//   desktop me@192.168.0.20
 //
 // The server connects with the `workspace` key, checking host keys against `workspaces_known_hosts`
 // (deploy/vm/add-workspace.sh writes both). On the machine, the key only runs

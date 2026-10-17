@@ -32,7 +32,7 @@ test("a settings file is read, with relative paths from its directory and defaul
 		data: "state",
 		model: { apiKey: KEY },
 		ntfy: { url: "https://ntfy.sh/gaidin-abc123def456", token: "tk_reminders1234" },
-		slack: { botToken: "xoxb-1-2", appToken: "xapp-1-2", channelId: "C0C7UUU1MQF", userId: "U0123ABC" },
+		slack: { botToken: "xoxb-1-2", appToken: "xapp-1-2", channelId: "C0123ABCD", userId: "U0123ABC" },
 		web: { user: "brad@example.com" },
 	});
 	const { config, errors, warnings } = loadConfig({ file: path, env: {} });

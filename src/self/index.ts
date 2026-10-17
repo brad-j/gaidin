@@ -36,7 +36,7 @@ import type { ToRunner } from "./runner.ts";
 const run = promisify(execFile);
 const APP = resolve(import.meta.dirname, "../..");
 const SELF = import.meta.dirname;
-// The boxes run the server's own Node, which on egwene lives outside /usr.
+// The boxes run the server's own Node, which may live outside /usr.
 const NODE = process.execPath;
 const NODE_HOME = dirname(dirname(NODE));
 const NAME = /^[a-z][a-z0-9-]{0,30}$/;

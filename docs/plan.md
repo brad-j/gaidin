@@ -57,6 +57,7 @@
 43. Rules, step 2: the app's Rules page lists the rules with remove, the grants that also let calls through (hosts, sites acted on, connector tools set to allow, workspace hours) with where each is changed, and makes rules; an approval card's "make a rule" fills the form in from the request, a URL argument as its host (protocol 11) ([Surfaces](surfaces.md#the-app)).
 44. Folder trust, gaidin's side: an `inside` condition on a workspace path, so one allow rule lets an agent's reads, writes and edits in a folder and every folder below it through. The folder goes to the workspace's helper, which refuses a path whose real path, symlinks resolved, isn't inside it; a read the rule let through isn't outside text for that rule; `workspace_run` never goes through on one. `gaidin rule` takes it (protocol 12) ([Security](security.md#your-rules)).
 45. Agent colors: a roster entry can name the color the app shows its agent in, one of eight the app draws (`AGENT_COLORS`), set on the settings page and saved with `/api/agents/save`; an agent without one gets a color by its place in the roster (protocol 13) ([Surfaces](surfaces.md#the-app)).
+46. Ready to publish: gaidin and moiraine are under the MIT license. Neither history has a key or token, only test values and placeholders. The owner's LAN and tailnet addresses, a Slack channel ID, the Slack workspace's name and a home path are gone from the current files; gaidin's history keeps them and a tailnet name, as the owner chose not to rewrite it.
 
 ## Next
 
@@ -73,9 +74,9 @@ For review before any code. Today gaidin runs for one person, set up by hand: a 
 
 ### Proposed, to decide with the owner
 
-- **Publish both repositories**, gaidin and moiraine, on GitHub, under the MIT license as Pi Durable is. Neither is public or licensed now. History stays as it is; a check for secrets in it comes first (below).
+- **Publish both repositories**, gaidin and moiraine, on GitHub, under the MIT license as Pi Durable is. Both are licensed (item 46) and neither is public yet. History stays as it is (below).
 - **Two repositories still, with the app as a release asset.** Each gaidin release names the protocol it speaks; each moiraine release attaches its build (`dist/client`) as a tarball with its SHA-256, built for one protocol. The installer fetches the newest moiraine build for the installed gaidin's protocol and checks it. The VM still needs no build tools. The owner's own `pnpm ship` stays for deploying straight from a checkout.
-- **Upgrade Pi Durable first.** It's at 1.3.0 and gaidin is pinned at 1.1.0. A release shouldn't start two versions behind; the upgrade is its own commit, tested with a restart in the middle of a run, as [Deploying](deploy.md#upgrading-pi-durable) says.
+- **Upgrade Pi Durable first.** Done: gaidin is on 1.3.0, so a release doesn't start two versions behind; the upgrade is its own commit, tested with a restart in the middle of a run, as [Deploying](deploy.md#upgrading-pi-durable) says.
 - **Versions:** gaidin and moiraine start at 0.1.0, tagged, with `gaidin --version`. Each release's notes are its items from the Done list above, which already reads as a changelog.
 - **Ubuntu 24.04 and Debian 12** are the installer's targets; other Linux runs from a checkout as now. Node comes from nodejs.org's official tarball for a pinned version, checked against its published SHA-256, and pnpm through Corepack.
 
@@ -114,17 +115,17 @@ The configuration token isn't kept. Without one, setup prints the manual steps f
 
 ### Before publishing
 
-- **Nothing specific left in the code:** the repository URL in the installer, the manifest's "Tar Valon" comment, and the README's first lines; the homelab extension stays, optional and described as written for one deployment.
-- **No secrets in the history:** a scan of every commit of both repositories for keys and tokens, and for the owner's private identifiers (tailnet name, LAN addresses, Slack IDs), with whatever turns up removed or rewritten before the first push to a public remote. The owner decides on anything found.
+- **Nothing specific left in the code:** the repository URL in the installer and the README's first lines; the manifest's "Tar Valon" comment is gone (item 46); the homelab extension stays, optional and described as written for one deployment.
+- **No secrets in the history:** a scan of every commit of both repositories for keys and tokens, and for the owner's private identifiers (tailnet name, LAN addresses, Slack IDs), with whatever turns up removed or rewritten before the first push to a public remote. The owner decides on anything found. Done (item 46): no keys or tokens; the private identifiers are gone from the current files and kept in the history.
 - **A getting-started path** in the README: try it locally with the faux model, then a VM with the installer and `gaidin setup`, then Slack, connectors and the browser as they're wanted.
 
 ### Order of work
 
-1. Pi Durable 1.3.0, on a branch, with the restart test.
+1. Done: Pi Durable 1.3.0, on a branch, with the restart test.
 2. `gaidin setup` without Slack, and `gaidin --version`.
 3. Slack from a configuration token.
 4. The installer, moiraine's release build and its check, and the getting-started docs, tried on a fresh VM.
-5. The history scan and the specific leftovers; then the owner publishes, or says to.
+5. The history scan and the specific leftovers, done but for the installer's repository URL (step 4); then the owner publishes, or says to.
 
 Each step ends with `pnpm check` passing and is a commit of its own. Publishing is the owner's call and happens last.
 

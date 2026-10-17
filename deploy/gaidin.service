@@ -7,7 +7,7 @@
 Description=gaidin personal agent
 
 [Service]
-WorkingDirectory=%h/westwood/Projects/Software/gaidin
+WorkingDirectory=%h/gaidin
 ExecStart=/usr/bin/env node --no-warnings src/main.ts serve
 Restart=on-failure
 RestartSec=5

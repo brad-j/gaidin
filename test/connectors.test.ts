@@ -103,7 +103,7 @@ test("a result is labelled as outside text, cut, and keeps its images", () => {
 test("a connector's URL is https, or http to loopback or a private address", async () => {
 	assert.equal(await urlProblem("https://mcp.example.com/mcp"), undefined);
 	assert.equal(await urlProblem("http://127.0.0.1:9000/mcp"), undefined);
-	assert.equal(await urlProblem("http://homelab.test/mcp", async () => [{ address: "192.168.3.20" }]), undefined);
+	assert.equal(await urlProblem("http://homelab.test/mcp", async () => [{ address: "192.168.0.20" }]), undefined);
 	assert.match((await urlProblem("http://mcp.example.com/mcp", async () => [{ address: "93.184.216.34" }]))!, /needs https/);
 	assert.match((await urlProblem("https://me:pw@mcp.example.com/"))!, /can't hold a user or password/);
 	assert.match((await urlProblem("ftp://x/"))!, /https, not ftp:/);
@@ -324,11 +324,11 @@ test("discovery holds a server to its own host or public https, its issuer to th
 			const page = pages.get(String(input));
 			return page === undefined ? new Response("", { status: 404 }) : Response.json(page);
 		},
-		resolve: async (host) => [{ address: host === "auth.example.com" ? "93.184.216.34" : "192.168.3.9" }],
+		resolve: async (host) => [{ address: host === "auth.example.com" ? "93.184.216.34" : "192.168.0.9" }],
 	});
-	const server = "http://192.168.3.105/api/mcp";
+	const server = "http://192.168.0.105/api/mcp";
 	const metadata = { issuer: "https://auth.example.com", authorization_endpoint: "https://auth.example.com/authorize", token_endpoint: "https://auth.example.com/token", code_challenge_methods_supported: ["S256"], client_id_metadata_document_supported: true };
-	pages.set("http://192.168.3.105/.well-known/oauth-protected-resource", { resource: "http://192.168.3.105", authorization_servers: ["https://auth.example.com"] });
+	pages.set("http://192.168.0.105/.well-known/oauth-protected-resource", { resource: "http://192.168.0.105", authorization_servers: ["https://auth.example.com"] });
 	pages.set("https://auth.example.com/.well-known/oauth-authorization-server", metadata);
 	assert.equal((await oauth.discover(server)).tokenEndpoint, "https://auth.example.com/token");
 
@@ -338,9 +338,9 @@ test("discovery holds a server to its own host or public https, its issuer to th
 	await assert.rejects(oauth.discover(server), /names https:\/\/other.example.com, not https:\/\/auth.example.com/);
 	pages.set("https://auth.example.com/.well-known/oauth-authorization-server", { ...metadata, code_challenge_methods_supported: ["plain"] });
 	await assert.rejects(oauth.discover(server), /PKCE with S256/);
-	pages.set("http://192.168.3.105/.well-known/oauth-protected-resource", { resource: "http://192.168.3.105", authorization_servers: ["http://auth.example.com"] });
+	pages.set("http://192.168.0.105/.well-known/oauth-protected-resource", { resource: "http://192.168.0.105", authorization_servers: ["http://auth.example.com"] });
 	await assert.rejects(oauth.discover(server), /authorization server, http:\/\/auth.example.com, isn't https/);
-	pages.set("http://192.168.3.105/.well-known/oauth-protected-resource", { resource: "https://elsewhere.example.com", authorization_servers: ["https://auth.example.com"] });
+	pages.set("http://192.168.0.105/.well-known/oauth-protected-resource", { resource: "https://elsewhere.example.com", authorization_servers: ["https://auth.example.com"] });
 	await assert.rejects(oauth.discover(server), /for another resource/);
 });
 

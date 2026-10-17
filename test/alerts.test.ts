@@ -81,7 +81,7 @@ test("alerts close together are one investigation, with read-only tools, and a r
 
 	await until(() => (ntfy.connected() ? true : undefined));
 	assert.deepEqual(ntfy.since, [null]);
-	ntfy.send("a1", "Linkding", "[🔴 Down] connect ECONNREFUSED 192.168.3.189:9090");
+	ntfy.send("a1", "Linkding", "[🔴 Down] connect ECONNREFUSED 192.168.0.189:9090");
 	ntfy.send("a2", "apps-01", "container linkding exited (137)");
 
 	const report = await until(() => reports[0]);

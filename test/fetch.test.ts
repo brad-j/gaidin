@@ -79,8 +79,8 @@ async function setup(t: TestContext): Promise<{ base: string; options: FetchOpti
 	t.after(() => new Promise((resolve) => server.close(resolve)));
 	const names = new Map(Object.entries({
 		"public.test": ["127.0.0.1"],
-		"lan.test": ["192.168.3.177"],
-		"tailnet.test": ["100.79.108.50"],
+		"lan.test": ["192.168.0.177"],
+		"tailnet.test": ["100.64.0.50"],
 		"mixed.test": ["127.0.0.1", "10.0.0.5"],
 		"ula.test": ["fd7a:115c:a1e0::1"],
 	}));
@@ -96,8 +96,8 @@ test("private, LAN, tailnet and loopback addresses are refused, by name, literal
 	const { base, options } = await setup(t);
 	const port = new URL(base).port;
 	const refused = (url: string, pattern: RegExp, opts = options) => assert.rejects(fetchPublic(url, opts), pattern);
-	await refused(`http://lan.test:${port}/`, /192\.168\.3\.177, a private or reserved address/);
-	await refused(`http://tailnet.test:${port}/`, /100\.79\.108\.50/);
+	await refused(`http://lan.test:${port}/`, /192\.168\.0\.177, a private or reserved address/);
+	await refused(`http://tailnet.test:${port}/`, /100\.64\.0\.50/);
 	await refused(`http://mixed.test:${port}/`, /10\.0\.0\.5/);
 	await refused(`http://ula.test:${port}/`, /fd7a/);
 	await refused("http://10.0.0.1/", /private or reserved/);
@@ -126,7 +126,7 @@ test("a redirect is followed on its host only; one to another host comes back un
 		assert.equal(fetched.redirect, path === "/to-other" ? `http://other.test:${port}/page?q=1` : "http://lan.test/admin");
 	}
 	assert.equal(render(await fetchPublic(`${base}/to-other`, options), 20_000), `${base}/to-other redirects (HTTP 302) to http://other.test:${port}/page?q=1, on another host. Fetch that URL to follow it.`);
-	await assert.rejects(fetchPublic("http://lan.test/admin", options), /lan\.test resolves to 192\.168\.3\.177/);
+	await assert.rejects(fetchPublic("http://lan.test/admin", options), /lan\.test resolves to 192\.168\.0\.177/);
 });
 
 test("a page that goes silent partway is given up on at the idle timeout, compressed or not, saying so", async (t) => {

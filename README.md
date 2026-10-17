@@ -45,4 +45,8 @@ pnpm check                                   # type check, lint and tests
 
 ## Status
 
-Running for one person since October 2026. Pi Durable is pinned at 1.1.0; its API is experimental and changes without notice, so upgrade it deliberately.
+Running for one person since October 2026. Pi Durable is pinned at 1.3.0; its API is experimental and changes without notice, so upgrade it deliberately.
+
+## License
+
+MIT, in [LICENSE](LICENSE).

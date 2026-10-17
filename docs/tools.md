@@ -175,7 +175,7 @@ A connector is a remote MCP server you add, such as a mail, calendar or notes se
 You add and manage them on the app's [Connectors page](surfaces.md#the-app), or from the command line, with a name and the server's URL. A server that signs in with OAuth is connected with `connector connect`, which prints an address to open in a browser; one that takes a token you paste gets it on standard input:
 
 ```sh
-gaidin connector add home http://192.168.3.105/api/mcp           # then:
+gaidin connector add home http://192.168.0.105/api/mcp           # then:
 gaidin connector connect home                                    # open the address it prints, sign in
 gaidin connector add mail https://mcp.example.com/mcp --token    # or paste a token, then Enter
 gaidin connector show mail                                       # its tools and how each is set

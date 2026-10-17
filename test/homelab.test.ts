@@ -116,7 +116,7 @@ test("problems are listed most severe first, with the dashboard's thresholds", a
 
 test("a feed that's down is reported and the others still are", async () => {
 	const feeds = await fetchFeeds(HOMELAB, fixtures((f) => {
-		f.docker = new Error("connect ECONNREFUSED 192.168.3.177:8080");
+		f.docker = new Error("connect ECONNREFUSED 192.168.0.177:8080");
 		f.backups.runs[0].status = "job errors";
 	}));
 	const titles = collectAttention(feeds, NOW).map((i) => i.title);

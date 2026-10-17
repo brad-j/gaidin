@@ -2,6 +2,7 @@
   "name": "gaidin",
   "version": "1.0.0",
   "description": "Personal agent on Pi Durable",
+  "license": "MIT",
   "bin": {
     "gaidin": "src/main.ts"
   },

@@ -104,7 +104,7 @@ async function site(t: TestContext) {
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(() => new Promise((resolve) => server.close(resolve)));
 	const port = (server.address() as AddressInfo).port;
-	const names = new Map(Object.entries({ "public.test": "127.0.0.1", "other.test": "127.0.0.1", "lan.test": "192.168.3.177" }));
+	const names = new Map(Object.entries({ "public.test": "127.0.0.1", "other.test": "127.0.0.1", "lan.test": "192.168.0.177" }));
 	const fetch: FetchOptions = {
 		blocked: blockedRanges({ allowLoopback: true }),
 		resolve: async (host) => {
@@ -242,7 +242,7 @@ test("a page's own navigation goes ahead on its host and to hosts allowed for go
 test("private addresses are refused, for a page and for what a page loads", { skip }, async (t) => {
 	const { scout, url, hits } = await start(t);
 	const lan = await say(scout, CALL("browser_open", { profile: "personal", url: url("lan") }));
-	assert.match(lan, new RegExp(`Couldn't open ${url("lan")}: the page tried to go to ${url("lan")}, which was refused: lan.test resolves to 192.168.3.177, a private or reserved address`));
+	assert.match(lan, new RegExp(`Couldn't open ${url("lan")}: the page tried to go to ${url("lan")}, which was refused: lan.test resolves to 192.168.0.177, a private or reserved address`));
 	assert.match(await say(scout, CALL("browser_open", { profile: "personal", url: "http://10.1.2.3/" })), /10\.1\.2\.3 is a private or reserved address/);
 	await say(scout, CALL("browser_open", { profile: "personal", url: url("public", "/lan-image") }));
 	assert.equal(hits.get("/lan-image"), 1);

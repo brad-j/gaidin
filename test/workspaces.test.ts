@@ -77,8 +77,8 @@ test("the workspaces file lists name and target per line", (t) => {
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-keys-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
 	assert.deepEqual(readWorkspaces(dir), []);
-	writeFileSync(join(dir, "workspaces"), "# machines\negwene brad@192.168.1.36\n\nlaptop  me@laptop.lan\n");
-	assert.deepEqual(readWorkspaces(dir), [{ name: "egwene", target: "brad@192.168.1.36" }, { name: "laptop", target: "me@laptop.lan" }]);
+	writeFileSync(join(dir, "workspaces"), "# machines\ndesktop me@192.168.0.20\n\nlaptop  me@laptop.lan\n");
+	assert.deepEqual(readWorkspaces(dir), [{ name: "desktop", target: "me@192.168.0.20" }, { name: "laptop", target: "me@laptop.lan" }]);
 	writeFileSync(join(dir, "workspaces"), "Bad Name me@x\n");
 	assert.throws(() => readWorkspaces(dir), /Bad line/);
 });
