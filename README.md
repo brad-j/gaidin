@@ -50,7 +50,7 @@ In a second terminal, in the same checkout:
 pnpm ask "hello"
 ```
 
-Whatever you ask, the faux model answers the same way: it runs one `bash` command in the sandbox (a short `sleep`, then it appends a timestamp to `slept.log` in the command's working directory and prints `slept`, so each ask adds a line) and replies `Tool came back:` with that output. The server prints a warning that reminders go to its output, since no `web.url` or `ntfy.url` is set; that's expected. Stop the server with Ctrl-C. For a real model, follow the Quick start.
+Whatever you ask, the faux model answers the same way: it runs one `bash` command in the sandbox (a short `sleep`, then it appends a timestamp to `data/sandbox/slept.log` in the checkout and prints `slept`, so each ask adds a line) and replies `Tool came back:` with that output. The server prints a warning that reminders go to its output, since no `web.url` or `ntfy.url` is set; that's expected. Stop the server with Ctrl-C. For a real model, follow the Quick start.
 
 ## Documentation
 
