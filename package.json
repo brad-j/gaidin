@@ -1,6 +1,6 @@
 {
   "name": "gaidin",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Personal agent on Pi Durable",
   "license": "MIT",
   "bin": {
