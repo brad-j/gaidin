@@ -110,7 +110,7 @@ For review before any code. A speaker in a room that the owner's household talks
 
 1. Done: `sharedNotes: false` (item 49). The `family` agent is made in the roster, not in code, and tried from the CLI with `gaidin ask --agent family`.
 2. Done: the voice route, its token, the per-speaker threads and origin `voice` (item 50).
-3. The bridge, with the speaker's echo test replaced by a real turn.
+3. Done: the bridge, outside gaidin, with the speaker's echo test replaced by a real turn: end-of-speech on the bridge, whisper.cpp, the voice route, and Piper.
 4. Reminder targets, the `speaker` notice and the announcement stream, and the firmware change for speaking first.
 5. Timers' alarm on the board, and more speakers.
 
