@@ -97,11 +97,11 @@ const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }], tokens
 faux.setResponses(Array.from({ length: 500 }, () => step));
 const models = createModels();
 models.setProvider(faux.provider);
-// The app's port, found ahead, so a connector's sign-in can come back to it.
+// The app's port, found ahead, so a connector's sign-in can come back to it. The socket stays bound and the app
+// listens on it, since a port closed and opened again later can be taken in between by another test's server.
 const probe = createServer();
 await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
 const webPort = (probe.address() as AddressInfo).port;
-await new Promise((resolve) => probe.close(resolve));
 // A connector like Home Assistant's: an MCP server with OAuth on its own host, its tools a read-only search and a send.
 const cleanups: (() => unknown)[] = [];
 const mcp = await fakeMcp({ after: (cleanup) => cleanups.push(cleanup) }, {
@@ -153,7 +153,7 @@ const web = createWebServer({
 	stop: host.stop,
 	snooze: host.reminders.snooze,
 });
-await new Promise<void>((resolve) => web.listen(webPort, "127.0.0.1", resolve));
+await new Promise<void>((resolve) => web.listen(probe, resolve));
 console.log(`port ${(web.address() as AddressInfo).port}`);
 
 async function stop() {
