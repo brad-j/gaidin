@@ -70,10 +70,16 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 14;
+export const PROTOCOL = 15;
 
-/** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
-export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
+/**
+ * What an open page's event stream carries: the transcript's events, word that the approvals changed, and on /events?all
+ * word that one of an agent's runs started or ended, or that its conversations or their order changed.
+ */
+export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" } | { type: "activity_changed"; agent: string } | { type: "conversations_changed"; agent: string };
+
+/** How long changes are gathered before the app hears of them, so a streaming run sends a few events and not a flood. */
+const EVENT_WINDOW = 250;
 
 // What each POST route takes. `agent` is an agent's id, and `conversation` a conversation's; without them, the default
 // agent and its home conversation.
@@ -361,6 +367,46 @@ export function createWebServer(options: {
 	approvals.onChange(() => {
 		for (const send of streams) send({ type: "approvals_changed" });
 	});
+	// The streams of /events?all, which hear of activity and conversations.
+	const appStreams = new Set<(event: StreamEvent) => void>();
+	// Runs and conversations change in commits, whichever call site made them: an input's submission is queued when a run
+	// is wanted and done or unanswered when it ends, and a new message is an entry. The listener only notes the
+	// conversations, since it can't call Session APIs; the agents are found once the window has passed, and each hears
+	// of a burst once.
+	const running = new Set<number>();
+	const written = new Set<number>();
+	let settling: NodeJS.Timeout | undefined;
+	let shut = false;
+	async function announce() {
+		settling = undefined;
+		const noted: ["activity_changed" | "conversations_changed", number[]][] = [["activity_changed", [...running]], ["conversations_changed", [...written]]];
+		running.clear();
+		written.clear();
+		try {
+			for (const [type, ids] of noted) {
+				const agentIds = new Set<string>();
+				for (const id of ids) agentIds.add(await agentIdOf(harness, id, context));
+				for (const agent of agentIds) for (const send of appStreams) send({ type, agent });
+			}
+		} catch (error) {
+			// Shutdown closes the Session under it; a page that misses the word still polls.
+			if (!shut) console.error("[web]", error);
+		}
+	}
+	const unsubscribe = harness.subscribeCommits(({ changes }) => {
+		if (appStreams.size === 0) return;
+		for (const change of changes) {
+			if (change.type === "submission" && change.value.type === "input") running.add(change.value.conversationId);
+			if (change.type === "entry") written.add(change.value.conversationId);
+			if (change.type === "conversation") written.add(change.value.id);
+		}
+		if (settling === undefined && (running.size > 0 || written.size > 0)) settling = setTimeout(() => void announce(), EVENT_WINDOW);
+	});
+	harness.subscribeClose(() => {
+		shut = true;
+		unsubscribe();
+		clearTimeout(settling);
+	});
 
 	/** The agent a GET names, or the default agent. */
 	const agentIn = (url: URL) => url.searchParams.get("agent") ?? DEFAULT_AGENT;
@@ -568,7 +614,8 @@ export function createWebServer(options: {
 	/** The events of the whole app, for a page with no conversation open: `/events?all`. It has no snapshot. */
 	function appEvents(url: URL, response: ServerResponse) {
 		if (url.searchParams.has("conversation") || url.searchParams.has("agent")) throw new HttpError(400, "/events?all follows no conversation or agent.");
-		openStream(response);
+		const send = openStream(response, () => appStreams.delete(send));
+		appStreams.add(send);
 	}
 
 	/** A conversation's events: `?conversation=`, or the home of `?agent=`. */

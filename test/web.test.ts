@@ -35,7 +35,7 @@ async function start(t: TestContext, app?: string, config?: Config) {
 		fetch(base + path, { ...init, headers: { "Tailscale-User-Login": init.as ?? BRAD, ...(init.headers as Record<string, string>) } });
 	const post = (path: string, body: unknown) =>
 		call(path, { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
-	return { host, server, call, post };
+	return { host, server, call, post, faux };
 }
 
 /** The newest message the owner sent to the default agent's home, once it's in the transcript. */
@@ -232,6 +232,47 @@ test("/events?all follows the approvals from no conversation, and stops when the
 	await second.until(3);
 	assert.equal(late, 0);
 	assert.equal(first.seen.length, 2);
+});
+
+test("/events?all says when an agent's runs start and end and its conversations change, and only for that agent", async (t) => {
+	const { call, post, faux } = await start(t);
+	await post("/api/agents/save", { id: "scout", name: "Scout", job: "" });
+	const response = await call("/events?all");
+	const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+	t.after(() => reader.cancel().catch(() => {}));
+	const seen: { type: string; agent?: string }[] = [];
+	let buffer = "";
+	const until = async (check: () => boolean) => {
+		while (!check()) {
+			const { value, done } = await reader.read();
+			if (done) throw new Error("stream ended");
+			buffer += value;
+			let end: number;
+			while ((end = buffer.indexOf("\n\n")) >= 0) {
+				const frame = buffer.slice(0, end);
+				buffer = buffer.slice(end + 2);
+				if (frame.startsWith("data: ")) seen.push(JSON.parse(frame.slice(6)));
+			}
+		}
+	};
+	const heard = (type: string, agent: string) => seen.filter((e) => e.type === type && e.agent === agent).length;
+
+	// A message to scout starts a run, which the model holds open until released, and then ends it. Gaidin hears of neither.
+	let release = () => {};
+	const held = new Promise<void>((resolve) => (release = resolve));
+	faux.setResponses([async () => (await held, fauxAssistantMessage(fauxText("Hello.")))]);
+	assert.equal((await post("/api/message", { content: "hi", agent: "scout" })).status, 200);
+	await until(() => heard("activity_changed", "scout") >= 1);
+	release();
+	await until(() => heard("activity_changed", "scout") >= 2);
+	assert.equal(seen.some((e) => e.agent === "gaidin"), false);
+	assert.ok(seen.every((e) => ["activity_changed", "conversations_changed"].includes(e.type)));
+
+	// A thread of gaidin's is gaidin's conversation, not scout's.
+	const before = seen.length;
+	assert.equal((await post("/api/threads/start", { content: "a thread" })).status, 200);
+	await until(() => heard("conversations_changed", "gaidin") >= 1);
+	assert.equal(seen.slice(before).some((e) => e.agent === "scout"), false);
 });
 
 test("the default agent's hosts are the approvals' fetch hosts, read and saved through the roster routes", async (t) => {
