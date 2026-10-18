@@ -60,6 +60,7 @@
 46. Ready to publish: gaidin and moiraine are under the MIT license. Neither history has a key or token, only test values and placeholders. The owner's LAN and tailnet addresses, a Slack channel ID, the Slack workspace's name and a home path are gone from the current files; gaidin's history keeps them and a tailnet name, as the owner chose not to rewrite it.
 47. An app-wide event stream: `GET /events?all` has the same checks, headers and ping as `/events` but follows no conversation and sends no snapshot, and carries `approvals_changed` so a page without a conversation follows approvals without polling (protocol 14) ([Surfaces](surfaces.md#the-app)).
 48. Activity and conversation events on `/events?all`: `activity_changed` and `conversations_changed`, each with an `agent`, so the app stops polling `/api/agents/activity` and each agent's conversation list. One listener on the Harness's commits notes the conversations of input submissions (any status, which covers a run's start and end wherever it was submitted from) and of entry and conversation records, then finds their agents after a 250 ms window, so each agent hears each event once per window (protocol 15) ([Surfaces](surfaces.md#the-app)).
+49. Shared notes per agent: a roster entry's `sharedNotes: false` keeps the shared notes out of that agent's prompt, and its `remember` with `shared`, `update_memory` and `forget` on a shared note are refused, for an agent people other than the owner talk to; the default agent always has them. Set with `gaidin agent set --shared-notes on|off` or `sharedNotes` on `/api/agents/save` (protocol 16) ([Tools](tools.md#memory)). Step 1 of the voice design, with the `family` agent made in the roster.
 
 ## Next
 
@@ -106,7 +107,7 @@ For review before any code. A speaker in a room that the owner's household talks
 
 ### Order of work
 
-1. The `family` agent and `sharedNotes: false`, tried from the CLI with `gaidin ask --agent family`.
+1. Done: `sharedNotes: false` (item 49). The `family` agent is made in the roster, not in code, and tried from the CLI with `gaidin ask --agent family`.
 2. The voice route, its token, the per-speaker threads and origin `voice`, with tests on the faux provider that the token reaches only its agents and nothing else on the web server.
 3. The bridge, with the speaker's echo test replaced by a real turn.
 4. Reminder targets, the `speaker` notice and the announcement stream, and the firmware change for speaking first.

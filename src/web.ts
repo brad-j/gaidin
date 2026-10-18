@@ -70,7 +70,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 15;
+export const PROTOCOL = 16;
 
 /**
  * What an open page's event stream carries: the transcript's events, word that the approvals changed, and on /events?all
@@ -112,6 +112,8 @@ const agentSave = object({
 	avatar: optional(string),
 	/** The color the app shows it in, or "" to go back to the one its place in the roster gives it. */
 	color: optional(literal<AgentColor | "">("", ...AGENT_COLORS)),
+	/** False keeps the shared notes out of its prompt and its notes tools (AgentEntry.sharedNotes); true gives them back. */
+	sharedNotes: optional(boolean),
 });
 const agentArchive = object({ id: string, archived: boolean });
 const profileBody = object({ profile: string });

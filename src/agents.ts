@@ -76,6 +76,11 @@ export type AgentEntry = {
 	connectors?: string[];
 	/** The agents it may message and hand work to, by id. */
 	canMessage: string[];
+	/**
+	 * False: the shared notes stay out of its prompt and its notes tools can't touch them, for an agent that people
+	 * other than the owner talk to. Absent: it sees them, as every agent did before.
+	 */
+	sharedNotes?: false;
 	/** Self-written extensions switched on for it besides the ones it loaded. */
 	extensions: string[];
 	/** Its picture's file in <data>/avatars (files.ts), named for its bytes, so a new one has a new name. */
@@ -430,7 +435,7 @@ export function createAgents(options: {
 
 /** What the owner can change about an agent. */
 /** `avatar: ""` takes the picture away, and `color: ""` the color. */
-export type AgentChange = Partial<Pick<AgentEntry, "name" | "job" | "channel" | "canMessage" | "workspaces" | "profiles" | "actHosts" | "connectors" | "hosts" | "extensions" | "avatar">> & { color?: AgentColor | "" };
+export type AgentChange = Partial<Pick<AgentEntry, "name" | "job" | "channel" | "canMessage" | "workspaces" | "profiles" | "actHosts" | "connectors" | "hosts" | "extensions" | "avatar">> & { color?: AgentColor | ""; sharedNotes?: boolean };
 
 /** The roster as the server manages it: the default agent's entry, adding and changing agents, and their home conversations. */
 export function createRoster(options: {
@@ -509,6 +514,7 @@ export function createRoster(options: {
 			if (!roster.agents.some((a) => a.id === other)) throw new Error(`There's no agent ${other}.`);
 		}
 		if (change.color !== undefined && change.color !== "" && !AGENT_COLORS.includes(change.color)) throw new Error(`An agent's color is one of ${AGENT_COLORS.join(", ")}.`);
+		if (change.sharedNotes === false && id === DEFAULT_AGENT) throw new Error("The default agent always sees the shared notes.");
 		const known = options.workspaces();
 		for (const workspace of change.workspaces ?? []) if (!known.includes(workspace)) throw new Error(`There's no workspace ${workspace}.`);
 		for (const profile of change.profiles ?? []) if (!profiles().includes(profile)) throw new Error(`There's no browser profile ${profile}.`);
@@ -577,6 +583,8 @@ export function createRoster(options: {
 				if (change.color === "") delete agent.color;
 				else agent.color = change.color;
 			}
+			if (change.sharedNotes === true) delete agent.sharedNotes;
+			if (change.sharedNotes === false) agent.sharedNotes = false;
 			if (change.canMessage !== undefined) agent.canMessage = [...new Set(change.canMessage)];
 			if (change.hosts !== undefined) agent.hosts = [...new Set(change.hosts)];
 			if (change.extensions !== undefined) {

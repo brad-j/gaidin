@@ -24,6 +24,7 @@ gaidin agent set scout --workspaces egwene          # the workspaces it may use
 gaidin agent set scout --profiles personal          # the browser profiles it may use
 gaidin agent set scout --connectors mail            # the connectors whose tools it gets
 gaidin agent set gaidin --can-message scout         # the agents it may message and hand work to
+gaidin agent set scout --shared-notes off           # keep the shared notes out of its prompt and tools
 gaidin agent set scout --name Seeker --job "..."    # an id can't change; an empty list clears one
 ```
 

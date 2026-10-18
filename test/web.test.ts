@@ -419,6 +419,21 @@ test("an agent's color is one of the app's, set, kept with the roster, refused w
 	assert.equal((await save({ id: "gaidin", color: "teal" })).entry?.color, "teal");
 });
 
+test("an agent's shared notes are turned off and on from the app, but never the default agent's", async (t) => {
+	const { call, post } = await start(t);
+	type Entry = { id: string; sharedNotes?: boolean };
+	const listed = async (id: string) => ((await (await call("/api/agents")).json()) as Entry[]).find((a) => a.id === id);
+	await post("/api/agents/save", { id: "scout", name: "Scout", job: "" });
+	assert.equal((await listed("scout"))?.sharedNotes, undefined);
+	assert.equal((await post("/api/agents/save", { id: "scout", sharedNotes: false })).status, 200);
+	assert.equal((await listed("scout"))?.sharedNotes, false);
+	assert.equal((await post("/api/agents/save", { id: "scout", sharedNotes: true })).status, 200);
+	assert.equal((await listed("scout"))?.sharedNotes, undefined);
+	const refused = await post("/api/agents/save", { id: "gaidin", sharedNotes: false });
+	assert.equal(refused.status, 400);
+	assert.match(await refused.text(), /always sees the shared notes/);
+});
+
 test("each agent's activity: its newest message, from any of its conversations, and whether it's running", async (t) => {
 	const { host, call, post } = await start(t);
 	await post("/api/agents/save", { id: "scout", name: "Scout", job: "" });

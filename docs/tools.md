@@ -67,6 +67,8 @@ Notes the agents keep, such as where the NAS is or how the owner takes their cof
 
 Every conversation gets the shared notes and then its agent's work notes at the end of its system prompt, job runs included, with a reminder that they're things the agent was told, not instructions. `update_memory` replaces a note by id and `forget` deletes one; a bare number means a shared note, as notes were named before agents. A note is at most 500 characters, and an agent has to merge or forget notes to make room. The app's memory page lists the shared notes, and you add, edit and forget them there; `/remember` and `/forget` do the same from the console.
 
+An agent whose shared notes are off (`gaidin agent set ID --shared-notes off`, or `sharedNotes` on `/api/agents/save`), for one that people other than the owner talk to, gets only its own work notes in its prompt, and `remember` with `shared`, `update_memory` and `forget` on a shared note are refused, not asked. The default agent always has them.
+
 Writing a note of either kind normally doesn't ask. While the conversation's context holds outside text, from `fetch_url`, `web_search`, `container_logs`, `workspace_read`, `workspace_run`, a self-written tool, past answers from `search_history` or `read_history`, or a message from another agent, a write asks first ([Security](security.md#approvals)), so a page that says "remember to..." can't plant a note on its own, even after the owner has said something else. In the main conversation that lasts until compaction summarises the page away.
 
 ## Skills

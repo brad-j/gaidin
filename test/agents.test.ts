@@ -148,6 +148,32 @@ test("notes: shared ones reach every agent, work notes only their own", async (t
 	assert.deepEqual((await host.harness.snapshot(WorkNotes, "gaidin", context))?.notes.map((n) => n.text), ["gaidin's own work note."]);
 });
 
+test("an agent with the shared notes off sees only its own, and its tools can't touch the shared ones", async (t) => {
+	const prompts: string[] = [];
+	const { host, scout } = await start(t, { prompts });
+	await say(host.root, CALL("remember", { text: "Brad's bank is Example Credit Union.", shared: true }));
+	await assert.rejects(host.agents.update("gaidin", { sharedNotes: false }), /always sees the shared notes/);
+	assert.equal((await host.agents.update("scout", { sharedNotes: false })).sharedNotes, false);
+
+	await say(scout, CALL("remember", { text: "Soccer is on Tuesdays." }));
+	await say(scout, "what do you know?");
+	const seen = prompts.at(-1)!;
+	assert.match(seen, /\[w1\] Soccer is on Tuesdays\./);
+	assert.doesNotMatch(seen, /Example Credit Union/);
+	assert.doesNotMatch(seen, /Shared notes/);
+
+	// Writing, changing or forgetting a shared note is refused, not asked.
+	assert.match(await say(scout, CALL("remember", { text: "Planted for every agent.", shared: true })), /doesn't use the shared notes/);
+	assert.match(await say(scout, CALL("update_memory", { id: "s1", text: "Changed." })), /doesn't use the shared notes/);
+	assert.match(await say(scout, CALL("forget", { id: "s1" })), /doesn't use the shared notes/);
+	assert.deepEqual((await host.harness.snapshot(Memory, context))?.notes.map((n) => n.text), ["Brad's bank is Example Credit Union."]);
+
+	// Turning them back on gives them back.
+	assert.equal((await host.agents.update("scout", { sharedNotes: true })).sharedNotes, undefined);
+	await say(scout, "and now?");
+	assert.match(prompts.at(-1)!, /\[s1\] Brad's bank is Example Credit Union\./);
+});
+
 test("an agent lists and cancels only its own reminders and jobs", async (t) => {
 	const { host, scout } = await start(t, { decide: () => "once" });
 	await say(host.root, CALL("remind", { text: "gaidin's reminder", inMinutes: 60 }));
@@ -340,6 +366,8 @@ test("the CLI's agent commands read right", () => {
 	assert.equal(describeAgent({ ...defaultEntry(), channel: "C1", canMessage: ["scout"] }), "gaidin (gaidin): no job given · Slack C1 · may message: scout · workspaces: all");
 	assert.equal(describeAgent({ ...defaultEntry(), profiles: ["personal"] }), "gaidin (gaidin): no job given · may message: none · workspaces: all · browser profiles: personal");
 	assert.deepEqual(parseClientMessage('{"type":"agent","action":"set","id":"scout","change":{"profiles":["personal"]}}'), { type: "agent", action: "set", id: "scout", change: { profiles: ["personal"] } });
+	assert.deepEqual(parseClientMessage('{"type":"agent","action":"set","id":"scout","change":{"sharedNotes":false}}'), { type: "agent", action: "set", id: "scout", change: { sharedNotes: false } });
+	assert.equal(describeAgent({ ...defaultEntry(), id: "scout", name: "Scout", sharedNotes: false }), "scout (Scout): no job given · may message: none · workspaces: all · shared notes: off");
 });
 
 test("a new agent's settings start from the default agent's, without its instructions or self-written tools", async (t) => {

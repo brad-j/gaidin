@@ -37,7 +37,7 @@ gaidin can run several named agents, each doing one kind of work for you. The or
 - a name and a one-line job, which its system prompt opens with
 - a home conversation, whose settings are its model, thinking level, tools and standing instructions; a new agent starts with the default agent's model, thinking and built-in tools, and no instructions
 - its own sandbox, `<data>/agents/<id>/sandbox` (the default agent's stays `<data>/sandbox`)
-- its own work notes, beside the shared notes about you that every agent sees ([Tools](tools.md#memory))
+- its own work notes, beside the shared notes about you that every agent sees unless its entry turns them off ([Tools](tools.md#memory))
 - its own reminders, jobs and past conversations, which no other agent can list, cancel or search
 - the hosts it fetches from without asking, the workspaces it may use (all for the default agent, none for a new one), the [browser profiles](tools.md#browser) it may use (none until given) and the sites it acts on there without asking, the [connectors](tools.md#connectors) whose tools it gets (none until given), and the agents it may message
 

@@ -22,7 +22,7 @@ const USAGE = `usage: gaidin [--config FILE] COMMAND
                             add an agent
   agent set ID [--name NAME] [--job TEXT] [--channel SLACK_ID]
                [--can-message ID,ID] [--workspaces NAME,NAME] [--profiles NAME,NAME]
-               [--connectors NAME,NAME]
+               [--connectors NAME,NAME] [--shared-notes on|off]
                             change an agent; an empty list clears it
   connector list            list the connectors (MCP servers)
   connector show NAME       a connector's tools and how each is set
@@ -63,6 +63,7 @@ const OPTIONS = {
 	workspaces: { type: "string" },
 	profiles: { type: "string" },
 	connectors: { type: "string" },
+	"shared-notes": { type: "string" },
 	token: { type: "boolean" },
 	"client-id": { type: "string" },
 	when: { type: "string", multiple: true },
@@ -138,6 +139,11 @@ switch (command) {
 		if (profiles !== undefined) change.profiles = profiles;
 		const granted = list(values.connectors);
 		if (granted !== undefined) change.connectors = granted;
+		const sharedNotes = values["shared-notes"];
+		if (sharedNotes !== undefined) {
+			if (sharedNotes !== "on" && sharedNotes !== "off") fail(["usage: gaidin agent set ID --shared-notes on|off"]);
+			change.sharedNotes = sharedNotes === "on";
+		}
 		process.exit(await agents(loaded.config, { type: "agent", action: "set", id: id!, change }));
 	}
 	case "connector": {

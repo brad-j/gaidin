@@ -48,7 +48,7 @@ A [skill](tools.md#skills) is instructions gaidin follows when a request matches
 - Hosts allowed for good, workspaces, browser profiles, connectors and self-written tools are granted per agent. "Always allow" grants the host to the agent that asked. A workspace, browser profile, connector or self-written tool an agent wasn't given is refused before anyone is asked.
 - `message_agent` and `hand_off` reach only the agents the sender's roster entry lists; anything else is refused. The receiver's conversation starts with a marker the approvals hook treats as outside text, so its note writes and cancels ask, and the answer that comes back is outside text to the sender. Either call asks while outside text is in the sender's context, so a page can't pass work to an agent allowed more than the one that read it, and the request names any files it carries. Files are read through the sender's file tools, so only its own sandbox's can go, and land read-only in the receiver's `uploads/`; nothing else of either sandbox is shared. A chain stops at three.
 
-What they share: the shared notes, which reach every agent's prompt; a browser profile's sign-ins, among the agents given it; the skills; the spend limits; and the server's own access, such as Slack and the push services. Approval requests name the agent they come from.
+What they share: the shared notes, which reach every agent's prompt but those whose entry turns them off; a browser profile's sign-ins, among the agents given it; the skills; the spend limits; and the server's own access, such as Slack and the push services. Approval requests name the agent they come from.
 
 ## Network access
 

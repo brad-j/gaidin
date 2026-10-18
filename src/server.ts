@@ -22,7 +22,7 @@ import { assistantText, context, openHost } from "./host.ts";
 import { ReminderFired } from "./reminders.ts";
 import { followAlerts } from "./alerts.ts";
 import { createSlack } from "./slack/index.ts";
-import { array, literal, object, optional, ParseError, parseJson, string } from "./parse.ts";
+import { array, boolean, literal, object, optional, ParseError, parseJson, string } from "./parse.ts";
 import { stamp } from "./time.ts";
 import { createWebServer } from "./web.ts";
 
@@ -63,7 +63,7 @@ const clientMessage = object({
 	id: optional(string),
 	name: optional(string),
 	job: optional(string),
-	change: optional(object({ name: optional(string), job: optional(string), channel: optional(string), canMessage: optional(array(string)), workspaces: optional(array(string)), profiles: optional(array(string)), connectors: optional(array(string)) })),
+	change: optional(object({ name: optional(string), job: optional(string), channel: optional(string), canMessage: optional(array(string)), workspaces: optional(array(string)), profiles: optional(array(string)), connectors: optional(array(string)), sharedNotes: optional(boolean) })),
 });
 const serverMessage = object({ type: literal("line", "done"), text: optional(string), status: optional(string) });
 
@@ -158,6 +158,7 @@ export function describeAgent(agent: AgentEntry): string {
 		`workspaces: ${agent.workspaces === undefined ? "all" : agent.workspaces.join(", ") || "none"}`,
 		agent.profiles === undefined ? undefined : `browser profiles: ${agent.profiles.join(", ")}`,
 		agent.connectors === undefined ? undefined : `connectors: ${agent.connectors.join(", ")}`,
+		agent.sharedNotes === false ? "shared notes: off" : undefined,
 		agent.archived === undefined ? undefined : "archived",
 	];
 	return `${agent.id} (${agent.name}): ${parts.filter((p) => p !== undefined).join(" · ")}`;
