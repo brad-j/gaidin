@@ -75,19 +75,19 @@ Not planned: branching from any message in the web view, since each thread is al
 
 For review before any code. A speaker in a room that the owner's household talks to, as they would a smart speaker: it wakes on a word, answers questions, and sets timers and reminders that it speaks when they're due. The speaker belongs to a new `family` agent, not to the owner's own.
 
-### Proposed, to decide with the owner
+### Decided with the owner
 
-- **Decided: the speaker is an ESP32-S3 board running a fork of xiaozhi-esp32**, which does the wake word, echo cancellation and Opus audio on the board and speaks xiaozhi's WebSocket protocol. The wake word is "agent", through ESP-SR's English MultiNet. The fork lives outside gaidin.
-- **Decided: speech runs beside the speaker, not in gaidin.** A bridge on an always-on machine with a GPU speaks xiaozhi's protocol to the speakers, turns speech into text with whisper.cpp and text into speech with Piper, and talks to gaidin in text. gaidin never handles audio. The bridge is a project of its own, so gaidin's side is a text surface any voice front end could use.
+- **The speaker is an ESP32-S3 board running a fork of xiaozhi-esp32**, which does the wake word, echo cancellation and Opus audio on the board and speaks xiaozhi's WebSocket protocol. The wake word is one the owner picks, through ESP-SR's English MultiNet when it isn't one of WakeNet's trained phrases. The fork lives outside gaidin.
+- **Speech runs beside the speaker, not in gaidin.** A bridge on an always-on machine with a GPU speaks xiaozhi's protocol to the speakers, turns speech into text with whisper.cpp and text into speech with Piper, and talks to gaidin in text. gaidin never handles audio. The bridge is a project of its own, so gaidin's side is a text surface any voice front end could use.
 - **A `family` agent** in the roster, on Haiku 5.5, whose standing instructions ask for short, speakable answers with no Markdown. Its tools: reminders, web search, and fetches from search results. No workspaces, homelab, browser, connectors, self-written tools or messaging other agents.
 - **Shared notes stay out of its prompt.** Anyone in the room can ask it anything, so a roster entry gains `sharedNotes: false`, and the family agent keeps only its own work notes ("soccer is on Tuesdays"). Its notes are written by whoever speaks, so writes ask as they do after outside text.
 - **Speech is outside text.** Anyone in the room, a guest or a television can talk to it. Each spoken turn counts as outside text for the approval hook, so anything that asks after outside text asks the owner, on their phone, never on the speaker. The agent's narrow tools mean it should rarely need to.
-- **Timers are reminders.** A timer is a reminder with a short delay delivered to the speaker it was set on, so there's one durable mechanism, and "how long is left on the pasta" is `list_reminders`. The board plays an alarm until someone stops it. The alternative is timers kept on the board, which survive the bridge or gaidin being down but need more firmware.
-- **Reminders gain a target.** Today a reminder reaches the owner. A family agent's reminder goes to a speaker (the one it was asked on unless told otherwise), every speaker, or the owner's phone as now. Voice doesn't identify the speaker, so "remind me" means the room it was asked in.
+- **Timers are reminders.** A timer is a reminder with a short delay delivered to the speaker it was set on, so there's one durable mechanism, and "how long is left on the pasta" is `list_reminders`. The board plays an alarm until someone stops it. Timers kept on the board would survive the bridge or gaidin being down, but need more firmware.
+- **Reminders gain a target.** Today a reminder reaches the owner. A family agent's reminder goes to a speaker (the one it was asked on unless told otherwise), every speaker, or the owner's phone as now. Other people's phones aren't a target. Voice doesn't identify the speaker, so "remind me" means the room it was asked in.
 
 ### gaidin's side
 
-- **A voice route** on the web server, `POST /api/voice/turn` with `{ speaker, text, key }`, which answers with the agent's reply as text, streamed as an event stream so the bridge can start speaking the first sentence early. It takes a bearer token named in the settings (`voice.tokens`, one per bridge) instead of the Tailscale login, and only reaches agents a token lists. It refuses everything else on the web server, and the rest of the web server still refuses the token.
+- **A voice route** on the web server (agreed with the owner, as a change to who the web server answers), `POST /api/voice/turn` with `{ speaker, text, key }`, which answers with the agent's reply as text, streamed as an event stream so the bridge can start speaking the first sentence early. It takes a bearer token named in the settings (`voice.tokens`, one per bridge) instead of the Tailscale login, and only reaches agents a token lists. It refuses everything else on the web server, and the rest of the web server still refuses the token.
 - **A conversation per speaker.** Each speaker has a rolling thread with its agent, origin `voice`, which carries on while turns keep coming and starts afresh after 5 minutes of quiet, so follow-ups work and yesterday's talk doesn't pile up. `key` makes a turn sent again land once.
 - **Announcements.** `GET /api/voice/events` is a long-lived event stream, with the same token, of things to say: a reminder or timer due on a speaker. A new notice target, `speaker`, sends there. A reminder for a speaker that isn't connected is told to the owner's phone instead, saying which speaker missed it.
 - **Notices.** The bridge going away for more than a few minutes is a notice to the owner, as a connector needing sign-in is.
@@ -102,7 +102,7 @@ For review before any code. A speaker in a room that the owner's household talks
 
 - Anyone who can reach a speaker can use the family agent's tools and spend. The spend guard's limits cover cost; the agent's narrow tools cover the rest.
 - Traffic between the speaker and the bridge is authenticated by token but not encrypted, as the board speaks plain `ws://` on the LAN.
-- The wake word is MultiNet matching one short word, which misses more and wakes falsely more than a WakeNet model trained on a phrase.
+- A wake word through MultiNet, matching a short word, misses more and wakes falsely more than a WakeNet model trained on a phrase.
 
 ### Order of work
 
