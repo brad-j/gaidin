@@ -59,6 +59,7 @@
 45. Agent colors: a roster entry can name the color the app shows its agent in, one of eight the app draws (`AGENT_COLORS`), set on the settings page and saved with `/api/agents/save`; an agent without one gets a color by its place in the roster (protocol 13) ([Surfaces](surfaces.md#the-app)).
 46. Ready to publish: gaidin and moiraine are under the MIT license. Neither history has a key or token, only test values and placeholders. The owner's LAN and tailnet addresses, a Slack channel ID, the Slack workspace's name and a home path are gone from the current files; gaidin's history keeps them and a tailnet name, as the owner chose not to rewrite it.
 47. An app-wide event stream: `GET /events?all` has the same checks, headers and ping as `/events` but follows no conversation and sends no snapshot, and carries `approvals_changed` so a page without a conversation follows approvals without polling (protocol 14) ([Surfaces](surfaces.md#the-app)).
+48. Activity and conversation events on `/events?all`: `activity_changed` and `conversations_changed`, each with an `agent`, so the app stops polling `/api/agents/activity` and each agent's conversation list. One listener on the Harness's commits notes the conversations of input submissions (any status, which covers a run's start and end wherever it was submitted from) and of entry and conversation records, then finds their agents after a 250 ms window, so each agent hears each event once per window (protocol 15) ([Surfaces](surfaces.md#the-app)).
 
 ## Next
 
