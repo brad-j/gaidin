@@ -172,6 +172,51 @@ test("a message sent from the page is answered, and the answer comes down the ev
 	assert.match(JSON.stringify(user?.entry?.model), /\] hi"/);
 });
 
+test("/events?all follows the approvals from no conversation, and stops when the client leaves", async (t) => {
+	const { host, call } = await start(t);
+	/** Reads the frames of one `/events?all` stream. */
+	const follow = async () => {
+		const response = await call("/events?all");
+		assert.equal(response.headers.get("content-type"), "text/event-stream");
+		const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+		t.after(() => reader.cancel().catch(() => {}));
+		const seen: { type: string }[] = [];
+		let buffer = "";
+		const until = async (count: number) => {
+			while (seen.length < count) {
+				const { value, done } = await reader.read();
+				if (done) throw new Error("stream ended");
+				buffer += value;
+				let end: number;
+				while ((end = buffer.indexOf("\n\n")) >= 0) {
+					const frame = buffer.slice(0, end);
+					buffer = buffer.slice(end + 2);
+					if (frame.startsWith("data: ")) seen.push(JSON.parse(frame.slice(6)));
+				}
+			}
+		};
+		return { seen, until, reader };
+	};
+	const ask = (id: string) => host.approvals.open(id, { conversationId: host.root.id, taskId: 1 }, "fetch_url", { summary: "fetch https://example.com/" });
+
+	const first = await follow();
+	const second = await follow();
+	await ask("r1");
+	await first.until(1);
+	assert.deepEqual(first.seen, [{ type: "approvals_changed" }]);
+	await host.approvals.decide("r1", "deny", BRAD);
+	await first.until(2);
+	assert.deepEqual(first.seen, [{ type: "approvals_changed" }, { type: "approvals_changed" }]);
+
+	// Once the first client has left, the second still hears the next request, and the first hears nothing.
+	await first.reader.cancel();
+	await second.until(2);
+	await ask("r2");
+	await second.until(3);
+	assert.equal(first.seen.length, 2);
+	assert.equal((await first.reader.read()).done, true);
+});
+
 test("the default agent's hosts are the approvals' fetch hosts, read and saved through the roster routes", async (t) => {
 	const { host, call, post } = await start(t);
 	type Entry = { id: string; hosts: string[] };

@@ -70,7 +70,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 13;
+export const PROTOCOL = 14;
 
 /** What an open page's event stream carries: the transcript's events, and word that the approvals changed. */
 export type StreamEvent = AgentEvent | SnapshotEvent | { type: "approvals_changed" };
@@ -546,6 +546,23 @@ export function createWebServer(options: {
 	}
 	const asConnector = (work: (connectors: ConnectorService) => Promise<Connector>) => owned(async (c) => listedConnector(await work(c)));
 
+	/** The events of the whole app, for a page with no conversation open: `/events?all`. It has no snapshot. */
+	function appEvents(response: ServerResponse) {
+		response.writeHead(200, {
+			...SECURITY_HEADERS,
+			"Content-Type": "text/event-stream",
+			"Cache-Control": "no-store",
+			"X-Accel-Buffering": "no",
+		});
+		const send = (event: StreamEvent) => response.write(`data: ${JSON.stringify(event)}\n\n`);
+		streams.add(send);
+		const ping = setInterval(() => response.write(": ping\n\n"), 25_000);
+		response.once("close", () => {
+			streams.delete(send);
+			clearInterval(ping);
+		});
+	}
+
 	/** A conversation's events: `?conversation=`, or the home of `?agent=`. */
 	async function events(url: URL, response: ServerResponse) {
 		const id = url.searchParams.get("conversation");
@@ -901,7 +918,7 @@ export function createWebServer(options: {
 		const url = new URL(request.url ?? "/", "http://gaidin");
 		const path = url.pathname;
 		if (request.method === "GET") {
-			if (path === "/events") return events(url, response);
+			if (path === "/events") return url.searchParams.has("all") ? appEvents(response) : events(url, response);
 			if (path === LIVE_PATH) return live(url, request, response);
 			if (path === CALLBACK_PATH) return signedIn(url, response);
 			if (path === CLIENT_PATH) {
