@@ -546,8 +546,8 @@ export function createWebServer(options: {
 	}
 	const asConnector = (work: (connectors: ConnectorService) => Promise<Connector>) => owned(async (c) => listedConnector(await work(c)));
 
-	/** The events of the whole app, for a page with no conversation open: `/events?all`. It has no snapshot. */
-	function appEvents(response: ServerResponse) {
+	/** Starts an event stream: the headers, a place in `streams` and the ping, all gone once the response closes. Returns its `send`. */
+	function openStream(response: ServerResponse, onClose?: () => void) {
 		response.writeHead(200, {
 			...SECURITY_HEADERS,
 			"Content-Type": "text/event-stream",
@@ -560,31 +560,27 @@ export function createWebServer(options: {
 		response.once("close", () => {
 			streams.delete(send);
 			clearInterval(ping);
+			onClose?.();
 		});
+		return send;
+	}
+
+	/** The events of the whole app, for a page with no conversation open: `/events?all`. It has no snapshot. */
+	function appEvents(url: URL, response: ServerResponse) {
+		if (url.searchParams.has("conversation") || url.searchParams.has("agent")) throw new HttpError(400, "/events?all follows no conversation or agent.");
+		openStream(response);
 	}
 
 	/** A conversation's events: `?conversation=`, or the home of `?agent=`. */
 	async function events(url: URL, response: ServerResponse) {
 		const id = url.searchParams.get("conversation");
 		const conversation = id === null ? await home(agentIn(url)) : await conversationAt(Number(id));
-		response.writeHead(200, {
-			...SECURITY_HEADERS,
-			"Content-Type": "text/event-stream",
-			"Cache-Control": "no-store",
-			"X-Accel-Buffering": "no",
-		});
-		const send = (event: StreamEvent) => response.write(`data: ${JSON.stringify(event)}\n\n`);
-		streams.add(send);
-		const stream = await watchEvents(harness, conversation.id, context);
+		let stream: Awaited<ReturnType<typeof watchEvents>> | undefined;
+		const send = openStream(response, () => void stream?.stop());
+		stream = await watchEvents(harness, conversation.id, context);
 		send(stream.snapshot);
 		stream.start(async (batch) => {
 			for (const event of batch) send(event);
-		});
-		const ping = setInterval(() => response.write(": ping\n\n"), 25_000);
-		response.once("close", () => {
-			streams.delete(send);
-			clearInterval(ping);
-			void stream.stop();
 		});
 	}
 
@@ -918,7 +914,7 @@ export function createWebServer(options: {
 		const url = new URL(request.url ?? "/", "http://gaidin");
 		const path = url.pathname;
 		if (request.method === "GET") {
-			if (path === "/events") return url.searchParams.has("all") ? appEvents(response) : events(url, response);
+			if (path === "/events") return url.searchParams.has("all") ? appEvents(url, response) : events(url, response);
 			if (path === LIVE_PATH) return live(url, request, response);
 			if (path === CALLBACK_PATH) return signedIn(url, response);
 			if (path === CLIENT_PATH) {

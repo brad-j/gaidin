@@ -35,7 +35,7 @@ async function start(t: TestContext, app?: string, config?: Config) {
 		fetch(base + path, { ...init, headers: { "Tailscale-User-Login": init.as ?? BRAD, ...(init.headers as Record<string, string>) } });
 	const post = (path: string, body: unknown) =>
 		call(path, { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
-	return { host, call, post };
+	return { host, server, call, post };
 }
 
 /** The newest message the owner sent to the default agent's home, once it's in the transcript. */
@@ -173,7 +173,23 @@ test("a message sent from the page is answered, and the answer comes down the ev
 });
 
 test("/events?all follows the approvals from no conversation, and stops when the client leaves", async (t) => {
-	const { host, call } = await start(t);
+	const { host, server, call } = await start(t);
+	// What the server writes to an `/events?all` response after it has closed: a stream left in the set would keep writing.
+	let closed = 0;
+	let late = 0;
+	server.prependListener("request", (request, response) => {
+		if (request.url !== "/events?all") return;
+		const write = response.write.bind(response);
+		let ended = false;
+		response.once("close", () => {
+			ended = true;
+			closed++;
+		});
+		response.write = ((...args: Parameters<typeof write>) => {
+			if (ended) late++;
+			return write(...args);
+		}) as typeof response.write;
+	});
 	/** Reads the frames of one `/events?all` stream. */
 	const follow = async () => {
 		const response = await call("/events?all");
@@ -210,11 +226,12 @@ test("/events?all follows the approvals from no conversation, and stops when the
 
 	// Once the first client has left, the second still hears the next request, and the first hears nothing.
 	await first.reader.cancel();
+	while (closed === 0) await new Promise((r) => setTimeout(r, 10));
 	await second.until(2);
 	await ask("r2");
 	await second.until(3);
+	assert.equal(late, 0);
 	assert.equal(first.seen.length, 2);
-	assert.equal((await first.reader.read()).done, true);
 });
 
 test("the default agent's hosts are the approvals' fetch hosts, read and saved through the roster routes", async (t) => {
