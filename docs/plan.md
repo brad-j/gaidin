@@ -58,6 +58,7 @@
 44. Folder trust, gaidin's side: an `inside` condition on a workspace path, so one allow rule lets an agent's reads, writes and edits in a folder and every folder below it through. The folder goes to the workspace's helper, which refuses a path whose real path, symlinks resolved, isn't inside it; a read the rule let through isn't outside text for that rule; `workspace_run` never goes through on one. `gaidin rule` takes it (protocol 12) ([Security](security.md#your-rules)).
 45. Agent colors: a roster entry can name the color the app shows its agent in, one of eight the app draws (`AGENT_COLORS`), set on the settings page and saved with `/api/agents/save`; an agent without one gets a color by its place in the roster (protocol 13) ([Surfaces](surfaces.md#the-app)).
 46. Ready to publish: gaidin and moiraine are under the MIT license. Neither history has a key or token, only test values and placeholders. The owner's LAN and tailnet addresses, a Slack channel ID, the Slack workspace's name and a home path are gone from the current files; gaidin's history keeps them and a tailnet name, as the owner chose not to rewrite it.
+47. An app-wide event stream: `GET /events?all` has the same checks, headers and ping as `/events` but follows no conversation and sends no snapshot, and carries `approvals_changed` so a page without a conversation follows approvals without polling (protocol 14) ([Surfaces](surfaces.md#the-app)).
 
 ## Next
 
@@ -458,7 +459,7 @@ moiraine's deploy script builds on the owner's machine and copies the build over
 
 1. Done: the shared thread module, the protocol for any conversation and agent, and the agents routes, with tests using the faux provider (item 28). `web.app`, the CSP hashes and the shell for every path come with step 2, when there's a build to serve.
 2. Done: moiraine's skeleton, served by gaidin at `/app/` beside the web view: the sidebar, a conversation, the dock and the prompt, with the console's Playwright e2e tests copied over and run against the app (item 29). New thread is `/<agent>/new`. The web view's tests stay in gaidin until the switch.
-3. Done: the pages, with the per-agent changes (item 30). With no conversation open, a page asks for the approvals every 5 seconds rather than following an event stream. The web view's `#/<page>` addresses and `#/history/<id>` open the matching page or thread.
+3. Done: the pages, with the per-agent changes (item 30). With no conversation open, a page asked for the approvals every 5 seconds; the app-wide event stream replaced that (item 47). The web view's `#/<page>` addresses and `#/history/<id>` open the matching page or thread.
 4. Done: attachments (item 31). Other files go to the sandbox of the agent whose conversation it is, where Slack's still go to the default agent's until its channel per agent.
 5. Done: Slack mirroring (item 32). Every Slack thread is the default agent's until Slack's channel per agent (agents step 3), which will give other agents' threads the same.
 6. Done: the switch (item 33). moiraine's `pnpm ship` deploys it ([Deploying](deploy.md#the-app)).
