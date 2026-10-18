@@ -8,6 +8,8 @@ import type { Condition, NewRule } from "./rules.ts";
 import { loadConfig, maskedConfig } from "./config.ts";
 import { printChecks, runChecks } from "./doctor.ts";
 import { serve } from "./server.ts";
+import { PROTOCOL } from "./web.ts";
+import pkg from "../package.json" with { type: "json" };
 
 const USAGE = `usage: gaidin [--config FILE] COMMAND
 
@@ -45,6 +47,7 @@ const USAGE = `usage: gaidin [--config FILE] COMMAND
   rule remove ID            remove one
   doctor [--push]           check the settings and everything the server needs
   config                    print the settings in use, secrets shortened
+  version                   print the version and the app protocol (also --version)
 
 Settings come from --config, GAIDIN_CONFIG, ./gaidin.json or /etc/gaidin/config.json,
 with environment variables on top. docs/deploy.md lists them.`;
@@ -68,6 +71,7 @@ const OPTIONS = {
 	note: { type: "string" },
 	push: { type: "boolean" },
 	help: { type: "boolean", short: "h" },
+	version: { type: "boolean" },
 } as const;
 
 const parsed = (() => {
@@ -84,6 +88,11 @@ const parsed = (() => {
 })();
 const { values, positionals } = parsed;
 const [command, ...rest] = positionals;
+if (values.version || command === "version") {
+	console.log(`gaidin ${pkg.version} (protocol ${PROTOCOL})`);
+	process.exit(0);
+}
+
 if (values.help || command === undefined || command === "help") {
 	console.log(USAGE);
 	process.exit(command === undefined && !values.help ? 2 : 0);
