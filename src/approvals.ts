@@ -17,7 +17,7 @@ import { type ConversationId, defineDoc, defineEntry, defineExtension, defineToo
 import { AGENT_MESSAGE, agentAt, AgentOf, Agents, DEFAULT_AGENT, entryOf, hostsOf, rosterOf } from "./agents.ts";
 import type { Ask, Guard, Situation, Where } from "./guards.ts";
 import { GATE_FINDINGS } from "./jobs.ts";
-import { VOICE_MESSAGE } from "./threads.ts";
+import { SPEECH, VOICE_MESSAGE } from "./threads.ts";
 import { attempt, isObject, json, type Json, ParseError, scalar, string } from "./parse.ts";
 import { confinedBy, folderOf, INSIDE_TOOLS, type Rule, rulesFor, rulesIn, WITHIN, type Within } from "./rules.ts";
 import { clip, whole } from "./guards.ts";
@@ -399,7 +399,7 @@ export async function outsideTextIn(api: HookApi, context: Context, isOutside: (
 		if (message.role === "user" && JSON.stringify(message.content).includes(GATE_FINDINGS)) found.add("the job's gate");
 		if (message.role === "user" && JSON.stringify(message.content).includes(AGENT_MESSAGE)) found.add("a message from another agent");
 		// Anyone in the room can talk to a speaker, so what it heard is outside text too (voice.ts).
-		if (message.role === "user" && JSON.stringify(message.content).includes(VOICE_MESSAGE)) found.add("speech at a speaker");
+		if (message.role === "user" && JSON.stringify(message.content).includes(VOICE_MESSAGE)) found.add(SPEECH);
 		if (message.role !== "toolResult" || message.toolCallId === callId || !isOutside(message.toolName)) continue;
 		if (rule === undefined || confinedBy(message) !== rule) found.add(message.toolName);
 	}

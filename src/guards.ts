@@ -79,9 +79,12 @@ export function outsideText(tool: string): Guard {
 	return { tool, outside: true, ask: async () => undefined, refuse: async () => undefined };
 }
 
-/** Asks with `summary` only while outside text is in the conversation, naming where it came from. */
-export async function ifOutsideText(situation: Situation, summary: () => Awaitable<string>): Promise<Ask | undefined> {
-	const read = await situation.outside();
+/**
+ * Asks with `summary` only while outside text is in the conversation, naming where it came from. Sources in `except`
+ * don't count, for a call that's safe after them.
+ */
+export async function ifOutsideText(situation: Situation, summary: () => Awaitable<string>, except: readonly string[] = []): Promise<Ask | undefined> {
+	const read = (await situation.outside()).filter((source) => !except.includes(source));
 	if (read.length === 0) return undefined;
 	return { summary: `${await summary()}, after reading outside text (${read.join(", ")})` };
 }

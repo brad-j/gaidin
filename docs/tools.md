@@ -5,7 +5,7 @@ Every [agent](concepts.md#agents) has these tools, and each works on that agent'
 | Tool | Runs | Reaches | Asks first |
 |---|---|---|---|
 | `read`, `write`, `edit`, `bash` | in the sandbox | the sandbox directory only, no network | no |
-| `remind`, `list_reminders`, `cancel_reminder` | in the server | the owner's [notifications](surfaces.md#notifications) | cancelling, while outside text is in the conversation |
+| `remind`, `list_reminders`, `cancel_reminder` | in the server | the owner's [notifications](surfaces.md#notifications) | cancelling, while outside text other than [speech](surfaces.md#voice) is in the conversation |
 | `remember`, `update_memory`, `forget` | in the server | the shared notes in every agent's prompt, and the agent's own work notes | while outside text is in the conversation |
 | `search_history`, `read_history` | in the server | its index of past messages | no |
 | `read_skill` | in the server | the [skills](#skills), read-only | no |

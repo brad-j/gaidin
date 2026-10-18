@@ -11,6 +11,7 @@ import { defaultEntry } from "../src/agents.ts";
 import type { Situation } from "../src/guards.ts";
 import { createReminders, ReminderFired, type Reminder, Reminders } from "../src/reminders.ts";
 import type { Adapters } from "../src/notifications.ts";
+import { SPEECH } from "../src/threads.ts";
 
 function tempDir(t: TestContext): string {
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
@@ -155,4 +156,7 @@ test("cancelling a reminder asks while outside text is in the conversation, and 
 	};
 	assert.equal(await ask(9, []), undefined);
 	assert.equal((await ask(9, ["fetch_url"]))!.summary, 'cancel reminder 9 "stretch", after reading outside text (fetch_url)');
+	// Speech at a speaker alone doesn't make it ask; a page read as well still does.
+	assert.equal(await ask(9, [SPEECH]), undefined);
+	assert.equal((await ask(9, [SPEECH, "fetch_url"]))!.summary, 'cancel reminder 9 "stretch", after reading outside text (fetch_url)');
 });

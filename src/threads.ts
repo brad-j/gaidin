@@ -15,6 +15,9 @@ export type Origin = "slack" | "app" | "voice";
 /** What a speaker heard starts with this. Anyone in the room can speak, so the approvals hook treats it as outside text. */
 export const VOICE_MESSAGE = "[spoken]";
 
+/** How the approvals hook names what a speaker heard among the outside text in a conversation. */
+export const SPEECH = "speech at a speaker";
+
 /** What a speaker heard, as its agent reads it: the marker, then the speaker's name, then the words. */
 export const spoken = (speaker: string, text: string) => `${VOICE_MESSAGE} (${speaker} speaker) ${text}`;
 

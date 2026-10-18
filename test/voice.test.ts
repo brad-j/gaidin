@@ -11,6 +11,7 @@ import { loadConfig, maskedConfig, secretsOf } from "../src/config.ts";
 import { context, startHost } from "../src/host.ts";
 import { conversationId } from "../src/ids.ts";
 import { originOf, spoken, unspoken } from "../src/threads.ts";
+import { Reminders } from "../src/reminders.ts";
 import { createVoice, QUIET_MS, type VoiceEvent, VoiceState } from "../src/voice.ts";
 import { createWebServer } from "../src/web.ts";
 
@@ -142,6 +143,17 @@ test("speech is outside text: a note it would write asks the owner, and the turn
 	assert.equal(doneOf(after).status, "done");
 	assert.equal(asked.length, 1);
 	assert.match(said(after).at(-1)!, /^Family got: /);
+});
+
+test("a timer set at a speaker is cancelled there without asking the owner", async (t) => {
+	const { host, turn, asked } = await start(t);
+	await turn({ speaker: "kitchen", text: 'CALL {"name":"remind","args":{"text":"Pasta","inMinutes":10}}', key: "k1" });
+	const reminder = (await host.harness.snapshot(Reminders, context))!.items[0]!;
+	const events = await turn({ speaker: "kitchen", text: `CALL {"name":"cancel_reminder","args":{"id":${reminder.taskId}}}`, key: "k2" });
+	assert.equal(doneOf(events).status, "done");
+	assert.match(said(events).at(-1)!, /Cancelled/);
+	assert.equal(asked.length, 0);
+	assert.deepEqual((await host.harness.snapshot(Reminders, context))!.items, []);
 });
 
 test("voice.tokens: each a long token with its agents, masked and redacted, and needing the app's server", (t) => {

@@ -146,7 +146,7 @@ The app trusts the identity header Tailscale Serve adds, and listens only on loo
 
 The voice route (`src/voice.ts`, [Surfaces](surfaces.md#voice)) is the one route that takes something other than the Tailscale login: a bridge's bearer token from `voice.tokens`, compared in constant time. The web server sends only that path there, before its login check, so the token gets nothing anywhere else, and your login gets nothing on the voice route. A token reaches only the agents it lists. Tokens are redacted from tool output and shortened in `gaidin config`.
 
-Anyone near a speaker can talk to its agent, a guest or a television included. So what a speaker heard counts as outside text ("speech at a speaker"), as a message from another agent does: in a voice thread, note writes, cancelling a reminder and everything else that asks after outside text asks you, on your phone or in Slack, and the turn ends with a `waiting` event rather than letting the room answer. Setting a reminder doesn't ask.
+Anyone near a speaker can talk to its agent, a guest or a television included. So what a speaker heard counts as outside text ("speech at a speaker"), as a message from another agent does: in a voice thread, note writes and everything else that asks after outside text asks you, on your phone or in Slack, and the turn ends with a `waiting` event rather than letting the room answer. Setting a reminder doesn't ask, and neither does cancelling one after speech alone, so the room can stop a timer; an agent only cancels its own reminders, and one that has also read a page still asks.
 
 ## Known gaps
 
