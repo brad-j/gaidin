@@ -2,6 +2,7 @@
 // site.test to fetch, and a model that picks its tool call from the owner's message. Lets in the
 // tailnet login given as its first argument, prints the port once it listens, and removes the data
 // directory when stopped. A second argument is a directory of moiraine's build to serve at /app/, for moiraine's tests.
+// The voice route takes VOICE_TOKEN and reaches the default agent, so a test can start a speaker's thread.
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -14,7 +15,10 @@ import { BrowserState } from "../src/browser/index.ts";
 import { fakeMcp } from "../test/fake-mcp.ts";
 import { blockedRanges } from "../src/fetch.ts";
 import { context, startHost } from "../src/host.ts";
+import { createVoice } from "../src/voice.ts";
 import { createWebServer } from "../src/web.ts";
+
+const VOICE_TOKEN = "e2e-voice-token-0123456789abcdefghij";
 
 const user = process.argv[2] ?? "brad@example.com";
 const app = process.argv[3];
@@ -142,6 +146,7 @@ const web = createWebServer({
 	uploads: host.uploads,
 	avatars: host.avatars,
 	threads: host.threads,
+	voice: createVoice({ harness: host.harness, threads: host.threads, approvals: host.approvals, tokens: [{ name: "e2e", token: VOICE_TOKEN, agents: ["gaidin"] }] }),
 	user,
 	app,
 	switchable: host.switchable,

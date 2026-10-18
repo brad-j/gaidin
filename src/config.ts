@@ -4,7 +4,8 @@
 // docs/deploy.md lists every setting.
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { array, dictionary, isObject, type Json, optional, ParseError, type Parser, string } from "./parse.ts";
+import { array, dictionary, isObject, type Json, object, optional, ParseError, type Parser, string } from "./parse.ts";
+import type { VoiceToken } from "./voice.ts";
 
 export type HomelabConfig = {
 	/** Base URL of the beszel.json, docker.json and backups.json snapshots. */
@@ -58,12 +59,14 @@ export type Config = {
 	/** The URL of a public copy of gaidin's client id document, for services that fetch it (connectors/oauth.ts). */
 	connectors?: { clientId: string };
 	homelab?: HomelabConfig;
+	/** The voice bridges' tokens, for the voice route (voice.ts), which is on the app's server. */
+	voice?: { tokens: VoiceToken[] };
 };
 
 export type Loaded = { config: Config; errors: string[]; warnings: string[] };
 
 const DEFAULT_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
-const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "alerts", "slack", "web", "sandbox", "budget", "approvals", "search", "keys", "browser", "connectors", "extensions"];
+const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "alerts", "slack", "web", "sandbox", "budget", "approvals", "search", "keys", "browser", "connectors", "extensions", "voice"];
 /** A browser profile's name, as an agent's id. */
 const PROFILE = /^[a-z][a-z0-9-]{0,30}$/;
 
@@ -293,6 +296,22 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 		else browser = { profiles };
 	}
 
+	// Voice
+	const voiceSection = section("voice");
+	let voice: { tokens: VoiceToken[] } | undefined;
+	if (raw.voice !== undefined) {
+		for (const key of Object.keys(voiceSection)) if (key !== "tokens") errors.push(`Unknown setting "voice.${key}"`);
+		const tokens = read("voice.tokens", voiceSection.tokens, optional(array(object({ name: string, token: string, agents: array(string) })))) ?? [];
+		for (const t of tokens) {
+			if (t.token.length < 32) errors.push(`voice.tokens: ${t.name}'s token is under 32 characters; make one with openssl rand -base64 32`);
+			if (t.agents.length === 0) errors.push(`voice.tokens: ${t.name} names no agent`);
+		}
+		if (new Set(tokens.map((t) => t.name)).size !== tokens.length) errors.push("voice.tokens names a bridge twice");
+		if (new Set(tokens.map((t) => t.token)).size !== tokens.length) errors.push("voice.tokens gives two bridges the same token");
+		if (tokens.length > 0) voice = { tokens };
+		if (voice !== undefined && webUser === undefined) warnings.push("voice.tokens needs web.user: the voice route is on the app's server");
+	}
+
 	// Connectors
 	const connectorsSection = section("connectors");
 	for (const key of Object.keys(connectorsSection)) if (key !== "clientId") errors.push(`Unknown setting "connectors.${key}"`);
@@ -363,6 +382,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	if (search !== undefined) config.search = search;
 	if (browser !== undefined) config.browser = browser;
 	if (connectorClientId !== undefined) config.connectors = { clientId: connectorClientId };
+	if (voice !== undefined) config.voice = voice;
 	if (homelab !== undefined) config.homelab = homelab;
 	return { config, errors, warnings };
 }
@@ -383,6 +403,7 @@ export function secretsOf(config: Config) {
 		TAVILY_API_KEY: config.search?.apiKey,
 		ALERTS_URL: config.alerts?.url,
 		ALERTS_TOKEN: config.alerts?.token,
+		...Object.fromEntries((config.voice?.tokens ?? []).map((t) => [`VOICE_TOKEN_${t.name}`, t.token])),
 	};
 }
 
@@ -402,5 +423,6 @@ export function maskedConfig(config: Config): Config {
 	}
 	if (config.slack !== undefined) masked.slack = { ...config.slack, botToken: mask(config.slack.botToken), appToken: mask(config.slack.appToken) };
 	if (config.search !== undefined) masked.search = { ...config.search, apiKey: mask(config.search.apiKey) };
+	if (config.voice !== undefined) masked.voice = { tokens: config.voice.tokens.map((t) => ({ ...t, token: mask(t.token) })) };
 	return masked;
 }

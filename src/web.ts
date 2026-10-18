@@ -30,6 +30,7 @@ import { type Reminder, reminderOf, Reminders, removeReminder } from "./reminder
 import { type createSkills, readSkillFile, type Skill } from "./skills.ts";
 import type { Threads } from "./threads.ts";
 import { stamp } from "./time.ts";
+import { VOICE_PATH, type Voice } from "./voice.ts";
 
 
 /**
@@ -70,7 +71,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 16;
+export const PROTOCOL = 17;
 
 /**
  * What an open page's event stream carries: the transcript's events, word that the approvals changed, and on /events?all
@@ -331,6 +332,8 @@ export function createWebServer(options: {
 	/** The owner's rules. */
 	rules?: RuleService;
 	threads: Threads;
+	/** The voice route, which takes a bridge's token instead of the login. Without it, there's none. */
+	voice?: Voice;
 	user: string;
 	/** The directory of moiraine's build, the app, served at /. */
 	app?: string;
@@ -1004,6 +1007,16 @@ export function createWebServer(options: {
 	const isPost = (path: string): path is keyof Posts => Object.hasOwn(posts, path);
 
 	return createServer((request, response) => {
+		// The voice route checks a bridge's token itself, and is the only route the token reaches (voice.ts).
+		if (request.url?.split("?")[0] === VOICE_PATH) {
+			if (options.voice === undefined) return reply(response, 404, "There's no voice route here: the settings have no voice.tokens.", "text/plain");
+			options.voice.handle(request, response).catch((error) => {
+				console.error("[voice]", error);
+				if (!response.headersSent) reply(response, 500, "Something went wrong.", "text/plain");
+				else response.end();
+			});
+			return;
+		}
 		// tailscale serve sets this for a person's device; tagged devices and anything else get no header.
 		if (request.headers["tailscale-user-login"] !== user) return reply(response, 403, "Forbidden", "text/plain");
 		if (request.method === "POST" && !sameOrigin(request)) return reply(response, 403, "Cross-site request", "text/plain");

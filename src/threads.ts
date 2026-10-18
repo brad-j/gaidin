@@ -9,8 +9,17 @@ import { AssistantEntry, type Conversation, type ConversationId, defineDoc, type
 import { AgentChain, agentIdOf, AgentOf, copyHomeSettings, type RosterService } from "./agents.ts";
 import { conversationId as toConversationId } from "./ids.ts";
 
-/** Where a thread began. */
-export type Origin = "slack" | "app";
+/** Where a thread began: Slack, the app, or a speaker in the house (voice.ts). */
+export type Origin = "slack" | "app" | "voice";
+
+/** What a speaker heard starts with this. Anyone in the room can speak, so the approvals hook treats it as outside text. */
+export const VOICE_MESSAGE = "[spoken]";
+
+/** What a speaker heard, as its agent reads it: the marker, then the speaker's name, then the words. */
+export const spoken = (speaker: string, text: string) => `${VOICE_MESSAGE} (${speaker} speaker) ${text}`;
+
+/** The words of a message `spoken` made, without the marker and the speaker; any other message as it is. */
+export const unspoken = (text: string) => text.replace(/^\[spoken\] \([a-z][a-z0-9-]* speaker\) /, "");
 
 /** Where a thread began. A thread without one began in Slack, the only place threads began before the app. */
 export const ThreadOrigin = defineDoc<{ origin: Origin }>({

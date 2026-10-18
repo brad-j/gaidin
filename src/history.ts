@@ -20,7 +20,7 @@ import { ApprovalSettled } from "./approvals.ts";
 import { outsideText } from "./guards.ts";
 import { JobReported } from "./jobs.ts";
 import { ReminderFired } from "./reminders.ts";
-import { type Origin, originOf } from "./threads.ts";
+import { type Origin, originOf, unspoken } from "./threads.ts";
 import { formatTime } from "./time.ts";
 import { conversationId, entryId } from "./ids.ts";
 import { object, parse, string } from "./parse.ts";
@@ -215,7 +215,7 @@ export function createHistory(file: string, owner: string) {
 			const task = conversation?.owner === undefined ? undefined : await tx.task(conversation.owner.taskId);
 			return { forkedAt: conversation?.parent?.at, input: task?.input };
 		}, background);
-		let title = first?.text ?? "";
+		let title = unspoken(first?.text ?? "");
 		if (place === "job" && found?.input !== undefined) {
 			try {
 				title = parse(found.input, jobInput, "a job's task").title;

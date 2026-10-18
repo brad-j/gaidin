@@ -69,7 +69,7 @@ Every conversation gets the shared notes and then its agent's work notes at the 
 
 An agent whose shared notes are off (`gaidin agent set ID --shared-notes off`, or `sharedNotes` on `/api/agents/save`), for one that people other than the owner talk to, gets only its own work notes in its prompt, and `remember` with `shared`, `update_memory` and `forget` on a shared note are refused, not asked. The default agent always has them.
 
-Writing a note of either kind normally doesn't ask. While the conversation's context holds outside text, from `fetch_url`, `web_search`, `container_logs`, `workspace_read`, `workspace_run`, a self-written tool, past answers from `search_history` or `read_history`, or a message from another agent, a write asks first ([Security](security.md#approvals)), so a page that says "remember to..." can't plant a note on its own, even after the owner has said something else. In the main conversation that lasts until compaction summarises the page away.
+Writing a note of either kind normally doesn't ask. While the conversation's context holds outside text, from `fetch_url`, `web_search`, `container_logs`, `workspace_read`, `workspace_run`, a self-written tool, past answers from `search_history` or `read_history`, a message from another agent, or speech at a [speaker](surfaces.md#voice), a write asks first ([Security](security.md#approvals)), so a page that says "remember to..." can't plant a note on its own, even after the owner has said something else. In the main conversation that lasts until compaction summarises the page away.
 
 ## Skills
 

@@ -123,6 +123,16 @@ Files go with a message: each is sent ahead of it to `/api/files`, up to 20 MB, 
 
 The app installs: on an iPhone or iPad, Share, then Add to Home Screen; in Chrome or Edge, Install from the address bar or menu. It opens in its own window, without the browser's bars, and keeps clear of the notch and the home bar. Its service worker (`/sw.js`, where the web view had it, so devices signed up then stay signed up) shows notifications, opens the conversation one came from when it's tapped, and, when the server can't be reached, such as from a phone off the tailnet, still opens and shows what it last had, saying gaidin can't be reached and since when; on a device that hasn't opened it before, it answers with a page that says so with a button to try again. Its icon shows how many requests are waiting on you, where the device shows badges (on an iPhone, once notifications are allowed).
 
+## Voice
+
+A voice front end, such as a bridge between speakers in the house and gaidin, talks to an agent in text through one route on the app's server, `POST /api/voice/turn`. The bridge turns what a speaker heard into text and posts `{ "speaker": "kitchen", "text": "...", "key": "..." }`, with `agent` too when its token reaches more than one; gaidin never handles audio. `speaker` is the bridge's name for it (lowercase letters, digits and -), and `key` names the turn, so a turn sent again, after a dropped connection say, lands once and hears the same answer.
+
+The answer is an event stream: a `say` event with `text` for each of the run's messages as it ends, the answer last, so the bridge can start speaking early; `waiting` with the request's `summary` when the run stops to ask you, which reaches your phone or Slack as any request does, never the speaker; and `done` with the run's `status` and the `conversation`, after which the stream closes.
+
+Each speaker has a rolling thread with its agent, origin `voice` in the app, which carries on while turns keep coming and starts afresh after 5 minutes without one, so a follow-up works and yesterday's talk doesn't pile up. What a speaker heard reaches the agent marked as spoken, with the speaker's name.
+
+A bridge proves itself with a bearer token from `voice.tokens` ([Deploying](deploy.md#settings)), not your Tailscale login, and the token reaches that route and the agents it lists, nothing else ([Security](security.md#voice)). Give the agent behind a speaker its shared notes off (`gaidin agent set ID --shared-notes off`) and only the tools it needs, since anyone in the room can talk to it.
+
 ## Notifications
 
 gaidin tells you about reminders, job reports and spend-limit stops (the last two only without Slack, which gets them otherwise), and about approval requests and questions, which are waiting on you, whatever else is set up. It sends each one every way that's set up:

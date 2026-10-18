@@ -142,11 +142,18 @@ The homelab extension's `container_logs` reads Docker logs through a dedicated a
 
 The app trusts the identity header Tailscale Serve adds, and listens only on loopback so nothing else can supply that header from the network. A site open in the owner's browser can make requests with that identity too, so a post must be JSON from the page's own origin, and every response forbids framing (`frame-ancestors 'none'`), so another site can't put the page under its own and trick a click onto Allow. Its Content-Security-Policy runs only the page's own script, a second layer behind the Markdown renderer, which builds elements and never HTML. Anything else on the server running as the service's user can reach the loopback port and the Unix socket, the same access the CLI has. The agent's shell can't: it has no network and doesn't see the data directory.
 
+## Voice
+
+The voice route (`src/voice.ts`, [Surfaces](surfaces.md#voice)) is the one route that takes something other than the Tailscale login: a bridge's bearer token from `voice.tokens`, compared in constant time. The web server sends only that path there, before its login check, so the token gets nothing anywhere else, and your login gets nothing on the voice route. A token reaches only the agents it lists. Tokens are redacted from tool output and shortened in `gaidin config`.
+
+Anyone near a speaker can talk to its agent, a guest or a television included. So what a speaker heard counts as outside text ("speech at a speaker"), as a message from another agent does: in a voice thread, note writes, cancelling a reminder and everything else that asks after outside text asks you, on your phone or in Slack, and the turn ends with a `waiting` event rather than letting the room answer. Setting a reminder doesn't ask.
+
 ## Known gaps
 
 - A host you've always allowed for `fetch_url` can still receive data in a URL without asking, and a `web_search` query reaches the search backend without asking.
 - A fetch of a URL `web_search` returned doesn't ask. An injected snippet can steer which result the model fetches, so a few bits of the conversation could leave through that choice.
 - Redaction and log scrubbing match known values and labelled patterns; they won't catch everything.
+- Anyone who can talk to a speaker can use its agent's tools that don't ask, and spend up to the limits. Give that agent few tools.
 - Workspace secret masking goes by file name.
 - Anything gaidin writes into a project can run later as you.
 - The tools that don't ask (sandbox, reminders, homelab reads) can still be steered: a manipulated model could set reminders or fill the sandbox. Any steered run also spends money, which the [spend limits](deploy.md#spend-limits) cap.

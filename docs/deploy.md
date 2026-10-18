@@ -128,6 +128,7 @@ The settings file is JSON: the first of `--config`, `GAIDIN_CONFIG`, `./gaidin.j
 | `approvals.waitHours` | `GAIDIN_APPROVAL_WAIT_HOURS` | `168` | How long approvals and questions wait, up to 576. |
 | `browser.profiles` | | | Names of the [browser](tools.md#browser) profiles agents can be given, such as `["personal"]`: lowercase letters, digits and `-`. Without them there's no browser. |
 | `connectors.clientId` | | `<web.url>/api/connectors/client.json` | The https URL of a public copy of gaidin's client id document, for [connector](tools.md#connectors) services on the internet that fetch it. `gaidin connector client-document` prints it. |
+| `voice.tokens` | | | The [voice](surfaces.md#voice) bridges: each `{ "name": "...", "token": "...", "agents": ["..."] }`, with a token of at least 32 characters (`openssl rand -base64 32`) and the agents it may talk to, the first the default. Needs `web.user`, since the route is on the app's server. |
 | `extensions.homelab` | | off | The [homelab extension](extending.md#the-homelab-extension). |
 
 The secrets are `model.apiKey`, the ntfy URL and token, the two Slack tokens, and `search.apiKey`. Keep the file readable only by you or the service; `gaidin doctor` warns when anyone else can read it.

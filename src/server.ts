@@ -24,6 +24,7 @@ import { followAlerts } from "./alerts.ts";
 import { createSlack } from "./slack/index.ts";
 import { array, boolean, literal, object, optional, ParseError, parseJson, string } from "./parse.ts";
 import { stamp } from "./time.ts";
+import { createVoice } from "./voice.ts";
 import { createWebServer } from "./web.ts";
 
 export const socketPathFor = (config: Config) => resolve(config.dataDir, "gaidin.sock");
@@ -216,9 +217,10 @@ export async function serve(config: Config) {
 	}
 	await host.start(slack?.adapter);
 
+	const voice = config.voice === undefined ? undefined : createVoice({ harness, threads: host.threads, approvals, tokens: config.voice.tokens, explain });
 	const web = config.web === undefined
 		? undefined
-		: createWebServer({ harness, root, agents: host.agents, workspaces: host.workspaces, profiles: host.profiles, takeOver: host.takeOver, connectors: host.connectors, rules: host.rules, uploads: host.uploads, avatars: host.avatars, mirror: slack?.mirror, threads: host.threads, user: config.web.user, app: config.web.app, switchable, approvals, models: config.model.choices, budget, timeline, history, skills, stop, snooze: reminders.snooze, push });
+		: createWebServer({ harness, root, agents: host.agents, workspaces: host.workspaces, profiles: host.profiles, takeOver: host.takeOver, connectors: host.connectors, rules: host.rules, uploads: host.uploads, avatars: host.avatars, mirror: slack?.mirror, threads: host.threads, voice, user: config.web.user, app: config.web.app, switchable, approvals, models: config.model.choices, budget, timeline, history, skills, stop, snooze: reminders.snooze, push });
 	if (web !== undefined) {
 		const port = config.web!.port;
 		// Loopback only: tailscale serve is the way in, and it vouches for who's asking.
