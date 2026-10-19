@@ -3,7 +3,7 @@ import { type ConversationId, defineDoc, defineEntry, defineExtension, defineTas
 import { agentIdOf, DEFAULT_AGENT } from "./agents.ts";
 import { guard, ifOutsideText, quoted } from "./guards.ts";
 import { SPEAKER, SpeakerOf, SPEECH } from "./threads.ts";
-import { formatTime } from "./time.ts";
+import { formatClock, formatTime } from "./time.ts";
 import { taskId } from "./ids.ts";
 import { number, object } from "./parse.ts";
 
@@ -41,6 +41,14 @@ export async function removeReminder(tx: Tx, id: number, agent?: string): Promis
 }
 
 const MAX_ATTEMPTS = 5;
+
+/** For a reminder within the hour, its exact time and how far off it is, since formatTime leaves out the seconds. */
+export function soon(at: number, now = Date.now()): string {
+	const seconds = Math.round((at - now) / 1000);
+	if (seconds >= 3600) return "";
+	const wait = seconds < 60 ? `${seconds} seconds` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
+	return ` (${formatClock(at)}, in ${wait})`;
+}
 
 /** Where a reminder is heard, in words. */
 export const placeOf = (speaker: string) => (speaker === "*" ? "every speaker" : `the ${speaker} speaker`);
@@ -141,7 +149,7 @@ export function createReminders(notify: Notify, owner = "the user") {
 			"(ISO 8601 with a UTC offset, e.g. 2026-10-09T08:30:00-04:00). Check the time and the place in the result.",
 		parameters: Type.Object({
 			text: Type.String({ description: `What to remind ${owner} about, as they should read it, or hear it said` }),
-			inMinutes: Type.Optional(Type.Number({ minimum: 0 })),
+			inMinutes: Type.Optional(Type.Number({ minimum: 0, description: "Minutes from now; fractions are fine, so 0.5 is a 30-second timer" })),
 			at: Type.Optional(Type.String()),
 			to: Type.Optional(Type.String({ description: `Where it's heard: a speaker's name such as "kitchen", "every speaker", or "phone". Set while talking at a speaker it defaults to that speaker, otherwise to ${owner}'s phone.` })),
 		}),
@@ -154,7 +162,7 @@ export function createReminders(notify: Notify, owner = "the user") {
 			const speaker = speakerFor(args.to, await api.snapshot(SpeakerOf, api.conversationId, context));
 			const taskId = await api.commit((tx) => add(tx, api.conversationId, args.text, at, agent, speaker), context);
 			const place = speaker === undefined ? "" : `, said on ${placeOf(speaker)}`;
-			return { output: [{ type: "text", text: `Reminder ${taskId} set for ${formatTime(at)}${place}: ${args.text}` }] };
+			return { output: [{ type: "text", text: `Reminder ${taskId} set for ${formatTime(at)}${soon(at)}${place}: ${args.text}` }] };
 		},
 	});
 

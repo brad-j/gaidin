@@ -9,7 +9,8 @@ import type { Conversation } from "@earendil-works/pi-durable";
 import { context, startHost } from "../src/host.ts";
 import { defaultEntry } from "../src/agents.ts";
 import type { Situation } from "../src/guards.ts";
-import { createReminders, ReminderFired, type Reminder, Reminders } from "../src/reminders.ts";
+import { createReminders, ReminderFired, type Reminder, Reminders, soon } from "../src/reminders.ts";
+import { setTimeZone } from "../src/time.ts";
 import type { Adapters } from "../src/notifications.ts";
 import { SPEECH } from "../src/threads.ts";
 
@@ -159,4 +160,13 @@ test("cancelling a reminder asks while outside text is in the conversation, and 
 	// Speech at a speaker alone doesn't make it ask; a page read as well still does.
 	assert.equal(await ask(9, [SPEECH]), undefined);
 	assert.equal((await ask(9, [SPEECH, "fetch_url"]))!.summary, 'cancel reminder 9 "stretch", after reading outside text (fetch_url)');
+});
+
+test("a timer under an hour is confirmed to the second, with how far off it is", (t) => {
+	t.after(() => setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone));
+	setTimeZone("UTC");
+	const now = Date.UTC(2026, 9, 18, 20, 15, 20);
+	assert.equal(soon(now + 20_000, now), " (20:15:40, in 20 seconds)");
+	assert.equal(soon(now + 125_000, now), " (20:17:25, in 2 min 5 s)");
+	assert.equal(soon(now + 3_600_000, now), "");
 });

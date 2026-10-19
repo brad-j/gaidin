@@ -32,6 +32,11 @@ export function stamp(content: string, ms = Date.now()): string {
 }
 
 /** "Thu 2026-10-08 19:30 GMT-4" in the configured time zone. */
+/** "19:30:05", the time of day to the second, in the configured time zone. */
+export function formatClock(ms: number): string {
+	return new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).format(ms);
+}
+
 export function formatTime(ms: number): string {
 	const p = Object.fromEntries(formatter.formatToParts(ms).map((part) => [part.type, part.value]));
 	return `${p.weekday} ${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} ${p.timeZoneName}`;
