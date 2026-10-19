@@ -131,7 +131,9 @@ The answer is an event stream: a `say` event with `text` for each of the run's m
 
 Each speaker has a rolling thread with its agent, origin `voice` in the app, which carries on while turns keep coming and starts afresh after 5 minutes without one, so a follow-up works and yesterday's talk doesn't pile up. What a speaker heard reaches the agent marked as spoken, with the speaker's name.
 
-A bridge proves itself with a bearer token from `voice.tokens` ([Deploying](deploy.md#settings)), not your Tailscale login, and the token reaches that route and the agents it lists, nothing else ([Security](security.md#voice)). Give the agent behind a speaker its shared notes off (`gaidin agent set ID --shared-notes off`) and only the tools it needs, since anyone in the room can talk to it.
+A bridge proves itself with a bearer token from `voice.tokens` ([Deploying](deploy.md#settings)), not your Tailscale login, and the token reaches that route and the agents it lists, nothing else ([Security](security.md#voice)). A bridge also follows `GET /api/voice/events`, an event stream of things due on its speakers: an `announce` event with an `id`, the `speaker` (or `*` for every speaker), the `text`, `kind` `reminder` and the `agent`. It says the text there and posts `{ "id": "...", "delivered": true }` to `/api/voice/announced`, or `false` when it can't. A reminder set while talking at a speaker is said on that speaker unless the agent sends it elsewhere ([Tools](tools.md#reminders)); if no bridge says it within 20 seconds, it reaches your phone with the place it should have been heard.
+
+Give the agent behind a speaker its shared notes off (`gaidin agent set ID --shared-notes off`) and only the tools it needs, since anyone in the room can talk to it.
 
 ## Notifications
 

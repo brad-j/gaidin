@@ -30,7 +30,7 @@ import { type Reminder, reminderOf, Reminders, removeReminder } from "./reminder
 import { type createSkills, readSkillFile, type Skill } from "./skills.ts";
 import type { Threads } from "./threads.ts";
 import { stamp } from "./time.ts";
-import { VOICE_PATH, type Voice } from "./voice.ts";
+import type { Voice } from "./voice.ts";
 
 
 /**
@@ -71,7 +71,7 @@ const APP_TYPES = new Map([
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
-export const PROTOCOL = 17;
+export const PROTOCOL = 18;
 
 /**
  * What an open page's event stream carries: the transcript's events, word that the approvals changed, and on /events?all
@@ -1007,8 +1007,8 @@ export function createWebServer(options: {
 	const isPost = (path: string): path is keyof Posts => Object.hasOwn(posts, path);
 
 	return createServer((request, response) => {
-		// The voice route checks a bridge's token itself, and is the only route the token reaches (voice.ts).
-		if (request.url?.split("?")[0] === VOICE_PATH) {
+		// The voice routes check a bridge's token themselves, and are the only routes the token reaches (voice.ts).
+		if (request.url?.startsWith("/api/voice/")) {
 			if (options.voice === undefined) return reply(response, 404, "There's no voice route here: the settings have no voice.tokens.", "text/plain");
 			options.voice.handle(request, response).catch((error) => {
 				console.error("[voice]", error);

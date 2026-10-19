@@ -34,6 +34,19 @@ export const ThreadOrigin = defineDoc<{ origin: Origin }>({
 	initial: () => ({ origin: "slack" }),
 });
 
+/** The speaker a voice thread is with (voice.ts), so a reminder set there is said there. */
+export const SpeakerOf = defineDoc<{ speaker?: string }>({
+	kind: "gaidin.speaker-of",
+	version: 1,
+	scope: "conversation",
+	history: "latest",
+	fork: "initial",
+	initial: () => ({}),
+});
+
+/** A speaker's name, as a voice bridge gives it. */
+export const SPEAKER = /^[a-z][a-z0-9-]{0,30}$/;
+
 /** Threads the app started, by the request that started them, so a request sent again finds its thread. */
 const Started = defineDoc<{ byRequest: Record<string, { conversationId: number; at: number }> }>({
 	kind: "gaidin.threads-started",

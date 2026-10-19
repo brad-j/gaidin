@@ -62,6 +62,7 @@
 48. Activity and conversation events on `/events?all`: `activity_changed` and `conversations_changed`, each with an `agent`, so the app stops polling `/api/agents/activity` and each agent's conversation list. One listener on the Harness's commits notes the conversations of input submissions (any status, which covers a run's start and end wherever it was submitted from) and of entry and conversation records, then finds their agents after a 250 ms window, so each agent hears each event once per window (protocol 15) ([Surfaces](surfaces.md#the-app)).
 49. Shared notes per agent: a roster entry's `sharedNotes: false` keeps the shared notes out of that agent's prompt, and its `remember` with `shared`, `update_memory` and `forget` on a shared note are refused, for an agent people other than the owner talk to; the default agent always has them. Set with `gaidin agent set --shared-notes on|off` or `sharedNotes` on `/api/agents/save` (protocol 16) ([Tools](tools.md#memory)). Step 1 of the voice design, with the `family` agent made in the roster.
 50. The voice route: `POST /api/voice/turn` takes a bridge's bearer token from `voice.tokens`, which reaches only that route and the agents it lists, and answers with an event stream of `say`, `waiting` and `done`. Each speaker has a rolling thread, origin `voice`, that starts afresh after 5 minutes of quiet; a turn's key makes it land once; what a speaker heard is outside text to the approvals hook, except that cancelling a reminder after speech alone doesn't ask, so the room can stop a timer (protocol 17) ([Surfaces](surfaces.md#voice), [Security](security.md#voice)). Step 2 of the voice design.
+51. Reminders on speakers: a reminder or timer set while talking at a speaker is said there (`remind` takes `to`: a speaker, every speaker or the phone), offered to the voice bridges on `GET /api/voice/events` and confirmed on `/api/voice/announced`; one no bridge says within 20 seconds reaches the phone, naming where it was missed (protocol 18) ([Surfaces](surfaces.md#voice), [Tools](tools.md#reminders)). Step 4 of the voice design, gaidin's side.
 
 ## Next
 
@@ -111,7 +112,7 @@ For review before any code. A speaker in a room that the owner's household talks
 1. Done: `sharedNotes: false` (item 49). The `family` agent is made in the roster, not in code, and tried from the CLI with `gaidin ask --agent family`.
 2. Done: the voice route, its token, the per-speaker threads and origin `voice` (item 50).
 3. Done: the bridge, outside gaidin, with the speaker's echo test replaced by a real turn: end-of-speech on the bridge, whisper.cpp, the voice route, and Piper.
-4. Reminder targets, the `speaker` notice and the announcement stream, and the firmware change for speaking first.
+4. Done: reminder targets and the announcement stream (item 51), with the bridge saying them and the firmware change for speaking first outside gaidin.
 5. Timers' alarm on the board, and more speakers.
 
 Each step ends with `pnpm check` passing and is a commit of its own.

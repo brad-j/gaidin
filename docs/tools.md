@@ -35,7 +35,7 @@ Pi Durable's `read`, `write`, `edit` and `bash`, confined to the sandbox directo
 
 ## Reminders
 
-`remind` takes the text and either `inMinutes` or `at` (ISO 8601 with a UTC offset) and returns the time it set, which the model reads back. `list_reminders` shows the open ones; `cancel_reminder` takes an id. Both see only the reminders their agent set. The app lists and cancels them too.
+`remind` takes the text and either `inMinutes` or `at` (ISO 8601 with a UTC offset) and returns the time it set, which the model reads back. `to` says where it's heard: a speaker's name, `every speaker`, or `phone`. Set while talking at a [speaker](surfaces.md#voice), a reminder or timer is said on that speaker unless `to` says otherwise; anywhere else it reaches your phone. `list_reminders` shows the open ones; `cancel_reminder` takes an id. Both see only the reminders their agent set. The app lists and cancels them too.
 
 A reminder is a durable background task ([Concepts](concepts.md#durability)). When it fires, it's sent as a [notification](surfaces.md#notifications) titled "gaidin" and recorded as a "Reminder" entry in the conversation, which the app shows and the model doesn't see. When no way of notifying reached anyone, it's retried up to five times with backoff, and the entry records whether it was delivered.
 

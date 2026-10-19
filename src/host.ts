@@ -22,7 +22,7 @@ import { createPush, loadPushKeys, type Push, pushAdapter } from "./push.ts";
 import { growingRedactor, type Redactor, redactionExtension } from "./redact.ts";
 import { createConnectors, extensionOf } from "./connectors/index.ts";
 import { createRules } from "./rules.ts";
-import { createReminders, reminderOf, Reminders, removeReminder } from "./reminders.ts";
+import { createReminders, placeOf, type Reminder, reminderOf, Reminders, removeReminder } from "./reminders.ts";
 import { findBwrap, inside, prepareServerDirs, SandboxEnv } from "./sandbox.ts";
 import { backendFor, type SearchBackend, searchGuards, webSearchTool } from "./search.ts";
 import { createSelf } from "./self/index.ts";
@@ -164,7 +164,14 @@ export async function openHost(options: HostOptions = {}) {
 	// A run the guard refused says so, wherever it's reported.
 	const explain = (reason: string | undefined) => (reason === "no_model" ? budget.blocked() : undefined);
 	const owner = config.owner;
-	const reminders = createReminders((reminder) => tell({ kind: "reminder", reminder }), owner);
+	// A reminder for a speaker is said there if a voice bridge says it (voice.ts), and otherwise reaches the phone, saying
+	// where it should have been heard.
+	let announce: ((reminder: Reminder) => Promise<boolean>) | undefined;
+	const reminders = createReminders(async (reminder) => {
+		if (reminder.speaker !== undefined && announce !== undefined && (await announce(reminder))) return;
+		const missed = reminder.speaker === undefined ? reminder : { ...reminder, text: `${reminder.text} (${placeOf(reminder.speaker)} couldn't say it)` };
+		await tell({ kind: "reminder", reminder: missed });
+	}, owner);
 	// Connectors' tokens join the settings' secrets as they're given.
 	const growing = growingRedactor({ ...secretsOf(config), PUSH_PRIVATE_KEY: pushKeys?.privateKey });
 	const redactor = options.redactor ?? growing.redactor;
@@ -311,7 +318,10 @@ export async function openHost(options: HostOptions = {}) {
 		await harness.close(context);
 	}
 
-	return { harness, root, agents: roster, workspaces: () => workspaces.names, profiles: () => config.browser?.profiles ?? [], takeOver: browser?.takeOver, connectors, rules, close, uploads: createUploads(join(dir, "app-uploads")), avatars: createAvatars(join(dir, "avatars")), threads, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation, latest: history.latest }, skills, sandbox, push, start, stop };
+	/** Says reminders for speakers through `say`, the voice route's announcer, from now on. */
+	const announceWith = (say: (reminder: Reminder) => Promise<boolean>) => void (announce = say);
+
+	return { announceWith, harness, root, agents: roster, workspaces: () => workspaces.names, profiles: () => config.browser?.profiles ?? [], takeOver: browser?.takeOver, connectors, rules, close, uploads: createUploads(join(dir, "app-uploads")), avatars: createAvatars(join(dir, "avatars")), threads, reminders, jobs, budget, explain, switchable, approvals, config, timeline: history.timeline, history: { conversations: history.conversations, conversation: history.conversation, latest: history.latest }, skills, sandbox, push, start, stop };
 }
 
 export type Host = Awaited<ReturnType<typeof openHost>>;

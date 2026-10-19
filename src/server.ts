@@ -215,9 +215,10 @@ export async function serve(config: Config) {
 		slack.start();
 		console.error(`gaidin on Slack in ${config.slack!.channelId}`);
 	}
+	const voice = config.voice === undefined ? undefined : createVoice({ harness, threads: host.threads, approvals, tokens: config.voice.tokens, explain });
+	if (voice !== undefined) host.announceWith(voice.announce);
 	await host.start(slack?.adapter);
 
-	const voice = config.voice === undefined ? undefined : createVoice({ harness, threads: host.threads, approvals, tokens: config.voice.tokens, explain });
 	const web = config.web === undefined
 		? undefined
 		: createWebServer({ harness, root, agents: host.agents, workspaces: host.workspaces, profiles: host.profiles, takeOver: host.takeOver, connectors: host.connectors, rules: host.rules, uploads: host.uploads, avatars: host.avatars, mirror: slack?.mirror, threads: host.threads, voice, user: config.web.user, app: config.web.app, switchable, approvals, models: config.model.choices, budget, timeline, history, skills, stop, snooze: reminders.snooze, push });

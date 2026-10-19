@@ -12,7 +12,9 @@ import { context, startHost } from "../src/host.ts";
 import { conversationId } from "../src/ids.ts";
 import { originOf, spoken, unspoken } from "../src/threads.ts";
 import { Reminders } from "../src/reminders.ts";
-import { createVoice, QUIET_MS, type VoiceEvent, VoiceState } from "../src/voice.ts";
+import { type BridgeEvent, createVoice, QUIET_MS, type VoiceEvent, VoiceState } from "../src/voice.ts";
+import type { Notice } from "../src/notifications.ts";
+import { speakerFor } from "../src/reminders.ts";
 import { createWebServer } from "../src/web.ts";
 
 const BRAD = "brad@example.com";
@@ -47,7 +49,8 @@ function scripted() {
 async function start(t: TestContext) {
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
-	const host = await startHost({ dataDir: dir, sandbox: "none", ...scripted(), adapters: { push: { send: async () => true } } });
+	const pushed: Notice[] = [];
+	const host = await startHost({ dataDir: dir, sandbox: "none", ...scripted(), adapters: { push: { send: async (notice) => (pushed.push(notice), true) } } });
 	await host.agents.add({ id: "family", name: "Family", job: "Answers the household" });
 	await host.agents.update("family", { sharedNotes: false });
 	const asked: ApprovalRequest[] = [];
@@ -57,6 +60,7 @@ async function start(t: TestContext) {
 		setTimeout(() => void host.approvals.decide(r.id, "deny", "test"), 50);
 	});
 	const voice = createVoice({ harness: host.harness, threads: host.threads, approvals: host.approvals, tokens: [{ name: "thom", token: TOKEN, agents: ["family"] }] });
+	host.announceWith(voice.announce);
 	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, voice, user: BRAD, switchable: host.switchable, approvals: host.approvals });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(async () => {
@@ -74,7 +78,45 @@ async function start(t: TestContext) {
 		assert.equal(response.headers.get("content-type"), "text/event-stream");
 		return (await response.text()).split("\n\n").filter((block) => block !== "").map((block) => JSON.parse(block.split("\ndata: ")[1]!) as VoiceEvent);
 	};
-	return { host, base, send, turn, asked };
+	/** Follows the bridge's events, answering each announcement with `answer`'s verdict. */
+	const follow = async (answer: (event: BridgeEvent) => boolean | undefined) => {
+		const events: BridgeEvent[] = [];
+		const stop = new AbortController();
+		t.after(() => stop.abort());
+		const response = await fetch(`${base}/api/voice/events`, { headers: { Authorization: `Bearer ${TOKEN}` }, signal: stop.signal });
+		assert.equal(response.status, 200);
+		void (async () => {
+			let buffer = "";
+			try {
+				for await (const bytes of response.body!) {
+					buffer += Buffer.from(bytes).toString("utf8");
+					for (let end = buffer.indexOf("\n\n"); end !== -1; end = buffer.indexOf("\n\n")) {
+						const data = buffer.slice(0, end).split("\n").find((l) => l.startsWith("data: "));
+						buffer = buffer.slice(end + 2);
+						if (data === undefined) continue;
+						const event = JSON.parse(data.slice(6)) as BridgeEvent;
+						events.push(event);
+						const delivered = answer(event);
+						if (delivered !== undefined) await fetch(`${base}/api/voice/announced`, { method: "POST", body: JSON.stringify({ id: event.id, delivered }), headers: { Authorization: `Bearer ${TOKEN}` } });
+					}
+				}
+			} catch {
+				// Stopped.
+			}
+		})();
+		return events;
+	};
+	return { host, base, send, turn, asked, pushed, follow };
+}
+
+async function until<T>(get: () => T | undefined | Promise<T | undefined>, ms = 10_000): Promise<T> {
+	const end = Date.now() + ms;
+	for (;;) {
+		const value = await get();
+		if (value !== undefined) return value;
+		if (Date.now() > end) throw new Error("timed out");
+		await new Promise((r) => setTimeout(r, 20));
+	}
 }
 
 const doneOf = (events: VoiceEvent[]) => events.find((e) => e.type === "done") as Extract<VoiceEvent, { type: "done" }>;
@@ -154,6 +196,50 @@ test("a timer set at a speaker is cancelled there without asking the owner", asy
 	assert.match(said(events).at(-1)!, /Cancelled/);
 	assert.equal(asked.length, 0);
 	assert.deepEqual((await host.harness.snapshot(Reminders, context))!.items, []);
+});
+
+test("a timer set at a speaker is said there by the bridge following its events, and doesn't reach the phone", async (t) => {
+	const { host, turn, pushed, follow } = await start(t);
+	const events = await follow(() => true);
+	const set = await turn({ speaker: "kitchen", text: 'CALL {"name":"remind","args":{"text":"Pasta is done","inMinutes":0.01}}', key: "k1" });
+	assert.match(said(set).at(-1)!, /said on the kitchen speaker: Pasta is done/);
+	const announced = await until(() => events[0]);
+	assert.deepEqual({ ...announced, id: "" }, { type: "announce", id: "", speaker: "kitchen", text: "Pasta is done", kind: "reminder", agent: "family" });
+	await until(async () => ((await host.harness.snapshot(Reminders, context))!.items.length === 0 ? true : undefined));
+	await new Promise((r) => setTimeout(r, 100));
+	assert.deepEqual(pushed, []);
+});
+
+test("a reminder for a speaker no bridge can say reaches the phone, saying where it was missed", async (t) => {
+	const { turn, pushed, follow } = await start(t);
+	await turn({ speaker: "kitchen", text: 'CALL {"name":"remind","args":{"text":"Pasta is done","inMinutes":0.01}}', key: "k1" });
+	const first = await until(() => pushed[0]);
+	assert.equal(first.kind === "reminder" && first.reminder.text, "Pasta is done (the kitchen speaker couldn't say it)");
+	// A bridge that follows but can't say it is the same.
+	const events = await follow(() => false);
+	await turn({ speaker: "kitchen", text: 'CALL {"name":"remind","args":{"text":"Rice is done","inMinutes":0.01}}', key: "k2" });
+	const second = await until(() => pushed[1]);
+	assert.equal(second.kind === "reminder" && second.reminder.text, "Rice is done (the kitchen speaker couldn't say it)");
+	assert.equal(events.length, 1);
+	// One sent to the phone on purpose goes there as it is.
+	await turn({ speaker: "kitchen", text: 'CALL {"name":"remind","args":{"text":"Call Mom","inMinutes":0.01,"to":"phone"}}', key: "k3" });
+	const third = await until(() => pushed[2]);
+	assert.equal(third.kind === "reminder" && third.reminder.text, "Call Mom");
+	assert.equal(events.length, 1);
+});
+
+test("where a reminder goes: the thread's speaker by default, or a speaker, every speaker or the phone", async (t) => {
+	const { base } = await start(t);
+	assert.equal(speakerFor(undefined, { speaker: "kitchen" }), "kitchen");
+	assert.equal(speakerFor(undefined, undefined), undefined);
+	assert.equal(speakerFor("phone", { speaker: "kitchen" }), undefined);
+	assert.equal(speakerFor("Every speaker", undefined), "*");
+	assert.equal(speakerFor("the office speaker", undefined), "office");
+	assert.throws(() => speakerFor("Brad's room!", undefined), /isn't a speaker's name/);
+	// The events and their answers take the token, as turns do.
+	assert.equal((await fetch(`${base}/api/voice/events`)).status, 401);
+	assert.equal((await fetch(`${base}/api/voice/announced`, { method: "POST", body: "{}" })).status, 401);
+	assert.equal((await fetch(`${base}/api/voice/nothing`, { headers: { Authorization: `Bearer ${TOKEN}` } })).status, 404);
 });
 
 test("voice.tokens: each a long token with its agents, masked and redacted, and needing the app's server", (t) => {
