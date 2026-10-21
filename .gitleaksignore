@@ -1,0 +1,4 @@
+# Test fixtures: fake tokens used by the config, log and redaction tests
+9583e4b28759b5b72200fb0889eaf80fde9e4e17:test/config.test.ts:generic-api-key:34
+6649be1274d967ac6868f68b566b0848cb9a6c93:test/logs.test.ts:jwt:16
+dc302c79f5acac5461ff2adbba2fb6626753a785:test/redact.test.ts:generic-api-key:12
