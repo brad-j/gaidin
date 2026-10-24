@@ -1,7 +1,7 @@
 // `gaidin doctor`: checks the settings and everything the server depends on, without starting it and
 // without spending tokens. Only `--push` sends anything a person would see (one ntfy notification).
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { accessSync, constants, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Config, Loaded } from "./config.ts";
@@ -144,7 +144,7 @@ async function ntfy(config: Config, push: boolean): Promise<Check[]> {
 
 /** Web Push sends to the push services of Apple and Google (and others), so the server has to reach them. */
 async function push(config: Config): Promise<Check[]> {
-	if (config.web?.url === undefined) return [{ status: "skip", area: "push", detail: "not set up; notifications from the app need web.url" }];
+	if (config.web?.url === undefined) return [{ status: "skip", area: "push", detail: "not set up; Web Push needs web.url" }];
 	const services = ["web.push.apple.com", "fcm.googleapis.com"];
 	const unreachable = (
 		await Promise.all(services.map(async (host) => (await fetch(`https://${host}/`, { signal: AbortSignal.timeout(10_000) }).then(() => true, () => false)) ? [] : [host]))
@@ -183,7 +183,7 @@ async function web(config: Config): Promise<Check[]> {
 	if (config.web === undefined) return [{ status: "skip", area: "web", detail: "not set up" }];
 	const checks: Check[] = [];
 	const result = spawnSync("tailscale", ["serve", "status", "--json"], { encoding: "utf8", timeout: 10_000 });
-	if (result.error !== undefined) checks.push({ status: "warn", area: "web", detail: `tailscale isn't installed; the app on 127.0.0.1:${config.web.port} has no way in` });
+	if (result.error !== undefined) checks.push({ status: "warn", area: "web", detail: `tailscale isn't installed; the API on 127.0.0.1:${config.web.port} has no way in` });
 	else {
 		const served = result.stdout.includes(`127.0.0.1:${config.web.port}`);
 		checks.push({
@@ -191,11 +191,6 @@ async function web(config: Config): Promise<Check[]> {
 			area: "web",
 			detail: served ? `tailscale serve proxies to 127.0.0.1:${config.web.port}, for ${config.web.user}` : `tailscale serve isn't proxying to port ${config.web.port}; run: sudo tailscale serve --bg --yes ${config.web.port}`,
 		});
-	}
-	if (config.web.app === undefined) checks.push({ status: "warn", area: "web", detail: "web.app isn't set, so there's no app to serve; set it to the directory of moiraine's build" });
-	else {
-		const built = existsSync(join(config.web.app, "_shell.html"));
-		checks.push({ status: built ? "ok" : "fail", area: "web", detail: built ? `the app is in ${config.web.app}` : `web.app is ${config.web.app}, which has no _shell.html; deploy moiraine's build there` });
 	}
 	return checks;
 }

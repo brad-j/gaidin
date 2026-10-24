@@ -1,15 +1,10 @@
-// The app's server: moiraine's build, from the directory web.app names, and the API it works through: each agent's
-// conversations, live, its reminders, jobs, notes, skills and settings, the roster, and threads the owner starts and
-// continues (threads.ts). A request names its agent with `?agent=` or `agent` in its body, and a conversation with
-// `conversation`; without them, it's the default agent's home conversation, the root. It listens on loopback only;
-// `tailscale serve` puts HTTPS in front and adds Tailscale-User-Login, and only GAIDIN_WEB_USER is let in.
-//
-// Every path that isn't the API or /events is the app's: one of its files (its icons, manifest and service worker
-// among them, at the paths the web view had them), or its shell.
-import { createHash, randomUUID } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+// The HTTP API: each agent's conversations, live, its reminders, jobs, notes, skills and settings, the roster, and
+// threads the owner starts and continues (threads.ts). A request names its agent with `?agent=` or `agent` in its body,
+// and a conversation with `conversation`; without them, it's the default agent's home conversation, the root. It
+// listens on loopback only; `tailscale serve` puts HTTPS in front and adds Tailscale-User-Login, and only
+// GAIDIN_WEB_USER is let in. There's no web app: every path that isn't the API or /events is a 404.
+import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { extname, resolve, sep } from "node:path";
 import { type AgentEvent, type Conversation, type ConversationId, type Harness, type ModelRef, type SnapshotEvent, type ToolRegistration, type Tx, type UsageState, watchEvents } from "@earendil-works/pi-durable";
 import { AGENT_COLORS, type AgentColor, type AgentEntry, agentIdOf, DEFAULT_AGENT, type RosterService } from "./agents.ts";
 import { BrowserState } from "./browser/index.ts";
@@ -34,40 +29,16 @@ import type { Voice } from "./voice.ts";
 
 
 /**
- * On every response. Another site can't frame the page, which would carry the owner's tailnet identity, and trick a
- * click onto Allow; and the page runs only its own script, so text that got past the Markdown renderer couldn't run.
+ * On every response. Nothing here is a page: another site can't frame an answer, which would carry the owner's tailnet
+ * identity, and a browser runs no script from one.
  */
 const SECURITY_HEADERS = {
-	"Content-Security-Policy": policy(),
+	"Content-Security-Policy": "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 	"X-Frame-Options": "DENY",
 	"X-Content-Type-Options": "nosniff",
 	"Referrer-Policy": "no-referrer",
 };
 
-/** The Content-Security-Policy, with `scripts` the sources allowed besides the page's own files. */
-function policy(scripts: readonly string[] = []): string {
-	return (
-		`default-src 'self'; script-src ${["'self'", ...scripts].join(" ")}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; ` +
-		"object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-	);
-}
-
-/** Where the app was served beside the web view, before it took its place: its old addresses go to the new ones. */
-const OLD_APP_PATH = "/app";
-/** The page moiraine's build gives for every path that isn't one of its files. */
-const APP_SHELL = "_shell.html";
-const APP_TYPES = new Map([
-	[".js", "text/javascript; charset=utf-8"],
-	[".css", "text/css; charset=utf-8"],
-	[".html", "text/html; charset=utf-8"],
-	[".json", "application/json"],
-	[".webmanifest", "application/manifest+json"],
-	[".svg", "image/svg+xml"],
-	[".png", "image/png"],
-	[".ico", "image/x-icon"],
-	[".woff2", "font/woff2"],
-	[".txt", "text/plain; charset=utf-8"],
-]);
 const THINKING = ["off", "low", "medium", "high"] as const;
 
 /** The protocol's version, which /api/version reports. Raise it when an answer or a body changes shape, so an app built against another version can say so. */
@@ -174,7 +145,7 @@ export type AgentActivity = { agent: string; running: boolean; last?: { at: numb
 export type ListedSkill = Omit<Skill, "dir">;
 const listed = ({ name, description, source, files }: Skill): ListedSkill => ({ name, description, source, files });
 
-// The protocol between the app (moiraine) and this server: what each route answers, and what each POST takes.
+// The protocol between a client and this server: what each route answers, and what each POST takes.
 // The route tables below are checked against these, and the app's requests are typed by them.
 
 /** What each GET route answers. */
@@ -335,8 +306,6 @@ export function createWebServer(options: {
 	/** The voice route, which takes a bridge's token instead of the login. Without it, there's none. */
 	voice?: Voice;
 	user: string;
-	/** The directory of moiraine's build, the app, served at /. */
-	app?: string;
 	/**
 	 * Posts a message sent from the app in its conversation's Slack thread, if it has one, and then its answer (slack/).
 	 * Resolves once that's recorded. `submission` is the message's.
@@ -572,15 +541,13 @@ export function createWebServer(options: {
 
 	/**
 	 * Where the owner's browser comes back to from signing a connector in. The state it carries is the one gaidin made, so
-	 * another site can't finish a sign-in it didn't start. It goes on to the app's Connectors page, or says what failed.
+	 * another site can't finish a sign-in it didn't start. It says how it went, in plain text.
 	 */
 	async function signedIn(url: URL, response: ServerResponse) {
 		if (options.connectors === undefined) throw new HttpError(404, "There are no connectors.");
 		try {
 			const connector = await options.connectors.callback(url.searchParams);
-			// Back to the app's page, which says how it went.
-			response.writeHead(303, { ...SECURITY_HEADERS, Location: `/connectors?signed_in=${encodeURIComponent(connector.name)}`, "Cache-Control": "no-store" });
-			response.end();
+			reply(response, 200, `Signed in to ${connector.name}. You can close this page.`, "text/plain; charset=utf-8");
 		} catch (error) {
 			reply(response, 400, `Signing in didn't finish: ${error instanceof Error ? error.message : String(error)}`, "text/plain; charset=utf-8");
 		}
@@ -976,11 +943,6 @@ export function createWebServer(options: {
 			}
 			if (path === AVATAR_PATH) return avatar(url, response);
 			if (isGet(path)) return json(response, await gets[path](url));
-			if (path === OLD_APP_PATH || path.startsWith(`${OLD_APP_PATH}/`)) return redirect(response, `${path.slice(OLD_APP_PATH.length) || "/"}${url.search}`);
-			if (!path.startsWith("/api/")) {
-				if (options.app === undefined) throw new HttpError(404, "There's no app here: set web.app in gaidin's settings to the directory of moiraine's build.");
-				return serveApp(options.app, path, response);
-			}
 		}
 		if (request.method === "POST" && path === "/api/files") return json(response, await upload(request));
 		if (request.method !== "POST" || !isPost(path)) throw new HttpError(404, "Not found");
@@ -1027,46 +989,6 @@ export function createWebServer(options: {
 			else response.end();
 		});
 	});
-}
-
-/**
- * One of the app's files, or its shell for any other path, so the router's URLs survive a reload. Built files have
- * hashed names and are cached for good; the shell isn't cached. The shell's inline scripts change with each build, so
- * each is read as it's asked for and its scripts' hashes go in its policy, and a new build needs no restart.
- */
-async function serveApp(dir: string, path: string, response: ServerResponse) {
-	const root = resolve(dir);
-	let decoded: string;
-	try {
-		decoded = decodeURIComponent(path);
-	} catch {
-		throw new HttpError(400, "Malformed path");
-	}
-	const file = resolve(root, `.${decoded}`);
-	const inside = file.startsWith(root + sep) && !file.slice(root.length + 1).split(sep).some((part) => part.startsWith("."));
-	if (inside && extname(file) !== ".html" && (await stat(file).catch(() => undefined))?.isFile()) {
-		const cached = file.startsWith(resolve(root, "assets") + sep);
-		response.writeHead(200, {
-			...SECURITY_HEADERS,
-			"Content-Type": APP_TYPES.get(extname(file)) ?? "application/octet-stream",
-			"Cache-Control": cached ? "public, max-age=31536000, immutable" : "no-store",
-		});
-		return response.end(await readFile(file));
-	}
-	const shell = await readFile(resolve(root, APP_SHELL), "utf8").catch(() => undefined);
-	if (shell === undefined) throw new HttpError(404, `The app isn't built: there's no ${APP_SHELL} in web.app's directory`);
-	response.writeHead(200, {
-		...SECURITY_HEADERS,
-		"Content-Security-Policy": policy(inlineScripts(shell).map((code) => `'sha256-${createHash("sha256").update(code).digest("base64")}'`)),
-		"Content-Type": "text/html; charset=utf-8",
-		"Cache-Control": "no-store",
-	});
-	response.end(shell);
-}
-
-/** The text of each inline script in a page, as the browser hashes it. */
-function inlineScripts(html: string): string[] {
-	return [...html.matchAll(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)].map((match) => match[1]!);
 }
 
 /** Runs `work`, turning what it throws into an answer with `status` and its message: the request asked for what can't be. */
@@ -1120,12 +1042,6 @@ async function readBytes(request: IncomingMessage, max: number): Promise<Buffer>
 		chunks.push(chunk);
 	}
 	return Buffer.concat(chunks);
-}
-
-/** Sends the browser to `to` for good, keeping the method. */
-function redirect(response: ServerResponse, to: string) {
-	response.writeHead(308, { ...SECURITY_HEADERS, Location: to, "Cache-Control": "no-store" });
-	response.end();
 }
 
 function reply(response: ServerResponse, status: number, body: string | Buffer, type: string) {

@@ -68,8 +68,8 @@ function questionBlocks(request: ApprovalRequest): Message {
 	return { text: `gaidin asks: ${request.summary}`, blocks };
 }
 
-/** A hand-over: what the agent needs, a link to the profile's page in the app when there's one, and Done and Can't. */
-function handOverBlocks(request: ApprovalRequest, app: string | undefined): Message {
+/** A hand-over: what the agent needs, and Done and Can't. */
+function handOverBlocks(request: ApprovalRequest): Message {
 	const profile = request.profile ?? "";
 	const head = `gaidin asks you to take over browser profile *${escape(profile)}*: ${escape(request.summary)}`;
 	if (request.status !== "pending") {
@@ -78,12 +78,10 @@ function handOverBlocks(request: ApprovalRequest, app: string | undefined): Mess
 		return { text: `gaidin asked you to take over ${profile}: ${request.summary}`, blocks: [{ type: "section", text: { type: "mrkdwn", text: `${head}\n*${outcome}${where}.*` } }] };
 	}
 	const value = (decision: Decision) => JSON.stringify({ id: request.id, decision });
-	const buttons: Json[] = [];
-	if (app !== undefined) buttons.push({ type: "button", action_id: "gaidin-handover-open", style: "primary", text: { type: "plain_text", text: "Take over" }, url: `${app}/browser/${encodeURIComponent(profile)}` });
-	buttons.push(
+	const buttons: Json[] = [
 		{ type: "button", action_id: "gaidin-approve-once", text: { type: "plain_text", text: "Done" }, value: value("once") },
 		{ type: "button", action_id: "gaidin-deny", style: "danger", text: { type: "plain_text", text: "Can't" }, value: value("deny") },
-	);
+	];
 	return {
 		text: `gaidin asks you to take over ${profile}: ${request.summary}`,
 		blocks: [
@@ -93,10 +91,9 @@ function handOverBlocks(request: ApprovalRequest, app: string | undefined): Mess
 	};
 }
 
-/** `app`: the app's address, for a hand-over's link. */
-export function blocksFor(request: ApprovalRequest, app?: string): Message {
+export function blocksFor(request: ApprovalRequest): Message {
 	if (request.kind === "question") return questionBlocks(request);
-	if (request.kind === "handover") return handOverBlocks(request, app);
+	if (request.kind === "handover") return handOverBlocks(request);
 	const what = `\`${escape(request.summary)}\``;
 	if (request.status !== "pending") {
 		const how = request.decision === "always" && request.always !== undefined ? request.always.done : request.decision === "once" ? "Allowed once" : OUTCOME[request.status];
@@ -159,8 +156,6 @@ export function createSlackNotifications(options: {
 	snooze: (id: number, minutes: number) => Promise<Reminder | undefined>;
 	/** Resumes a paused job. Nothing if it isn't one. */
 	resume: (id: number) => Promise<Job | undefined>;
-	/** The app's address, which a hand-over links to. */
-	app?: string;
 }) {
 	const { harness, root, approvals, voice, channels } = options;
 	const { api } = voice;
@@ -177,7 +172,7 @@ export function createSlackNotifications(options: {
 	async function ask(request: ApprovalRequest) {
 		const thread = await threadOf(request.conversationId);
 		const channel = thread?.channel ?? (await channels.channelOf(request.agent));
-		const { ts } = await voice.postMessage({ channel, ...blocksFor(request, options.app), thread_ts: thread?.ts }, await channels.nameOf(request.agent));
+		const { ts } = await voice.postMessage({ channel, ...blocksFor(request), thread_ts: thread?.ts }, await channels.nameOf(request.agent));
 		if (ts === undefined) return;
 		if (channel === channels.home) await approvals.note(request.id, { slackTs: ts });
 		else await approvals.note(request.id, { slackTs: ts, slackChannel: channel });
@@ -187,7 +182,7 @@ export function createSlackNotifications(options: {
 		// The ts is stored after posting, so read it back rather than trusting the event's copy.
 		const stored = (await approvals.state()).requests[request.id];
 		if (stored?.slackTs === undefined) return;
-		await api("chat.update", { channel: stored.slackChannel ?? channels.home, ts: stored.slackTs, ...blocksFor(request, options.app) });
+		await api("chat.update", { channel: stored.slackChannel ?? channels.home, ts: stored.slackTs, ...blocksFor(request) });
 	}
 
 	const adapter: Adapter = {
@@ -217,8 +212,7 @@ export function createSlackNotifications(options: {
 					await post(channels.home, notice.text);
 					return true;
 				case "connector": {
-					const page = options.app === undefined ? "the app's Connectors page" : `<${options.app}/connectors|the Connectors page>`;
-					await post(channels.home, `The *${notice.name}* connector needs signing in again (${notice.problem}). Sign it in from ${page}.`);
+					await post(channels.home, `The *${notice.name}* connector needs signing in again (${notice.problem}). Sign it in with \`gaidin connector connect ${notice.name}\`.`);
 					return true;
 				}
 				case "request":

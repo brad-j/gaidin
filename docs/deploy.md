@@ -1,6 +1,6 @@
 # Deploying
 
-gaidin needs Linux, Node 22.18 or later (it runs the TypeScript directly), pnpm, bubblewrap, and an API key for the model. It can run on a workstation, but it's meant to live on a small always-on machine, so reminders fire and Slack gets answered while your desktop is off. It needs no inbound ports: Slack is an outbound connection and the app goes through Tailscale.
+gaidin needs Linux, Node 22.18 or later (it runs the TypeScript directly), pnpm, bubblewrap, and an API key for the model. It can run on a workstation, but it's meant to live on a small always-on machine, so reminders fire and Slack gets answered while your desktop is off. It needs no inbound ports: Slack is an outbound connection and the API goes through Tailscale.
 
 ## The gaidin command
 
@@ -11,7 +11,7 @@ gaidin watch                    # print everything the agent does, until Ctrl+C
 gaidin doctor                   # check the settings and everything the server needs
 gaidin doctor --push            # the same, and send a test notification through ntfy
 gaidin config                   # print the settings in use, secrets shortened
-gaidin version                  # print the version and the app protocol; --version does the same
+gaidin version                  # print the version and the API protocol; --version does the same
 ```
 
 From a checkout, `pnpm gaidin ...` runs it, and `pnpm serve`, `pnpm ask`, `pnpm watch` and `pnpm doctor` are shortcuts. On the VM, `setup.sh` installs `/usr/local/bin/gaidin`, which runs it as the service's user with the service's settings.
@@ -39,7 +39,7 @@ pnpm serve
 4. Copy `deploy/config.example.json` to `/etc/gaidin/config.json` and fill it in. `setup.sh` makes it readable by the service only (`root:gaidin`, mode 640).
 5. `gaidin doctor`, then run `setup.sh` again to start the service, and check `journalctl -u gaidin`.
 
-`setup.sh` is safe to rerun and is how you update: it pulls, installs dependencies, installs bubblewrap and its AppArmor profile and `poppler-utils` (for PDFs sent in Slack), installs the browser's Chromium when the settings have a `browser` section (below), allows memory overcommit (Oxlint, which checks [self-written tools](tools.md#self-written-tools), reserves 4 GiB of address space per thread), writes the unit and the `gaidin` command, creates the workspace key, restarts the service, and runs `tailscale serve` for the app when Tailscale is logged in. When a change touches `setup.sh` itself, run it twice: the first run still executes the old copy.
+`setup.sh` is safe to rerun and is how you update: it pulls, installs dependencies, installs bubblewrap and its AppArmor profile and `poppler-utils` (for PDFs sent in Slack), installs the browser's Chromium when the settings have a `browser` section (below), allows memory overcommit (Oxlint, which checks [self-written tools](tools.md#self-written-tools), reserves 4 GiB of address space per thread), writes the unit and the `gaidin` command, creates the workspace key, restarts the service, and runs `tailscale serve` for the API when Tailscale is logged in. When a change touches `setup.sh` itself, run it twice: the first run still executes the old copy.
 
 On the VM:
 
@@ -52,29 +52,13 @@ On the VM:
 | `/var/lib/gaidin/deploy` | the deploy key, hidden from the service |
 | `/opt/gaidin/browsers` | the browser's Chromium, which only root can change |
 
-To turn on the [browser](tools.md#browser), add `"browser": { "profiles": ["personal"] }` to the settings and run `setup.sh`. It installs the libraries Chromium needs and a font (about 25 packages with `--no-install-recommends`, Mesa among them), Playwright's Chromium headless shell in `/opt/gaidin/browsers` (about 280 MB), and `deploy/vm/chromium.apparmor`, which lets Chromium keep its own sandbox under Ubuntu's limit on user namespaces. `gaidin doctor` then starts Chromium to check. Give an agent a profile from the app's settings page or with `gaidin agent set ID --profiles personal`.
+To turn on the [browser](tools.md#browser), add `"browser": { "profiles": ["personal"] }` to the settings and run `setup.sh`. It installs the libraries Chromium needs and a font (about 25 packages with `--no-install-recommends`, Mesa among them), Playwright's Chromium headless shell in `/opt/gaidin/browsers` (about 280 MB), and `deploy/vm/chromium.apparmor`, which lets Chromium keep its own sandbox under Ubuntu's limit on user namespaces. `gaidin doctor` then starts Chromium to check. Give an agent a profile with `gaidin agent set ID --profiles personal`.
 
 Back up the VM or the data directory; the SQLite file is the whole of gaidin's state.
 
-## The app
-
-The app, [moiraine](surfaces.md#the-app), is built on your machine and copied to the VM; the VM needs no second checkout or build tools. In moiraine's checkout, beside this one:
-
-```sh
-pnpm ship    # GAIDIN_HOST, default ubuntu@gaidin, with passwordless sudo
-```
-
-It asks the VM's gaidin which [protocol](surfaces.md#the-api) it speaks and stops unless it's the one the build is for, so deploy gaidin first (push, then `setup.sh`) when both changed. Then it builds and copies the build to `/var/lib/gaidin/moiraine` over Tailscale SSH: built files first, keeping older ones for two weeks so a page loaded before the copy still finds its own, then the shell. gaidin reads the shell as it's asked for, so a new build needs no restart.
-
-Once, add the directory to the settings and restart gaidin, which reads its settings at start:
-
-```json
-"web": { "user": "...", "url": "...", "app": "/var/lib/gaidin/moiraine" }
-```
-
 ## The model and its key
 
-gaidin uses Claude through an API key, by default `claude-haiku-5-5`. Create the key in its own Claude Console workspace with a spend limit, so a runaway loop stops at the limit even if gaidin's own [spend limits](#spend-limits) miss it. A Claude Max plan includes monthly API credit, claimed under Settings > Billing on claude.ai into a linked Console organization; with auto-reload off, requests stop when the month's credit runs out instead of charging. The app switches between the models in `model.choices` per conversation.
+gaidin uses Claude through an API key, by default `claude-haiku-5-5`. Create the key in its own Claude Console workspace with a spend limit, so a runaway loop stops at the limit even if gaidin's own [spend limits](#spend-limits) miss it. A Claude Max plan includes monthly API credit, claimed under Settings > Billing on claude.ai into a linked Console organization; with auto-reload off, requests stop when the month's credit runs out instead of charging. `POST /api/settings` switches a conversation between the models in `model.choices`.
 
 ## Adding a workspace
 
@@ -105,21 +89,20 @@ The settings file is JSON: the first of `--config`, `GAIDIN_CONFIG`, `./gaidin.j
 | `keys` | `GAIDIN_KEYS` | `/var/lib/gaidin/keys` | SSH keys for workspaces and container logs, and the workspace list. |
 | `model.apiKey` | `ANTHROPIC_API_KEY` | | Required unless the provider is `faux`. |
 | `model.id` | `GAIDIN_MODEL_ID` | `claude-haiku-5-5` | The model new conversations start with. |
-| `model.choices` | | Haiku, Sonnet and Opus 5.5 | Models the app offers. |
+| `model.choices` | | Haiku, Sonnet and Opus 5.5 | Models a conversation can switch to. |
 | `model.provider` | `GAIDIN_MODEL` | `anthropic` | `faux` runs a scripted model with no key or network, for testing. |
 | `ntfy.url` | `NTFY_URL` | | Full topic URL for [notifications](surfaces.md#notifications) through ntfy. Without it and without `web.url`, reminders print to the server's output. |
 | `ntfy.token` | `NTFY_TOKEN` | | Access token, if the topic needs one. |
 | `alerts.url` | | | An ntfy topic URL that monitoring pushes alerts to. gaidin follows it and investigates what arrives ([Tools](tools.md#alerts)). A secret, like `ntfy.url`. |
 | `alerts.token` | | | Access token, if that topic needs one. |
-| `ntfy.icon` | | | URL of a PNG or JPEG the ntfy app shows beside each push. The phone fetches it, so the app's `https://<gaidin's tailnet name>/icon-192.png` works while the phone is on the tailnet. |
+| `ntfy.icon` | | | URL of a PNG or JPEG the ntfy app shows beside each push. The phone fetches it, so it has to be somewhere the phone can reach. |
 | `slack.botToken` | `SLACK_BOT_TOKEN` | | `xoxb-` token. All four Slack values or none. |
 | `slack.appToken` | `SLACK_APP_TOKEN` | | `xapp-` token with `connections:write`. |
-| `slack.channelId` | `SLACK_CHANNEL_ID` | | The default agent's channel. Other agents' channels are in the roster, set from the app or `gaidin agent set --channel`. |
+| `slack.channelId` | `SLACK_CHANNEL_ID` | | The default agent's channel. Other agents' channels are in the roster, set with `gaidin agent set --channel`. |
 | `slack.userId` | `SLACK_USER_ID` | | The one Slack user it answers. |
-| `web.user` | `GAIDIN_WEB_USER` | | Tailscale login allowed into the app. Without it there's no app. |
-| `web.port` | `GAIDIN_WEB_PORT` | `8410` | Loopback port for the app. |
-| `web.url` | | | The app's address on the tailnet, such as `https://gaidin.<tailnet>.ts.net`. With it, devices can sign up for [notifications](surfaces.md#notifications) from the app, and tapping an ntfy reminder opens the app and has buttons to snooze it. |
-| `web.app` | | | The directory of [moiraine](surfaces.md#the-app)'s build, the app, served at `/` ([The app](#the-app)). Without it there's no app. Relative to the settings file. |
+| `web.user` | `GAIDIN_WEB_USER` | | Tailscale login allowed into the [API](surfaces.md#the-api). Without it there's no API. |
+| `web.port` | `GAIDIN_WEB_PORT` | `8410` | Loopback port for the API. |
+| `web.url` | | | The API's address on the tailnet, such as `https://gaidin.<tailnet>.ts.net`. With it, devices can sign up for [Web Push](surfaces.md#web-push), ntfy reminders have buttons to snooze them, and connectors can sign in with OAuth. |
 | `sandbox` | `GAIDIN_SANDBOX` | `bwrap` | `none` runs tools without bubblewrap. |
 | `search.provider` | | | `tavily`; without it there's no `web_search`. |
 | `search.apiKey` | `TAVILY_API_KEY` | | A Tavily key, `tvly-...`. Setting the variable alone also turns search on. |
@@ -128,14 +111,14 @@ The settings file is JSON: the first of `--config`, `GAIDIN_CONFIG`, `./gaidin.j
 | `approvals.waitHours` | `GAIDIN_APPROVAL_WAIT_HOURS` | `168` | How long approvals and questions wait, up to 576. |
 | `browser.profiles` | | | Names of the [browser](tools.md#browser) profiles agents can be given, such as `["personal"]`: lowercase letters, digits and `-`. Without them there's no browser. |
 | `connectors.clientId` | | `<web.url>/api/connectors/client.json` | The https URL of a public copy of gaidin's client id document, for [connector](tools.md#connectors) services on the internet that fetch it. `gaidin connector client-document` prints it. |
-| `voice.tokens` | | | The [voice](surfaces.md#voice) bridges: each `{ "name": "...", "token": "...", "agents": ["..."] }`, with a token of at least 32 characters (`openssl rand -base64 32`) and the agents it may talk to, the first the default. Needs `web.user`, since the route is on the app's server. |
+| `voice.tokens` | | | The [voice](surfaces.md#voice) bridges: each `{ "name": "...", "token": "...", "agents": ["..."] }`, with a token of at least 32 characters (`openssl rand -base64 32`) and the agents it may talk to, the first the default. Needs `web.user`, since the route is on the API's server. |
 | `extensions.homelab` | | off | The [homelab extension](extending.md#the-homelab-extension). |
 
 The secrets are `model.apiKey`, the ntfy URL and token, the two Slack tokens, and `search.apiKey`. Keep the file readable only by you or the service; `gaidin doctor` warns when anyone else can read it.
 
 ## Spend limits
 
-gaidin totals what its conversations have cost, from Pi Durable's per-model costs, and counts from the start of each local day and month. When the day's spend reaches `budget.daily`, or the month's reaches `budget.monthly`, it stops making model requests: every run, including the owner's own messages and scheduled jobs, ends unanswered and says why. It tells the owner once, in Slack or by push, and once earlier at 80% of the daily limit. A daily stop lifts at local midnight and a monthly one at the start of the next month. The app's status line shows today's spend against the limit and, while stopped, a button that allows another day's limit; `/budget` shows the same.
+gaidin totals what its conversations have cost, from Pi Durable's per-model costs, and counts from the start of each local day and month. When the day's spend reaches `budget.daily`, or the month's reaches `budget.monthly`, it stops making model requests: every run, including the owner's own messages and scheduled jobs, ends unanswered and says why. It tells the owner once, in Slack or by push, and once earlier at 80% of the daily limit. A daily stop lifts at local midnight and a monthly one at the start of the next month. `GET /api/budget` gives today's spend against the limit, and while stopped, `POST /api/budget/allow` allows another day's limit.
 
 The total is read after each model response, so the request that crosses a limit finishes and the stop starts with the next one. Costs come from the model catalog's prices, which are estimates of what the provider bills. Set the Console workspace's own spend limit as well; that one is enforced by the provider.
 
@@ -147,4 +130,4 @@ The total is read after each model response, so the request that crosses a limit
 
 `pnpm check` runs the type checker, Oxlint with the anti-slop rules (`.oxlintrc.json`, warnings counted as failures) and the tests. Tests are exempt from the rules about parsing outside input, since a wrong shape there fails an assertion. The sandbox tests run bubblewrap for real and are skipped where it isn't installed. The Socket Mode client has no automated tests.
 
-The app's browser tests are moiraine's (`pnpm e2e` there). Each starts this checkout's `e2e/server.ts`, gaidin on a scripted model with a fresh data directory, serving the app's build, so they need no key or network.
+`e2e/server.ts` runs the API on a scripted model with a fresh data directory, for a client's tests, so they need no key or network. It lets in the login given as its first argument and prints its port.

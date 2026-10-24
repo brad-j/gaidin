@@ -344,7 +344,7 @@ test("discovery holds a server to its own host or public https, its issuer to th
 	await assert.rejects(oauth.discover(server), /for another resource/);
 });
 
-test("the app's routes add, sign in, set and remove a connector, the callback goes back to its page, and gaidin serves its client id document", async (t) => {
+test("the API's routes add, sign in, set and remove a connector, the callback says it's signed in, and gaidin serves its client id document", async (t) => {
 	const server = await fakeMcp(t, { era: "modern", tools: () => [SEARCH, SEND], oauth: {} });
 	const { host } = await signingHost(t);
 	const web = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, threads: host.threads, user: "brad@example.com", connectors: host.connectors, switchable: host.switchable, approvals: host.approvals });
@@ -371,8 +371,8 @@ test("the app's routes add, sign in, set and remove a connector, the callback go
 	const { url } = (await (await post("/api/connectors/connect", { name: "home" })).json()) as { url: string };
 	const back = await signIn(url);
 	const done = await fetch(`${base}/api/connectors/callback?${back}`, { headers, redirect: "manual" });
-	assert.equal(done.status, 303);
-	assert.equal(done.headers.get("location"), "/connectors?signed_in=home");
+	assert.equal(done.status, 200);
+	assert.equal(await done.text(), "Signed in to home. You can close this page.");
 	type Listed = { name: string; state: string; tokens: number; tools: { name: string; setting: string; review?: string }[] };
 	const [listed] = (await (await fetch(`${base}/api/connectors`, { headers })).json()) as Listed[];
 	assert.deepEqual([listed!.state, listed!.tools.map((t) => [t.name, t.setting, t.review])], ["connected", [["search_mail", "allow", undefined], ["send_mail", "ask", undefined]]]);

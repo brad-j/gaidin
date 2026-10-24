@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +14,7 @@ import { createWebServer, type Settings } from "../src/web.ts";
 
 const BRAD = "brad@example.com";
 
-async function start(t: TestContext, app?: string, config?: Config) {
+async function start(t: TestContext, config?: Config) {
 	const dir = mkdtempSync(join(tmpdir(), "gaidin-test-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
 	const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
@@ -23,7 +22,7 @@ async function start(t: TestContext, app?: string, config?: Config) {
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const host = await startHost({ config, dataDir: dir, models, model: { provider: "faux", modelId: "faux-1" }, adapters: { push: { send: async () => true } } });
-	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, profiles: host.profiles, threads: host.threads, user: BRAD, app, uploads: host.uploads, avatars: host.avatars, history: host.history, switchable: host.switchable, approvals: host.approvals, snooze: host.reminders.snooze });
+	const server = createWebServer({ harness: host.harness, root: host.root, agents: host.agents, profiles: host.profiles, threads: host.threads, user: BRAD, uploads: host.uploads, avatars: host.avatars, history: host.history, switchable: host.switchable, approvals: host.approvals, snooze: host.reminders.snooze });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(async () => {
 		server.closeAllConnections();
@@ -50,81 +49,28 @@ async function lastUserEntry(host: Awaited<ReturnType<typeof startHost>>) {
 	throw new Error("no message from the owner");
 }
 
-/** A stand-in for moiraine's build: a shell with two inline scripts, a hashed script, an icon and a dotfile. */
-function fakeApp(t: TestContext) {
-	const app = mkdtempSync(join(tmpdir(), "gaidin-app-"));
-	t.after(() => rmSync(app, { recursive: true, force: true }));
-	const inline = ["document.currentScript.remove()", "self.$_TSR={};"];
-	writeFileSync(join(app, "_shell.html"), `<html><head><title>gaidin</title></head><body><script>${inline[0]}</script><script data-part="">${inline[1]}</script><script type="module" src="/assets/index-abc.js"></script></body></html>`);
-	mkdirSync(join(app, "assets"));
-	writeFileSync(join(app, "assets", "index-abc.js"), "console.log(1)");
-	writeFileSync(join(app, "icon-192.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-	writeFileSync(join(app, "manifest.webmanifest"), JSON.stringify({ id: "/", start_url: "/" }));
-	writeFileSync(join(app, ".hidden"), "not served");
-	return { app, hashes: inline.map((code) => `'sha256-${createHash("sha256").update(code).digest("base64")}'`) };
-}
-
-test("only Brad's tailnet login gets in, and the app's files are its own: icons and manifest at the paths they had", async (t) => {
-	const { call } = await start(t, fakeApp(t).app);
-	assert.equal((await fetch((await call("/")).url)).status, 403);
-	assert.equal((await call("/", { as: "someone@example.com" })).status, 403);
-	const page = await call("/");
-	assert.equal(page.status, 200);
-	assert.match(await page.text(), /<title>gaidin<\/title>/);
-	const icon = await call("/icon-192.png");
-	assert.equal(icon.headers.get("content-type"), "image/png");
-	assert.equal(icon.headers.get("cache-control"), "no-store");
-	assert.equal((await call("/manifest.webmanifest")).headers.get("content-type"), "application/manifest+json");
+test("only Brad's tailnet login gets in", async (t) => {
+	const { call } = await start(t);
+	assert.equal((await fetch((await call("/api/version")).url)).status, 403);
+	assert.equal((await call("/api/version", { as: "someone@example.com" })).status, 403);
+	assert.equal((await call("/api/version")).status, 200);
 });
 
-test("every response forbids framing, and runs only the app's own script", async (t) => {
-	const { call } = await start(t, fakeApp(t).app);
+test("every response forbids framing and runs no script", async (t) => {
+	const { call } = await start(t);
 	for (const response of [await call("/"), await call("/api/settings"), await call("/", { as: "someone@example.com" })]) {
 		assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
-		assert.match(response.headers.get("content-security-policy") ?? "", /script-src 'self'[ ;]/);
+		assert.match(response.headers.get("content-security-policy") ?? "", /default-src 'none'/);
 		assert.equal(response.headers.get("x-frame-options"), "DENY");
 		assert.equal(response.headers.get("x-content-type-options"), "nosniff");
 	}
-	assert.match((await call("/api/settings")).headers.get("content-security-policy")!, /script-src 'self';/);
 });
 
-test("the app's shell answers every path that isn't the API or one of its files, with its inline scripts allowed by hash, and its old /app/ addresses go to the new ones", async (t) => {
-	const { app, hashes } = fakeApp(t);
-	const { call } = await start(t, app);
-
-	const script = await call("/assets/index-abc.js");
-	assert.equal(await script.text(), "console.log(1)");
-	assert.match(script.headers.get("content-type")!, /^text\/javascript/);
-	assert.match(script.headers.get("cache-control")!, /immutable/);
-
-	// Any other path, a dotfile and a way out of the directory included, gets the shell, which isn't cached.
-	for (const path of ["/", "/gaidin", "/gaidin/t/12", "/activity", "/.hidden", "/..%2fpackage.json", "/_shell.html", "/assets/missing.js"]) {
-		const shell = await call(path);
-		assert.equal(shell.status, 200, path);
-		assert.match(await shell.text(), /^<html>/, path);
-		assert.equal(shell.headers.get("cache-control"), "no-store", path);
-		assert.ok(shell.headers.get("content-security-policy")!.includes(`script-src 'self' ${hashes.join(" ")};`), path);
+test("there's no web app: every path that isn't the API is a 404, the app's old addresses included", async (t) => {
+	const { call } = await start(t);
+	for (const path of ["/", "/gaidin", "/gaidin/t/12", "/sw.js", "/manifest.webmanifest", "/icon-192.png", "/app/gaidin", "/api/nothing"]) {
+		assert.equal((await call(path)).status, 404, path);
 	}
-	assert.equal((await call("/%E0%A4%A")).status, 400);
-	// The API's own paths aren't the app's.
-	assert.equal((await call("/api/nothing")).status, 404);
-
-	for (const [from, to] of [["/app", "/"], ["/app/", "/"], ["/app/gaidin/t/12", "/gaidin/t/12"], ["/app/gaidin/skills/gaidin/tools.md?create=true", "/gaidin/skills/gaidin/tools.md?create=true"]] as const) {
-		const moved = await call(from, { redirect: "manual" });
-		assert.equal(moved.status, 308, from);
-		assert.equal(moved.headers.get("location"), to, from);
-	}
-});
-
-test("without web.app there's no app, and a missing build says so", async (t) => {
-	const none = await (await start(t)).call("/");
-	assert.equal(none.status, 404);
-	assert.match(await none.text(), /set web\.app/);
-	const empty = mkdtempSync(join(tmpdir(), "gaidin-app-"));
-	t.after(() => rmSync(empty, { recursive: true, force: true }));
-	const missing = await (await start(t, empty)).call("/");
-	assert.equal(missing.status, 404);
-	assert.match(await missing.text(), /The app isn't built/);
 });
 
 test("a post from another site is refused", async (t) => {
@@ -295,7 +241,7 @@ test("the default agent's hosts are the approvals' fetch hosts, read and saved t
 });
 
 test("an agent's browser profiles are listed, given and taken away through the roster routes", async (t) => {
-	const { call, post } = await start(t, undefined, configFor({ browser: { profiles: ["personal", "work"] } }));
+	const { call, post } = await start(t, configFor({ browser: { profiles: ["personal", "work"] } }));
 	type Entry = { id: string; profiles?: string[] };
 	assert.deepEqual(await (await call("/api/profiles")).json(), { names: ["personal", "work"] });
 	await post("/api/agents/save", { id: "scout", name: "Scout", job: "" });

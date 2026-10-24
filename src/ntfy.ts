@@ -32,10 +32,7 @@ export function ntfyNotifier(ntfy: { url: string; token?: string; icon?: string 
 	return async (reminder) => {
 		const headers = new Headers({ Title: "gaidin", Tags: "alarm_clock" });
 		if (icon) headers.set("Icon", icon);
-		if (web !== undefined) {
-			headers.set("Click", web);
-			headers.set("Actions", snoozeActions(web, reminder.taskId));
-		}
+		if (web !== undefined) headers.set("Actions", snoozeActions(web, reminder.taskId));
 		if (token) headers.set("Authorization", `Bearer ${token}`);
 		const response = await fetch(url, { method: "POST", body: reminder.text, headers, signal: AbortSignal.timeout(15_000) });
 		if (!response.ok) throw new Error(`ntfy answered ${response.status}`);

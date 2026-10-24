@@ -1,7 +1,6 @@
-// The web view on a scripted model, for the browser tests: a fresh data directory, a page at
-// site.test to fetch, and a model that picks its tool call from the owner's message. Lets in the
-// tailnet login given as its first argument, prints the port once it listens, and removes the data
-// directory when stopped. A second argument is a directory of moiraine's build to serve at /app/, for moiraine's tests.
+// The API on a scripted model, for a client's tests: a fresh data directory, a page at site.test to
+// fetch, and a model that picks its tool call from the owner's message. Lets in the tailnet login
+// given as its first argument, prints the port once it listens, and removes the data directory when stopped.
 // The voice route takes VOICE_TOKEN and reaches the default agent, so a test can start a speaker's thread.
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
@@ -21,7 +20,6 @@ import { createWebServer } from "../src/web.ts";
 const VOICE_TOKEN = "e2e-voice-token-0123456789abcdefghij";
 
 const user = process.argv[2] ?? "brad@example.com";
-const app = process.argv[3];
 
 // site.test: plain text, and at /form a page with a field in its top left corner, for the browser's take-over view.
 const site = createServer((request, response) => {
@@ -148,7 +146,6 @@ const web = createWebServer({
 	threads: host.threads,
 	voice: createVoice({ harness: host.harness, threads: host.threads, approvals: host.approvals, tokens: [{ name: "e2e", token: VOICE_TOKEN, agents: ["gaidin"] }] }),
 	user,
-	app,
 	switchable: host.switchable,
 	approvals: host.approvals,
 	budget: host.budget,

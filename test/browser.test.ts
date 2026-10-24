@@ -442,14 +442,13 @@ test("the owner's input is played in as few steps as have the same effect", () =
 	assert.deepEqual(compact([wheel(8), { type: "text", text: "a" }, wheel(8)]), [wheel(8), { type: "text", text: "a" }, wheel(8)]);
 });
 
-test("a hand-over in Slack links to the profile's page, with Done and Can't, and says how it ended", () => {
+test("a hand-over in Slack has Done and Can't, and says how it ended", () => {
 	const request: ApprovalRequest = { id: "h1", conversationId: 1, taskId: 2, tool: "browser_hand_over", summary: "Sign in to the shop", kind: "handover", profile: "personal", createdAt: 0, expiresAt: 1, status: "pending" };
-	const asked = JSON.stringify(blocksFor(request, "https://gaidin.example.ts.net"));
+	const asked = JSON.stringify(blocksFor(request));
 	assert.match(asked, /take over browser profile \*personal\*: Sign in to the shop/);
-	assert.match(asked, /"url":"https:\/\/gaidin.example.ts.net\/browser\/personal"/);
+	assert.doesNotMatch(asked, /"url"/);
 	assert.match(asked, /"text":"Done".*"value":"\{\\"id\\":\\"h1\\",\\"decision\\":\\"once\\"\}"/);
 	assert.match(asked, /"text":"Can't"/);
-	assert.doesNotMatch(JSON.stringify(blocksFor(request)), /"url"/);
 	assert.match(JSON.stringify(blocksFor({ ...request, status: "approved", by: "web" })), /Done in the app\./);
 	assert.match(JSON.stringify(blocksFor({ ...request, status: "denied", by: "slack" })), /You couldn't in Slack\./);
 });

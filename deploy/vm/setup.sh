@@ -88,11 +88,11 @@ else
 	echo "fill it in, check it with 'gaidin doctor', then rerun this script"
 fi
 
-# The app: HTTPS on the tailnet name, proxied to the loopback port the server listens on when
+# The API: HTTPS on the tailnet name, proxied to the loopback port the server listens on when
 # GAIDIN_WEB_USER is set. tailscale serve adds the Tailscale-User-Login header the server checks, and
 # keeps this setting across restarts.
 if tailscale status >/dev/null 2>&1; then
 	tailscale serve --bg --yes 8410 >/dev/null
 else
-	echo "Web view not served: log in to Tailscale, then rerun"
+	echo "API not served: log in to Tailscale, then rerun"
 fi

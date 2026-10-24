@@ -40,11 +40,8 @@ export type Config = {
 	/** `icon` is the URL of a PNG or JPEG the ntfy app shows beside each push. */
 	ntfy?: { url: string; token?: string; icon?: string };
 	slack?: SlackConfig;
-	/**
-	 * `url` is where the owner reaches the app, for links and buttons in pushes. `app` is the directory of
-	 * moiraine's build, the app, served at /.
-	 */
-	web?: { user: string; port: number; url?: string; app?: string };
+	/** The HTTP API. `url` is its address on the tailnet, for buttons in pushes and connectors' sign-ins. */
+	web?: { user: string; port: number; url?: string };
 	sandbox: "bwrap" | "none";
 	/** Spend limits in dollars; 0 is no limit. */
 	budget: { daily: number; monthly: number };
@@ -229,15 +226,15 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	if (slack.channelId !== undefined && !/^[CG][A-Z0-9]+$/.test(slack.channelId)) errors.push("slack.channelId should look like C0123ABCD");
 	if (slack.userId !== undefined && !/^[UW][A-Z0-9]+$/.test(slack.userId)) errors.push("slack.userId should look like U0123ABCD (a member ID, not a name)");
 
-	// Web view
+	// The HTTP API
 	const webSection = section("web");
 	const webUser = e.webUser ?? text("web.user", webSection.user);
 	const portValue = e.webPort ?? webSection.port ?? 8410;
 	const port = Number(portValue);
 	if (!Number.isInteger(port) || port < 1 || port > 65535) errors.push(`web.port must be a port number, not ${JSON.stringify(portValue)}`);
 	const webUrl = text("web.url", webSection.url)?.replace(/\/+$/, "");
-	if (webUrl !== undefined && !/^https?:\/\/[^/]+$/.test(webUrl)) errors.push("web.url must be the app's address, like https://gaidin.example.ts.net");
-	const webApp = text("web.app", webSection.app);
+	if (webUrl !== undefined && !/^https?:\/\/[^/]+$/.test(webUrl)) errors.push("web.url must be the API's address, like https://gaidin.example.ts.net");
+	if (webSection.app !== undefined) warnings.push("web.app is no longer used: gaidin serves no web app, only its API");
 	if (ntfyUrl === undefined && (webUser === undefined || webUrl === undefined)) {
 		warnings.push("Neither ntfy.url nor web.url: reminders print to the server's output instead of reaching a phone");
 	}
@@ -309,7 +306,7 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 		if (new Set(tokens.map((t) => t.name)).size !== tokens.length) errors.push("voice.tokens names a bridge twice");
 		if (new Set(tokens.map((t) => t.token)).size !== tokens.length) errors.push("voice.tokens gives two bridges the same token");
 		if (tokens.length > 0) voice = { tokens };
-		if (voice !== undefined && webUser === undefined) warnings.push("voice.tokens needs web.user: the voice route is on the app's server");
+		if (voice !== undefined && webUser === undefined) warnings.push("voice.tokens needs web.user: the voice route is on the API's server");
 	}
 
 	// Connectors
@@ -377,7 +374,6 @@ export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; se
 	if (webUser !== undefined) {
 		config.web = { user: webUser, port };
 		if (webUrl !== undefined) config.web.url = webUrl;
-		if (webApp !== undefined) config.web.app = path(webApp);
 	}
 	if (search !== undefined) config.search = search;
 	if (browser !== undefined) config.browser = browser;

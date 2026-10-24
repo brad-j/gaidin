@@ -9,6 +9,7 @@
 - Everything stays generic enough to release: machine-specific values live in settings or in the homelab extension.
 - Pocket Pi isn't a surface. Voice is a speaker in a room for the household, with speech handled outside gaidin ([Design: voice](#design-voice)); there's no push-to-talk in the app.
 - Hindsight (retired 2026-09-30) and Dozzle (retired 2026-10-10) aren't part of it.
+- No web app, since 2026-10-24: gaidin serves its HTTP API and nothing else. moiraine is no longer served and `web.app` is gone; the API stays as it was, for a client of the owner's own. [Design: the app](#design-the-app) and the items that built it are history.
 
 ## Done
 
@@ -63,12 +64,13 @@
 49. Shared notes per agent: a roster entry's `sharedNotes: false` keeps the shared notes out of that agent's prompt, and its `remember` with `shared`, `update_memory` and `forget` on a shared note are refused, for an agent people other than the owner talk to; the default agent always has them. Set with `gaidin agent set --shared-notes on|off` or `sharedNotes` on `/api/agents/save` (protocol 16) ([Tools](tools.md#memory)). Step 1 of the voice design, with the `family` agent made in the roster.
 50. The voice route: `POST /api/voice/turn` takes a bridge's bearer token from `voice.tokens`, which reaches only that route and the agents it lists, and answers with an event stream of `say`, `waiting` and `done`. Each speaker has a rolling thread, origin `voice`, that starts afresh after 5 minutes of quiet; a turn's key makes it land once; what a speaker heard is outside text to the approvals hook, except that cancelling a reminder after speech alone doesn't ask, so the room can stop a timer (protocol 17) ([Surfaces](surfaces.md#voice), [Security](security.md#voice)). Step 2 of the voice design.
 51. Reminders on speakers: a reminder or timer set while talking at a speaker is said there (`remind` takes `to`: a speaker, every speaker or the phone), offered to the voice bridges on `GET /api/voice/events` and confirmed on `/api/voice/announced`; one no bridge says within 20 seconds reaches the phone, naming where it was missed (protocol 18) ([Surfaces](surfaces.md#voice), [Tools](tools.md#reminders)). Step 4 of the voice design, gaidin's side.
+52. No web app: gaidin no longer serves moiraine's build. `web.app`, the shell and its per-build Content-Security-Policy, and the redirects from `/app/` are gone, so every path that isn't the API is a 404, and every response's policy is `default-src 'none'`. A `web.app` left in the settings is a warning. A connector's sign-in ends on a plain-text page instead of the Connectors page, Slack's hand-over has no Take over link, its connector notice names `gaidin connector connect`, and an ntfy reminder opens nothing when tapped. The routes, their shapes and `PROTOCOL` are unchanged, and `e2e/server.ts` still runs the API on a scripted model for a client's tests ([Surfaces](surfaces.md#the-api)).
 
 ## Next
 
 Candidates:
 
-- Owner-written allow and ask-first rules (designed below). Several named agents, the app, the browser and connectors (designed below) are done; trying more connectors with real services is ongoing.
+- Owner-written allow and ask-first rules (designed below). Several named agents, the browser and connectors (designed below) are done; trying more connectors with real services is ongoing.
 - Release polish (designed below): a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
 - Voice (designed below): a household speaker and a `family` agent, with timers and reminders it speaks.
 

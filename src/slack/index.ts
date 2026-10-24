@@ -48,7 +48,6 @@ export function createSlack(settings: SlackConfig, host: Host, ports: { api?: Sl
 		channels,
 		snooze: (id, minutes) => root.commit((tx) => reminders.snooze(tx, id, minutes), context),
 		resume: (id) => root.commit((tx) => resumeJob(tx, id), context),
-		app: host.config.web?.url,
 	});
 	// An archived agent's channel is still the owner's for its buttons, such as Resume on a paused job.
 	const fromOwner = async (user: string | undefined, at: string | undefined) =>

@@ -1,6 +1,6 @@
 # gaidin
 
-A personal agent for one person on Pi Durable: one long-lived server, reached from the CLI, Slack and the app. The app is moiraine (`../moiraine`). This repository is public.
+A personal agent for one person on Pi Durable: one long-lived server, reached from the CLI, Slack and its HTTP API. It serves no web app. This repository is public.
 
 ## Commands
 
@@ -15,7 +15,7 @@ A personal agent for one person on Pi Durable: one long-lived server, reached fr
 - [docs/plan.md](docs/plan.md) holds the decisions, the numbered Done list, Next and the designs. Read it before starting. A finished feature gets the next Done item, and a changed decision is changed there.
 - The rest of `docs/` describes gaidin as it is, and is also gaidin's built-in skill, which it reads to answer the owner. Update the matching doc in the same change as the behavior. A new file in `docs/` is listed in `docs/SKILL.md`; a test checks.
 - [docs/extending.md](docs/extending.md) covers the code's layout, extensions, guards and tests. Follow its patterns: durable state in a `defineDoc`, timed work in a `defineTask`, and anything told to the owner unprompted as a notice through `notifications.ts`.
-- `Gets`, `Posts` and `StreamEvent` in `src/web.ts` are the app's protocol, and moiraine imports them. A change to their shape raises `PROTOCOL`. If `../moiraine` is checked out, run its `pnpm check` too.
+- `Gets`, `Posts` and `StreamEvent` in `src/web.ts` are the API's protocol. A change to their shape raises `PROTOCOL`.
 
 ## Rules
 

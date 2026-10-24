@@ -23,7 +23,7 @@ test("reminders and job reports carry the icon when one is set", async (t) => {
 	assert.deepEqual(seen.map((headers) => headers.icon), [icon, icon, undefined]);
 });
 
-test("with the app's address, a reminder opens it when tapped and has two snooze buttons", async (t) => {
+test("with the API's address, a reminder has two snooze buttons and opens nothing when tapped", async (t) => {
 	const seen: IncomingHttpHeaders[] = [];
 	const server = createServer((request, response) => {
 		seen.push(request.headers);
@@ -35,7 +35,7 @@ test("with the app's address, a reminder opens it when tapped and has two snooze
 	const web = "https://gaidin.example.ts.net";
 
 	await ntfyNotifier({ url }, web)({ taskId: 7, text: "check the oven", at: Date.now() });
-	assert.equal(seen[0]!.click, web);
+	assert.equal(seen[0]!.click, undefined);
 	assert.equal(
 		seen[0]!.actions,
 		`http, Snooze 10 min, ${web}/api/reminders/snooze, headers.Content-Type=application/json, body='{"id":7,"minutes":10}', clear=true; ` +

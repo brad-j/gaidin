@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
 import { configFor, loadConfig, maskedConfig, secretsOf } from "../src/config.ts";
 import { runChecks } from "../src/doctor.ts";
@@ -155,18 +155,17 @@ test("ntfy.icon is read, kept when masked, and must be a URL", (t) => {
 	assert.ok(bad.errors.some((error) => /ntfy.icon must be the URL/.test(error)));
 });
 
-test("web.url is the app's address, without a trailing slash", (t) => {
+test("web.url is the API's address, without a trailing slash", (t) => {
 	const read = (url: string) => loadConfig({ file: file(t, { model: { apiKey: KEY }, web: { user: "brad@example.com", url } }), env: {} });
 	assert.equal(read("https://gaidin.example.ts.net/").config.web?.url, "https://gaidin.example.ts.net");
-	assert.ok(read("gaidin.example.ts.net").errors.some((error) => /web\.url must be the app's address/.test(error)));
+	assert.ok(read("gaidin.example.ts.net").errors.some((error) => /web\.url must be the API's address/.test(error)));
 });
 
-test("web.app is a directory, from the settings file's own when it's relative", (t) => {
-	const settings = file(t, { model: { apiKey: KEY }, web: { user: "brad@example.com", app: "moiraine" } });
-	const { config, errors } = loadConfig({ file: settings, env: {} });
+test("web.app, from when gaidin served a web app, is ignored with a warning", (t) => {
+	const { config, errors, warnings } = loadConfig({ file: file(t, { model: { apiKey: KEY }, web: { user: "brad@example.com", app: "moiraine" } }), env: {} });
 	assert.deepEqual(errors, []);
-	assert.equal(config.web?.app, join(dirname(settings), "moiraine"));
-	assert.equal(loadConfig({ file: file(t, { model: { apiKey: KEY }, web: { user: "brad@example.com", app: "/var/lib/gaidin/moiraine" } }), env: {} }).config.web?.app, "/var/lib/gaidin/moiraine");
+	assert.equal(config.web?.user, "brad@example.com");
+	assert.ok(warnings.some((w) => w.startsWith("web.app is no longer used")));
 });
 
 test("alerts.url is a topic other than the reminders', and is redacted like it", (t) => {
