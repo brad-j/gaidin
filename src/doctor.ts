@@ -114,7 +114,7 @@ async function browser(config: Config): Promise<Check[]> {
 	}
 }
 
-async function model(config: Config): Promise<Check[]> {
+export async function model(config: Config): Promise<Check[]> {
 	if (config.model.provider === "faux") return [{ status: "warn", area: "model", detail: "the faux model: scripted answers, no network" }];
 	if (config.model.apiKey === undefined) return [{ status: "fail", area: "model", detail: "no API key" }];
 	// Looking the model up checks the key and the model id, and costs nothing.
@@ -127,7 +127,7 @@ async function model(config: Config): Promise<Check[]> {
 	return [{ status: "fail", area: "model", detail: `Anthropic answered ${status}: ${JSON.stringify(body).slice(0, 200)}` }];
 }
 
-async function ntfy(config: Config, push: boolean): Promise<Check[]> {
+export async function ntfy(config: Config, push: boolean): Promise<Check[]> {
 	if (config.ntfy === undefined) return [{ status: "skip", area: "ntfy", detail: "not set up; notifications go only to devices signed up in the app" }];
 	const headers = config.ntfy.token === undefined ? undefined : { Authorization: `Bearer ${config.ntfy.token}` };
 	if (push) {
@@ -195,7 +195,7 @@ async function web(config: Config): Promise<Check[]> {
 	return checks;
 }
 
-async function search(config: Config): Promise<Check[]> {
+export async function search(config: Config): Promise<Check[]> {
 	if (config.search === undefined) return [{ status: "skip", area: "search", detail: "not set up; no web_search" }];
 	try {
 		const { used, limit } = await tavilyUsage(config.search.apiKey);

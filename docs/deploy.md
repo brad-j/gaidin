@@ -5,6 +5,7 @@ gaidin needs Linux, Node 22.18 or later (it runs the TypeScript directly), pnpm,
 ## The gaidin command
 
 ```sh
+gaidin setup                    # write the settings a section at a time, checking each
 gaidin serve                    # run the agent and its surfaces
 gaidin ask "MESSAGE"            # send a message and print the run; --id ID reattaches
 gaidin watch                    # print everything the agent does, until Ctrl+C
@@ -18,16 +19,17 @@ From a checkout, `pnpm gaidin ...` runs it, and `pnpm serve`, `pnpm ask`, `pnpm 
 
 `gaidin doctor` doesn't start the server and spends no tokens. It checks the settings, Node, the data directory, that bubblewrap can start a sandbox, that Chromium starts with its sandbox when there are browser profiles, the API key and model (by looking the model up), the ntfy topic, that the push services can be reached, both Slack tokens and whether agents can post under their own names, the search key and its remaining credits, `tailscale serve`, each workspace, and the homelab feeds and log hosts, and says what to fix.
 
+`gaidin setup` writes the settings file it would read, or `./gaidin.json` when there's none, asking a section at a time: your name and time zone, the model's key and default model with the spend limits, the API's Tailscale login and address (read from `tailscale status` when it's logged in), an ntfy topic with a long random name it makes, and a Tavily key for search. Each section can be skipped, and each is checked as it's entered with the checks `gaidin doctor` uses; a failed check asks again or keeps the answer. Run again, it shows each section with secrets shortened and changes only the sections you choose, keeping everything it doesn't ask about, Slack's settings among them. It doesn't echo secrets as you type and never prints one whole, except the ntfy topic it makes, shown once so you can subscribe to it. Nothing is written until the end. A new file is readable only by you, and a rewritten one keeps its mode and owner. It ends by running `gaidin doctor`. It has to be able to write the file's directory, so on the VM, where the `gaidin` command runs as the service's user, fill in the settings by hand as below for now.
+
 ## Running it locally
 
 ```sh
 pnpm install
-cp deploy/config.example.json gaidin.json && chmod 600 gaidin.json   # then edit it
-pnpm doctor
+pnpm gaidin setup     # writes gaidin.json, then runs gaidin doctor
 pnpm serve
 ```
 
-`gaidin.json` in the checkout is gitignored. `deploy/gaidin.service` is a systemd user unit for running it this way in the background; edit its paths first. User units stop when you log out unless lingering is on (`loginctl enable-linger`).
+`gaidin.json` in the checkout is gitignored, and `deploy/config.example.json` shows every section, for writing it by hand. `deploy/gaidin.service` is a systemd user unit for running it this way in the background; edit its paths first. User units stop when you log out unless lingering is on (`loginctl enable-linger`).
 
 ## Running it on a VM
 

@@ -66,6 +66,8 @@
 51. Reminders on speakers: a reminder or timer set while talking at a speaker is said there (`remind` takes `to`: a speaker, every speaker or the phone), offered to the voice bridges on `GET /api/voice/events` and confirmed on `/api/voice/announced`; one no bridge says within 20 seconds reaches the phone, naming where it was missed (protocol 18) ([Surfaces](surfaces.md#voice), [Tools](tools.md#reminders)). Step 4 of the voice design, gaidin's side.
 52. No web app: gaidin no longer serves moiraine's build. `web.app`, the shell and its per-build Content-Security-Policy, and the redirects from `/app/` are gone, so every path that isn't the API is a 404, and every response's policy is `default-src 'none'`. A `web.app` left in the settings is a warning. A connector's sign-in ends on a plain-text page instead of the Connectors page, Slack's hand-over has no Take over link, its connector notice names `gaidin connector connect`, and an ntfy reminder opens nothing when tapped. The routes, their shapes and `PROTOCOL` are unchanged, and `e2e/server.ts` still runs the API on a scripted model for a client's tests ([Surfaces](surfaces.md#the-api)).
 
+53. `gaidin setup`: writes the settings file a section at a time (you, the model and spend limits, the API from `tailscale status`, ntfy with a topic it names, Tavily search), each skippable and checked as it's entered with `gaidin doctor`'s checks. Run again, it shows each section with secrets shortened and changes only what's chosen, keeping the rest of the file, and it ends with `gaidin doctor`. Step 2 of the release design, with Slack to come ([Deploying](deploy.md#the-gaidin-command)).
+
 ## Next
 
 Candidates:
@@ -137,12 +139,12 @@ An interactive command that writes the settings file, mode 600, one section at a
 
 1. The owner's name and time zone (the system's, offered).
 2. The model: the API key, checked by looking the model up; the default model; daily and monthly limits, with a note on the Console's own limit.
-3. The app: the Tailscale login and the tailnet name, read from `tailscale status`, giving `web.user` and `web.url`; `web.app` where the installer put the build.
+3. The API: the Tailscale login and the tailnet name, read from `tailscale status`, giving `web.user` and `web.url`. (There's no `web.app` since item 52.)
 4. Notifications: an ntfy topic with a long random name it makes, or none (the app's Web Push needs nothing here).
 5. Slack (below).
 6. Search: a Tavily key, checked.
 
-Run again, it shows each section as it is (secrets shortened) and changes only what's chosen. It never prints a whole secret. It ends with `gaidin doctor`.
+Run again, it shows each section as it is (secrets shortened) and changes only what's chosen. It never prints a whole secret, except the ntfy topic it makes, once, so the owner can subscribe. It ends with `gaidin doctor`. Done (item 53), without Slack. It writes the file in place of the old one, keeping its mode and owner, so on the VM, where `/etc/gaidin` is root's and the `gaidin` command runs as the service's user, it needs a way to write the settings; that's decided with the installer (step 4).
 
 ### Slack from a configuration token
 
@@ -173,7 +175,7 @@ The configuration token isn't kept. Without one, setup prints the manual steps f
 ### Order of work
 
 1. Done: Pi Durable 1.3.0, on a branch, with the restart test.
-2. `gaidin setup` without Slack, and `gaidin --version`.
+2. Done: `gaidin setup` without Slack (item 53), and `gaidin --version`.
 3. Slack from a configuration token.
 4. The installer, moiraine's release build and its check, and the getting-started docs, tried on a fresh VM.
 5. The history scan and the specific leftovers, done but for the installer's repository URL (step 4); then the owner publishes, or says to.

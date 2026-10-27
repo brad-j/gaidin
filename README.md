@@ -23,8 +23,7 @@ On Linux with Node 22.18 or later, pnpm, and bubblewrap (`bwrap`):
 
 ```sh
 pnpm install
-echo '{ "owner": "Alex", "model": { "apiKey": "<your key>" } }' > gaidin.json && chmod 600 gaidin.json
-pnpm doctor                                  # checks the settings and everything gaidin needs
+pnpm gaidin setup                            # writes gaidin.json, asking for your key and the rest, then checks everything
 pnpm serve                                   # the agent
 pnpm ask "remind me in 10 minutes to check the oven"
 pnpm watch                                   # everything the agent does, from any surface

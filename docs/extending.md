@@ -2,7 +2,7 @@
 
 ## How the code is laid out
 
-`src/main.ts` is the `gaidin` command, `src/config.ts` reads and checks the settings, and `src/doctor.ts` is `gaidin doctor`. `src/host.ts` opens the Harness and installs every extension into one registry. Each extension is a named bundle of tools, prompt sections and hooks:
+`src/main.ts` is the `gaidin` command, `src/config.ts` reads and checks the settings, `src/doctor.ts` is `gaidin doctor`, and `src/setup.ts` is `gaidin setup`, which asks with doctor's checks. `src/host.ts` opens the Harness and installs every extension into one registry. Each extension is a named bundle of tools, prompt sections and hooks:
 
 | File | Extension |
 |---|---|

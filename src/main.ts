@@ -1,18 +1,21 @@
 #!/usr/bin/env -S node --no-warnings
 // The gaidin command.
+import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { AgentChange } from "./agents.ts";
 import { agents, ask, connectors, rules, watch } from "./cli.ts";
 import { literal } from "./parse.ts";
 import type { Condition, NewRule } from "./rules.ts";
-import { loadConfig, maskedConfig } from "./config.ts";
-import { printChecks, runChecks } from "./doctor.ts";
+import { findConfigFile, loadConfig, maskedConfig } from "./config.ts";
+import * as doctor from "./doctor.ts";
+import { consoleTerminal, readTailscale, setup } from "./setup.ts";
 import { serve } from "./server.ts";
 import { PROTOCOL } from "./web.ts";
 import pkg from "../package.json" with { type: "json" };
 
 const USAGE = `usage: gaidin [--config FILE] COMMAND
 
+  setup                     write the settings a section at a time, checking each
   serve                     run the agent and its surfaces
   ask [--id ID] [--agent ID] "MESSAGE"
                             send a message and print the run; the same --id reattaches
@@ -213,8 +216,18 @@ switch (command) {
 		if (values.note !== undefined) rule.note = values.note;
 		process.exit(await rules(loaded.config, { type: "rule", action: "add", rule }));
 	}
+	case "setup":
+		process.exit(await setup(findConfigFile(values.config) ?? resolve("gaidin.json"), {
+			terminal: consoleTerminal(),
+			env: process.env,
+			model: doctor.model,
+			ntfy: doctor.ntfy,
+			search: doctor.search,
+			tailscale: readTailscale,
+			doctor: async (settings) => doctor.printChecks(await doctor.runChecks(settings)),
+		}));
 	case "doctor":
-		process.exit(printChecks(await runChecks(loaded, { push: values.push === true })));
+		process.exit(doctor.printChecks(await doctor.runChecks(loaded, { push: values.push === true })));
 	case "config":
 		console.log(JSON.stringify(maskedConfig(loaded.config), null, 2));
 		for (const error of loaded.errors) console.error(`error: ${error}`);

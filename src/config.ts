@@ -62,7 +62,7 @@ export type Config = {
 
 export type Loaded = { config: Config; errors: string[]; warnings: string[] };
 
-const DEFAULT_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
+export const DEFAULT_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
 const TOP_LEVEL = ["owner", "timeZone", "data", "model", "ntfy", "alerts", "slack", "web", "sandbox", "budget", "approvals", "search", "keys", "browser", "connectors", "extensions", "voice"];
 /** A browser profile's name, as an agent's id. */
 const PROFILE = /^[a-z][a-z0-9-]{0,30}$/;
@@ -118,19 +118,19 @@ function fromEnv(env: NodeJS.ProcessEnv) {
 	};
 }
 
-/** A section of the settings file. */
-type Section = { readonly [key: string]: Json };
+/** A section of the settings file, or the whole of it. */
+export type Section = { readonly [key: string]: Json };
 const EMPTY: Section = {};
 
-/** Reads and checks the settings. `errors` stop the server; `warnings` don't. */
-export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; search?: boolean } = {}): Loaded {
+/** Reads and checks the settings. `errors` stop the server; `warnings` don't. `raw` is the file's settings, not yet written to `file`. */
+export function loadConfig(options: { file?: string; env?: NodeJS.ProcessEnv; search?: boolean; raw?: Section } = {}): Loaded {
 	const env = options.env ?? process.env;
 	const errors: string[] = [];
 	const warnings: string[] = [];
 	const file = findConfigFile(options.file, env, options.search ?? true);
 
-	let raw = EMPTY;
-	if (file !== undefined) {
+	let raw = options.raw ?? EMPTY;
+	if (file !== undefined && options.raw === undefined) {
 		try {
 			// JSON.parse gives only JSON values.
 			const parsed: Json = JSON.parse(readFileSync(file, "utf8"));
@@ -403,10 +403,13 @@ export function secretsOf(config: Config) {
 	};
 }
 
+/** A secret shown as its first few characters. */
+export const mask = (value: string) => `${value.slice(0, 6)}…`;
+/** An ntfy topic URL with the topic, the secret part, shortened. */
+export const ntfyMask = (url: string) => url.replace(/[^/]+$/, (topic) => `${topic.slice(0, 4)}…`);
+
 /** The settings with secrets shown as their first few characters. */
 export function maskedConfig(config: Config): Config {
-	const mask = (value: string) => `${value.slice(0, 6)}…`;
-	const ntfyMask = (url: string) => url.replace(/[^/]+$/, (topic) => `${topic.slice(0, 4)}…`);
 	const masked: Config = { ...config, model: { ...config.model } };
 	if (config.model.apiKey !== undefined) masked.model.apiKey = mask(config.model.apiKey);
 	if (config.ntfy !== undefined) {
