@@ -1,6 +1,6 @@
 # gaidin
 
-A personal agent for one person, built on [Pi Durable](https://earendil.com/posts/pi-durable/). You talk to it from the command line or a web page, which share one conversation stored in SQLite, or from Slack, where each thread is a conversation of its own. A run, a reminder or a question waiting for your approval survives a crash or a restart and carries on where it stopped.
+A personal agent for one person, built on [Pi Durable](https://earendil.com/posts/pi-durable/). You talk to it from the command line or through its HTTP API, which share one conversation stored in SQLite, or from Slack, where each thread is a conversation of its own. A run, a reminder or a question waiting for your approval survives a crash or a restart and carries on where it stopped.
 
 In the Wheel of Time, a Warder (gaidin) is bonded to one Aes Sedai and always on watch.
 
@@ -16,21 +16,6 @@ It can:
 - run several named agents, each with its own job, notes, sandbox and grants, that ask each other things and hand work on
 
 Each message you post in the Slack channel starts a thread, answered there, with gaidin's settings and memory but not the main conversation's history.
-
-## Quick start
-
-On Linux with Node 22.18 or later, pnpm, and bubblewrap (`bwrap`):
-
-```sh
-pnpm install
-pnpm gaidin setup                            # writes gaidin.json, asking for your key and the rest, then checks everything
-pnpm serve                                   # the agent
-pnpm ask "remind me in 10 minutes to check the oven"
-pnpm watch                                   # everything the agent does, from any surface
-pnpm check                                   # type check, lint and tests
-```
-
-`pnpm gaidin --help` lists the commands, and `deploy/config.example.json` shows every section of the settings. `GAIDIN_MODEL=faux pnpm serve` runs a scripted model with no key and no network. Without `web.url` or `ntfy.url`, reminders print to the server's output.
 
 ## Try it locally
 
@@ -49,7 +34,42 @@ In a second terminal, in the same checkout:
 pnpm ask "hello"
 ```
 
-Whatever you ask, the faux model answers the same way: it runs one `bash` command in the sandbox (a short `sleep`, then it appends a timestamp to `data/sandbox/slept.log` in the checkout and prints `slept`, so each ask adds a line) and replies `Tool came back:` with that output. The server prints a warning that reminders go to its output, since no `web.url` or `ntfy.url` is set; that's expected. Stop the server with Ctrl-C. For a real model, follow the Quick start.
+Whatever you ask, the faux model answers the same way: it runs one `bash` command in the sandbox (a short `sleep`, then it appends a timestamp to `data/sandbox/slept.log` in the checkout and prints `slept`, so each ask adds a line) and replies `Tool came back:` with that output. The server prints a warning that reminders go to its output, since no `web.url` or `ntfy.url` is set; that's expected. Stop the server with Ctrl-C. For a real model, follow the quick start.
+
+## Quick start
+
+On Linux with Node 22.18 or later, pnpm, and bubblewrap (`bwrap`):
+
+```sh
+git clone https://github.com/brad-j/gaidin.git && cd gaidin
+pnpm install
+pnpm gaidin setup                            # writes gaidin.json, asking for your key and the rest, then checks everything
+pnpm serve                                   # the agent
+pnpm ask "remind me in 10 minutes to check the oven"
+pnpm watch                                   # everything the agent does, from any surface
+pnpm check                                   # type check, lint and tests
+```
+
+`pnpm gaidin --help` lists the commands, and `deploy/config.example.json` shows every section of the settings. `GAIDIN_MODEL=faux pnpm serve` runs a scripted model with no key and no network. Without `web.url` or `ntfy.url`, reminders print to the server's output.
+
+## On a server
+
+gaidin is meant to live on a small always-on machine, so reminders fire and Slack gets answered while your desktop is off. On an Ubuntu 24.04 or Debian 12 VM with Tailscale logged in, download the installer, read it, and run it as root:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/brad-j/gaidin/main/deploy/install.sh
+less install.sh
+sudo sh install.sh
+```
+
+It installs everything gaidin needs as a system service, runs `gaidin setup` and starts the service. Running it again updates gaidin. [Deploying](docs/deploy.md#running-it-on-a-vm) has the details.
+
+Then add what you want, in any order:
+
+- [Slack](docs/surfaces.md#setting-up-slack), for talking to it from your phone
+- [workspaces](docs/deploy.md#adding-a-workspace), for work on your other machines
+- [connectors](docs/tools.md#connectors), for other services' tools over MCP
+- the [browser](docs/tools.md#browser), for sites that need a real browser
 
 ## Documentation
 

@@ -1,6 +1,6 @@
 # Lets bubblewrap create the user namespaces its sandbox needs. Ubuntu 24.04 otherwise confines
 # unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1) to a profile without
-# capabilities, which can't mount anything. Installed as /etc/apparmor.d/bwrap by setup.sh.
+# capabilities, which can't mount anything. Installed as /etc/apparmor.d/bwrap by deploy/install.sh.
 abi <abi/4.0>,
 include <tunables/global>
 

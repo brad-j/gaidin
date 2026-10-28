@@ -108,7 +108,7 @@ async function browser(config: Config): Promise<Check[]> {
 		return [{ status: "ok", area: "browser", detail: `Chromium ${version} starts with its sandbox; profiles ${config.browser.profiles.join(", ")}` }];
 	} catch (error) {
 		const why = message(error).split("\n").filter((line) => line.trim() !== "").slice(0, 3).join(" ");
-		return [{ status: "fail", area: "browser", detail: `Chromium won't start with its sandbox: ${why}. On the VM, setup.sh installs it with its libraries and AppArmor profile` }];
+		return [{ status: "fail", area: "browser", detail: `Chromium won't start with its sandbox: ${why}. On the VM, install.sh installs it with its libraries and AppArmor profile` }];
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

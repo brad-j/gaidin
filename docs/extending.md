@@ -105,6 +105,5 @@ faux.setResponses([
 
 ## Still specific to one deployment
 
-- `deploy/vm/setup.sh` clones the original repository.
 - The scripts that set up the container logs account live in that deployment's homelab repository.
 - The homelab snapshot formats are those of that deployment's dashboard collectors.

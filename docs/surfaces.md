@@ -13,7 +13,7 @@ gaidin watch                    # follow everything until Ctrl+C
 gaidin ask --agent scout "..."  # another agent's home conversation; watch takes --agent too
 ```
 
-On the VM, `setup.sh`'s `gaidin` command runs as the service's user. `gaidin ask` prints the request id it used, so you can reattach if the connection drops.
+On the VM, `install.sh`'s `gaidin` command runs as the service's user. `gaidin ask` prints the request id it used, so you can reattach if the connection drops.
 
 `gaidin agent` lists and changes the [agents](concepts.md#agents):
 
