@@ -32,7 +32,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # The sandbox's bubblewrap and the browser's Chromium headless shell, as deploy/vm/setup.sh installs them. Ubuntu
+      # The sandbox's bubblewrap and the browser's Chromium headless shell, as deploy/install.sh installs them. Ubuntu
       # 24.04 confines unprivileged user namespaces, which both need; the VM has AppArmor profiles for that, and this
       # throwaway runner lifts the restriction instead.
       - name: Install bubblewrap and Chromium

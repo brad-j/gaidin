@@ -34,18 +34,18 @@
 19. Gates: a check before each run, without the model, that wakes it only for something new: the homelab extension's, or a self-written tool's that fetches only from hosts allowed for good. A job without a gate repeats at most every 6 hours; with one, every 15 minutes ([Tools](tools.md#gates)).
 20. Refusals: a call that can't succeed (a job that can't be made, a note that won't fit, an unknown workspace) is blocked with the reason instead of being put to the owner, and checked again after an approval, which can come days later ([Security](security.md#approvals)).
 21. The web view as an app: it installs on a phone or computer, keeps clear of the notch, shows a page when the server can't be reached, and gets notifications by Web Push (reminders, reports, and approval requests and questions), with encryption and signing written on `node:crypto`. ntfy stays as a second way ([Surfaces](surfaces.md#notifications)).
-22. Pages beside the web view's console: a schedule page for reminders and jobs, where a job opens to its instruction and last reports and pauses, resumes or cancels ([Surfaces](surfaces.md#web-view)).
+22. Pages beside the web view's console: a schedule page for reminders and jobs, where a job opens to its instruction and last reports and pauses, resumes or cancels ([Surfaces](surfaces.md#the-api)).
 23. Skills: guides gaidin opens when a request calls for one, listed in every system prompt and read with `read_skill`. The documentation is the built-in `gaidin` skill, so gaidin can answer questions about itself; local skills live in the data directory, and the web view has a page for them ([Tools](tools.md#skills)).
-24. The web view controls the rest: a memory page to add, edit and forget notes; a settings page for the model, thinking, tools, standing instructions and notification devices; an activity page with spend against the limits, cost by model and the timeline; and writing skills, by the owner on the skills page and by gaidin with `write_skill` and `remove_skill`, which always ask, each change a commit ([Surfaces](surfaces.md#web-view), [Tools](tools.md#skills)).
+24. The web view controls the rest: a memory page to add, edit and forget notes; a settings page for the model, thinking, tools, standing instructions and notification devices; an activity page with spend against the limits, cost by model and the timeline; and writing skills, by the owner on the skills page and by gaidin with `write_skill` and `remove_skill`, which always ask, each change a commit ([Surfaces](surfaces.md#the-api), [Tools](tools.md#skills)).
 25. A history page for Slack threads and job runs; compaction from about 60,000 tokens, so requests stay under the 100,000-token price tier ([Concepts](concepts.md#compaction)); and Esc stops a run only from the console.
 26. Slack threads as separate conversations: each top-level message starts one with the root's settings and is answered in its thread, so the channel no longer shares the root conversation with the CLI and web view ([Concepts](concepts.md#threads)).
 27. Several named agents, the core: a roster in the database with the current gaidin as the default agent, each agent with its own home conversation, sandbox, work notes beside the shared notes, reminders, jobs, past conversations, allowed hosts, workspaces and self-written tools; `message_agent` and `hand_off` between agents an entry allows; and `gaidin ask --agent` and `gaidin agent` on the command line ([Concepts](concepts.md#agents), [Security](security.md#agents)). Slack and the web view still talk to the default agent.
 28. The app's server side: threads start and continue through the web server's API as well as Slack, in a module both use (`src/threads.ts`), and a message to a job run or a conversation another agent started forks it at its last answer. Every route takes an agent and, where it applies, a conversation; the roster is listed, saved, archived and restored there, and `/api/version` gives the protocol's version ([Concepts](concepts.md#threads), [Surfaces](surfaces.md#the-api)).
-29. The app's skeleton: moiraine, served by gaidin at `/app/` beside the web view from the directory `web.app` names, with each agent's home conversation and threads in a sidebar, any of them continued there, a new thread started from it, and the dock showing every agent's requests ([Surfaces](surfaces.md#the-app)).
+29. The app's skeleton: moiraine, served by gaidin at `/app/` beside the web view from the directory `web.app` names, with each agent's home conversation and threads in a sidebar, any of them continued there, a new thread started from it, and the dock showing every agent's requests ([Surfaces](surfaces.md#the-api)).
 30. The app's pages: each agent's schedule, memory (shared and work notes), skills and settings (its roster entry, model, tools, instructions, hosts, workspaces, who it may message, and notification devices), and across agents an agents page that makes, archives and restores them and an activity page with spend and the timeline, which names each item's agent. `/api/workspaces` lists the workspaces, and the roster routes read and save the default agent's hosts, which the approvals keep (protocol 2).
 31. Attachments from the app: files sent ahead to `/api/files` and named by the message, images to the model and other files to the agent's sandbox, through `src/files.ts`, which Slack's files go through too; the app shrinks a large image first (protocol 3).
 32. Slack mirroring: a message sent from the app to a conversation with a Slack thread is posted there, headed *From the app:*, and then its answer, recorded before it's posted so a restart still posts both ([Surfaces](surfaces.md#slack)).
-33. The switch: the app is served at `/`, with the service worker, manifest and icons its own at the paths they had, so installed apps and devices signed up for notifications carry over; the app's old `/app/` addresses redirect, a notification opens the conversation it came from, and the web view and its tests are gone (protocol 4) ([Surfaces](surfaces.md#the-app)).
+33. The switch: the app is served at `/`, with the service worker, manifest and icons its own at the paths they had, so installed apps and devices signed up for notifications carry over; the app's old `/app/` addresses redirect, a notification opens the conversation it came from, and the web view and its tests are gone (protocol 4) ([Surfaces](surfaces.md#the-api)).
 34. Files between agents: `message_agent` and `hand_off` take up to 10 files from the sender's sandbox, read through its confined file tools, and the receiver gets copies in its `uploads/`, read-only to its commands, with a note of where they are, as for Slack's and the app's files. An approval for either names the files ([Tools](tools.md#other-agents)).
 35. The browser's reading tools: profiles named in the settings and given per agent in its roster entry, a Chromium per profile with its own sandbox and its cookies in `<data>/browser/`, and `browser_open`, `browser_snapshot`, `browser_screenshot` and `browser_tabs`, offered only to agents with a profile. Opening a page asks as a fetch does, a page's own navigations to other hosts are stopped, and private addresses are refused for everything a page loads. `setup.sh` installs Chromium with its AppArmor profile (protocol 7) ([Tools](tools.md#browser), [Security](security.md#the-browser)).
 36. The browser's acting tools: `browser_click`, `browser_type`, `browser_select`, `browser_back` and `browser_upload`. Acting asks while outside text is in the conversation, naming the element as the snapshot showed it, unless the owner let the agent act on that site in that profile without asking (a new second button, kept in the roster entry and removable on the settings page), and happens only if the page is still what was asked about. Typing into a password field is refused, and uploads ask every time. Downloads land in the agent's read-only `downloads/`, and dialogs are dismissed and reported. Refs now come only from whole-page snapshots, since snapshotting one element renumbered the page's refs (protocol 8) ([Tools](tools.md#browser)).
@@ -53,30 +53,33 @@
 38. Slack's channel per agent: a roster entry names its agent's channel, where a top-level message starts a thread with that agent and the agent's reminders, reports, paused jobs, requests and questions go, under its name (`chat:write.customize`, falling back to the app's name with the agent's in front). Messages in other channels are keyed `<channel>:<ts>` in `SlackState`, the default channel's keeping bare ts, and an agent without a channel posts in the default one, named. `gaidin doctor` says whether the app has the scope ([Surfaces](surfaces.md#slack)).
 39. Connectors, without OAuth: remote MCP servers added with `gaidin connector`, with a bearer token or none, spoken to in the current revision (2026-07-28) or the earlier ones; their tools given per agent, each set to allow, ask or off, their definitions pinned, their results outside text, and their tokens in `<data>/connectors/vault.json` ([Tools](tools.md#connectors)).
 40. Connectors' OAuth: `gaidin connector connect` finds a server's sign-in from its metadata (RFC 9728 and 8414), checked to the connector's host or public https, and sends the owner's browser there with PKCE and the resource parameter; the callback takes only a state gaidin made and the issuer it expects. gaidin's client id is a document it serves at `<web.url>/api/connectors/client.json`, or a public copy named in `connectors.clientId`, else Dynamic Client Registration, else one the owner gives. Grants are refreshed before they expire and once after a refusal ([Tools](tools.md#connectors)).
-41. The app's Connectors page: each connector's state, its tools set to allow, ask or off with their cost, new and changed tools marked, signing in in the same tab and back, tokens, refresh and remove; agents given connectors on their settings pages, and a notice and a sidebar count when one needs signing in again (protocol 10) ([Surfaces](surfaces.md#the-app)).
+41. The app's Connectors page: each connector's state, its tools set to allow, ask or off with their cost, new and changed tools marked, signing in in the same tab and back, tokens, refresh and remove; agents given connectors on their settings pages, and a notice and a sidebar count when one needs signing in again (protocol 10) ([Surfaces](surfaces.md#the-api)).
 42. Rules, step 1: the owner's allow and ask rules, per agent and tool or family, with argument conditions, an end, and "even after outside text" for allow rules; ask rules reach every tool and override every grant, allow rules skip a guard's question but never a refusal or the floor (loading tools, skills, new jobs, browser uploads). The rule that let a call through is in the timeline. `gaidin rule` manages them ([Security](security.md#your-rules)).
-43. Rules, step 2: the app's Rules page lists the rules with remove, the grants that also let calls through (hosts, sites acted on, connector tools set to allow, workspace hours) with where each is changed, and makes rules; an approval card's "make a rule" fills the form in from the request, a URL argument as its host (protocol 11) ([Surfaces](surfaces.md#the-app)).
+43. Rules, step 2: the app's Rules page lists the rules with remove, the grants that also let calls through (hosts, sites acted on, connector tools set to allow, workspace hours) with where each is changed, and makes rules; an approval card's "make a rule" fills the form in from the request, a URL argument as its host (protocol 11) ([Surfaces](surfaces.md#the-api)).
 44. Folder trust, gaidin's side: an `inside` condition on a workspace path, so one allow rule lets an agent's reads, writes and edits in a folder and every folder below it through. The folder goes to the workspace's helper, which refuses a path whose real path, symlinks resolved, isn't inside it; a read the rule let through isn't outside text for that rule; `workspace_run` never goes through on one. `gaidin rule` takes it (protocol 12) ([Security](security.md#your-rules)).
-45. Agent colors: a roster entry can name the color the app shows its agent in, one of eight the app draws (`AGENT_COLORS`), set on the settings page and saved with `/api/agents/save`; an agent without one gets a color by its place in the roster (protocol 13) ([Surfaces](surfaces.md#the-app)).
+45. Agent colors: a roster entry can name the color the app shows its agent in, one of eight the app draws (`AGENT_COLORS`), set on the settings page and saved with `/api/agents/save`; an agent without one gets a color by its place in the roster (protocol 13) ([Surfaces](surfaces.md#the-api)).
 46. Ready to publish: gaidin and moiraine are under the MIT license. Neither history has a key or token, only test values and placeholders. The owner's LAN and tailnet addresses, a Slack channel ID, the Slack workspace's name and a home path are gone from the current files; gaidin's history keeps them and a tailnet name, as the owner chose not to rewrite it.
-47. An app-wide event stream: `GET /events?all` has the same checks, headers and ping as `/events` but follows no conversation and sends no snapshot, and carries `approvals_changed` so a page without a conversation follows approvals without polling (protocol 14) ([Surfaces](surfaces.md#the-app)).
-48. Activity and conversation events on `/events?all`: `activity_changed` and `conversations_changed`, each with an `agent`, so the app stops polling `/api/agents/activity` and each agent's conversation list. One listener on the Harness's commits notes the conversations of input submissions (any status, which covers a run's start and end wherever it was submitted from) and of entry and conversation records, then finds their agents after a 250 ms window, so each agent hears each event once per window (protocol 15) ([Surfaces](surfaces.md#the-app)).
+47. An app-wide event stream: `GET /events?all` has the same checks, headers and ping as `/events` but follows no conversation and sends no snapshot, and carries `approvals_changed` so a page without a conversation follows approvals without polling (protocol 14) ([Surfaces](surfaces.md#the-api)).
+48. Activity and conversation events on `/events?all`: `activity_changed` and `conversations_changed`, each with an `agent`, so the app stops polling `/api/agents/activity` and each agent's conversation list. One listener on the Harness's commits notes the conversations of input submissions (any status, which covers a run's start and end wherever it was submitted from) and of entry and conversation records, then finds their agents after a 250 ms window, so each agent hears each event once per window (protocol 15) ([Surfaces](surfaces.md#the-api)).
 49. Shared notes per agent: a roster entry's `sharedNotes: false` keeps the shared notes out of that agent's prompt, and its `remember` with `shared`, `update_memory` and `forget` on a shared note are refused, for an agent people other than the owner talk to; the default agent always has them. Set with `gaidin agent set --shared-notes on|off` or `sharedNotes` on `/api/agents/save` (protocol 16) ([Tools](tools.md#memory)). Step 1 of the voice design, with the `family` agent made in the roster.
 50. The voice route: `POST /api/voice/turn` takes a bridge's bearer token from `voice.tokens`, which reaches only that route and the agents it lists, and answers with an event stream of `say`, `waiting` and `done`. Each speaker has a rolling thread, origin `voice`, that starts afresh after 5 minutes of quiet; a turn's key makes it land once; what a speaker heard is outside text to the approvals hook, except that cancelling a reminder after speech alone doesn't ask, so the room can stop a timer (protocol 17) ([Surfaces](surfaces.md#voice), [Security](security.md#voice)). Step 2 of the voice design.
 51. Reminders on speakers: a reminder or timer set while talking at a speaker is said there (`remind` takes `to`: a speaker, every speaker or the phone), offered to the voice bridges on `GET /api/voice/events` and confirmed on `/api/voice/announced`; one no bridge says within 20 seconds reaches the phone, naming where it was missed (protocol 18) ([Surfaces](surfaces.md#voice), [Tools](tools.md#reminders)). Step 4 of the voice design, gaidin's side.
 52. No web app: gaidin no longer serves moiraine's build. `web.app`, the shell and its per-build Content-Security-Policy, and the redirects from `/app/` are gone, so every path that isn't the API is a 404, and every response's policy is `default-src 'none'`. A `web.app` left in the settings is a warning. A connector's sign-in ends on a plain-text page instead of the Connectors page, Slack's hand-over has no Take over link, its connector notice names `gaidin connector connect`, and an ntfy reminder opens nothing when tapped. The routes, their shapes and `PROTOCOL` are unchanged, and `e2e/server.ts` still runs the API on a scripted model for a client's tests ([Surfaces](surfaces.md#the-api)).
-
-53. `gaidin setup`: writes the settings file a section at a time (you, the model and spend limits, the API from `tailscale status`, ntfy with a topic it names, Tavily search), each skippable and checked as it's entered with `gaidin doctor`'s checks. Run again, it shows each section with secrets shortened and changes only what's chosen, keeping the rest of the file, and it ends with `gaidin doctor`. Step 2 of the release design, with Slack to come ([Deploying](deploy.md#the-gaidin-command)).
+53. `gaidin setup`: writes the settings file a section at a time (you, the model and spend limits, the API from `tailscale status`, ntfy with a topic it names, Tavily search), each skippable and checked as it's entered with `gaidin doctor`'s checks. Run again, it shows each section with secrets shortened and changes only what's chosen, keeping the rest of the file, and it ends with `gaidin doctor`. Step 2 of the release design ([Deploying](deploy.md#the-gaidin-command)).
+54. The installer: `deploy/install.sh`, which `setup.sh` became, sets gaidin up as a system service on Ubuntu 24.04 or Debian 12 (x86-64) and updates it when run again. It installs the packages it needs, Node 24.22.1 from nodejs.org checked against a pinned SHA-256 into `/opt/gaidin/node`, and pnpm through Corepack; clones the official repository over HTTPS, or a fork named with `--repo`, with a deploy key for an SSH URL; runs the copy of itself a pull brings; installs the AppArmor profiles only where the kernel confines user namespaces; and on a first install runs `gaidin setup` and starts the service. On the VM, `gaidin setup` runs as root and edits a copy of the settings as the service's user, in a `/tmp` the service can't see, then installs it `root:gaidin` 640, so the service still can't change its settings. The README has a getting-started path: try it on the faux model, a checkout, then a server, then Slack, workspaces, connectors and the browser. Step 3 of the release design, with Slack setup from a configuration token dropped; not yet tried on a fresh VM ([Deploying](deploy.md#running-it-on-a-vm)).
 
 ## Next
 
 Candidates:
 
-- Owner-written allow and ask-first rules (designed below). Several named agents, the browser and connectors (designed below) are done; trying more connectors with real services is ongoing.
-- Release polish (designed below): a setup wizard, Slack app creation from a configuration token, and an installer ([Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific).
-- Voice (designed below): a household speaker and a `family` agent, with timers and reminders it speaks.
+- Release (designed below): trying the installer on fresh Ubuntu 24.04 and Debian 12 VMs, then tagging 0.1.0, which is the owner's call.
+- Voice (designed below): the timers' alarm on the board, and more speakers.
+- Rules (designed below): the timeline and Slack naming the rule that decided a call.
+- Connectors: trying them with real services, the first to be decided with the owner.
 
-Not planned: branching from any message in the web view, since each thread is already a conversation of its own; push-to-talk, since the owner dictates with superwhisper; and projects or image generation in the app.
+Several named agents and the browser are done. [Extending](extending.md#still-specific-to-one-deployment) lists what's left that's specific to one deployment.
+
+Not planned: a web app, since gaidin serves only its API (item 52); push-to-talk, since the owner dictates with superwhisper.
 
 ## Design: voice
 
@@ -123,15 +126,16 @@ Each step ends with `pnpm check` passing and is a commit of its own.
 
 ## Design: release
 
-For review before any code. Today gaidin runs for one person, set up by hand: a settings file written from the example, a VM prepared by `setup.sh` that clones a private repository with a deploy key, and the app built on the owner's machine and copied over. A release lets someone else do it from the documentation alone, in under an hour, on their own VM.
+Until item 54, gaidin ran for one person, set up by hand: a settings file written from the example, and a VM prepared by `setup.sh` that cloned a private repository with a deploy key. A release lets someone else do it from the documentation alone, in under an hour, on their own VM.
 
-### Proposed, to decide with the owner
+### Decided with the owner
 
-- **Publish both repositories**, gaidin and moiraine, on GitHub, under the MIT license as Pi Durable is. Both are licensed (item 46) and neither is public yet. History stays as it is (below).
-- **Two repositories still, with the app as a release asset.** Each gaidin release names the protocol it speaks; each moiraine release attaches its build (`dist/client`) as a tarball with its SHA-256, built for one protocol. The installer fetches the newest moiraine build for the installed gaidin's protocol and checks it. The VM still needs no build tools. The owner's own `pnpm ship` stays for deploying straight from a checkout.
+- **Both repositories are public**, gaidin and moiraine, on GitHub, under the MIT license as Pi Durable is (item 46). History stays as it is (below).
+- **No app in the release.** A moiraine build was to be attached to each release for the installer to fetch; since item 52 gaidin serves no app, so the installer installs gaidin alone.
 - **Upgrade Pi Durable first.** Done: gaidin is on 1.3.0, so a release doesn't start two versions behind; the upgrade is its own commit, tested with a restart in the middle of a run, as [Deploying](deploy.md#upgrading-pi-durable) says.
-- **Versions:** gaidin and moiraine start at 0.1.0, tagged, with `gaidin --version`. Each release's notes are its items from the Done list above, which already reads as a changelog.
-- **Ubuntu 24.04 and Debian 12** are the installer's targets; other Linux runs from a checkout as now. Node comes from nodejs.org's official tarball for a pinned version, checked against its published SHA-256, and pnpm through Corepack.
+- **Versions:** gaidin starts at 0.1.0, tagged, with `gaidin --version`. Each release's notes are its items from the Done list above, which already reads as a changelog.
+- **Ubuntu 24.04 and Debian 12** are the installer's targets, on x86-64; other Linux runs from a checkout as now. Node comes from nodejs.org's official tarball for a pinned version, checked against its published SHA-256, and pnpm through Corepack.
+- **Slack stays a manual step** after the install, following [Surfaces](surfaces.md#setting-up-slack). Making the Slack app from a configuration token was dropped (2026-10-27), so the release doesn't wait on it.
 
 ### `gaidin setup`
 
@@ -140,47 +144,34 @@ An interactive command that writes the settings file, mode 600, one section at a
 1. The owner's name and time zone (the system's, offered).
 2. The model: the API key, checked by looking the model up; the default model; daily and monthly limits, with a note on the Console's own limit.
 3. The API: the Tailscale login and the tailnet name, read from `tailscale status`, giving `web.user` and `web.url`. (There's no `web.app` since item 52.)
-4. Notifications: an ntfy topic with a long random name it makes, or none (the app's Web Push needs nothing here).
-5. Slack (below).
-6. Search: a Tavily key, checked.
+4. Notifications: an ntfy topic with a long random name it makes, or none (Web Push needs nothing here).
+5. Search: a Tavily key, checked.
 
-Run again, it shows each section as it is (secrets shortened) and changes only what's chosen. It never prints a whole secret, except the ntfy topic it makes, once, so the owner can subscribe. It ends with `gaidin doctor`. Done (item 53), without Slack. It writes the file in place of the old one, keeping its mode and owner, so on the VM, where `/etc/gaidin` is root's and the `gaidin` command runs as the service's user, it needs a way to write the settings; that's decided with the installer (step 4).
-
-### Slack from a configuration token
-
-Slack's Manifest API makes the app from `deploy/slack-manifest.yaml` with an app configuration token (made at api.slack.com/apps, valid 12 hours). It can't install the app or make the Socket Mode token, so setup does what it can and says exactly what's left:
-
-1. The owner pastes a configuration token; setup creates the app (`apps.manifest.create`), with the app's name the owner picks, and prints its settings page.
-2. The owner presses Install to Workspace there and pastes the bot token (`xoxb-`), which setup checks with `auth.test`.
-3. The owner generates an app-level token with `connections:write` and pastes it (`xapp-`), checked by opening a Socket Mode connection.
-4. The owner makes a channel, invites the app, and pastes the channel's ID and their own member ID; setup checks the bot can post there.
-
-The configuration token isn't kept. Without one, setup prints the manual steps from [Surfaces](surfaces.md#setting-up-slack) instead.
+Run again, it shows each section as it is (secrets shortened) and changes only what's chosen. It never prints a whole secret, except the ntfy topic it makes, once, so the owner can subscribe. It ends with `gaidin doctor`. Done (item 53). On the VM, where `/etc/gaidin` is root's and the `gaidin` command runs as the service's user, `gaidin setup` runs as root and edits a copy as the service's user, in a `/tmp` the service can't see, then installs it as the settings (item 54).
 
 ### The installer
 
-`deploy/install.sh`, which `setup.sh` becomes: run as root on a fresh VM, after reading it (the documentation says to download and read it, not to pipe it into a shell).
+`deploy/install.sh`, which `setup.sh` became (item 54): run as root on a fresh VM, after reading it (the documentation says to download and read it, not to pipe it into a shell).
 
 - It takes the repository to install from, the official one by default, cloned over HTTPS when it's public, so no deploy key; a private fork keeps the deploy key path that's there now.
 - It installs Node, pnpm, bubblewrap and its AppArmor profile, poppler, the `gaidin` user, unit and command, as `setup.sh` does now, and Chromium only when the settings name browser profiles.
-- It fetches the app's build for the installed protocol, checked, into `/var/lib/gaidin/moiraine`.
 - On a first install it runs `gaidin setup`, then starts the service; afterwards it's how you update, as now, keeping the settings.
 
 ### Before publishing
 
-- **Nothing specific left in the code:** the repository URL in the installer and the README's first lines; the manifest's "Tar Valon" comment is gone (item 46); the homelab extension stays, optional and described as written for one deployment.
+- **Nothing specific left in the code:** the installer clones the official repository unless told another (item 54), and the README's first lines are generic; the manifest's "Tar Valon" comment is gone (item 46); the homelab extension stays, optional and described as written for one deployment.
 - **No secrets in the history:** a scan of every commit of both repositories for keys and tokens, and for the owner's private identifiers (tailnet name, LAN addresses, Slack IDs), with whatever turns up removed or rewritten before the first push to a public remote. The owner decides on anything found. Done (item 46): no keys or tokens; the private identifiers are gone from the current files and kept in the history.
-- **A getting-started path** in the README: try it locally with the faux model, then a VM with the installer and `gaidin setup`, then Slack, connectors and the browser as they're wanted.
+- **A getting-started path** in the README: try it locally with the faux model, then a VM with the installer and `gaidin setup`, then Slack, connectors and the browser as they're wanted. Done (item 54).
 
 ### Order of work
 
 1. Done: Pi Durable 1.3.0, on a branch, with the restart test.
 2. Done: `gaidin setup` without Slack (item 53), and `gaidin --version`.
-3. Slack from a configuration token.
-4. The installer, moiraine's release build and its check, and the getting-started docs, tried on a fresh VM.
-5. The history scan and the specific leftovers, done but for the installer's repository URL (step 4); then the owner publishes, or says to.
+3. Done: the installer and the getting-started docs (item 54). Next: trying it on a fresh Ubuntu 24.04 VM and a Debian 12 one.
+4. Done: the history scan and the specific leftovers (item 46, and the installer's repository URL in item 54), and both repositories made public.
+5. Tagging 0.1.0, once the installer has worked on both fresh VMs. The tag is the owner's call.
 
-Each step ends with `pnpm check` passing and is a commit of its own. Publishing is the owner's call and happens last.
+Each step ends with `pnpm check` passing and is a commit of its own.
 
 ## Design: rules
 
@@ -232,7 +223,7 @@ Whichever rule decided a call is written into the conversation with the call, as
 1. Done: rules in a document, the decision in the approvals hook for every tool, guarded or not, the rule recorded with each call it decided, and `gaidin rule` (item 42). The timeline already says which rule allowed a call; a request an ask rule made names the rule in its summary. Tests with the faux provider: each precedence step, the floor, outside text with and without the tick, expiry, and an agent's rule not reaching another agent.
 2. Done: the app's Rules page, with the grants beside the rules, and "make a rule" on approval cards, with e2e tests (item 43). A request carries its short arguments (text, numbers and booleans up to 200 characters) for the form.
 3. The timeline and Slack name the rule that decided a call.
-4. Folder trust: gaidin's side is done (item 44); the app's "Trust <folder> for <agent>" on a card is next, in its own commit there.
+4. Folder trust: gaidin's side is done (item 44). A "Trust <folder> for <agent>" choice on an approval was to be the app's, and is left to a client of the API since item 52.
 
 Each step ends with `pnpm check` passing and is a commit of its own.
 
@@ -379,7 +370,7 @@ Going back to an older build ignores the new documents and fields, but would run
 
 ### Order of work
 
-1. Commit item 26 (Slack threads as conversations), which is in progress.
+1. Done: Slack threads as conversations (item 26).
 2. Done: the roster, bindings, prompts, sandboxes, memory split, per-agent approvals, jobs and reminders, history, messaging and hand-off, and the CLI. Tests with the faux provider cover isolation: one agent's tools can't reach another's sandbox, notes, jobs, history or hosts.
 3. Done: Slack, a channel per agent (item 38). An agent without a channel posts in the default agent's, named, rather than only being reached from the app and CLI.
 4. Done: web view: the switcher, the agents page and the per-agent pages, built in the app (its steps 1 to 3), checked in a browser with the Playwright e2e tests (items 29 and 30).
@@ -465,7 +456,7 @@ Each step ends with `pnpm check` passing and is a commit of its own.
 
 ## Design: the app
 
-For review before any code. The web view becomes an app, moiraine (in the Wheel of Time, the Aes Sedai bonded to her Warder): each agent's conversations in a sidebar, with its home conversation pinned and its threads below, beside the pages the web view has now. It's a project of its own beside gaidin, written in TanStack Start as a client of gaidin's HTTP API, installs as a PWA as the web view does, and can be wrapped as a native app later without changes to the server.
+History: built in items 28 to 33, and no longer served since item 52. The web view becomes an app, moiraine (in the Wheel of Time, the Aes Sedai bonded to her Warder): each agent's conversations in a sidebar, with its home conversation pinned and its threads below, beside the pages the web view has now. It's a project of its own beside gaidin, written in TanStack Start as a client of gaidin's HTTP API, installs as a PWA as the web view does, and can be wrapped as a native app later without changes to the server.
 
 Decided with the owner:
 
@@ -514,6 +505,6 @@ moiraine's deploy script builds on the owner's machine and copies the build over
 3. Done: the pages, with the per-agent changes (item 30). With no conversation open, a page asked for the approvals every 5 seconds; the app-wide event stream replaced that (item 47). The web view's `#/<page>` addresses and `#/history/<id>` open the matching page or thread.
 4. Done: attachments (item 31). Other files go to the sandbox of the agent whose conversation it is, where Slack's still go to the default agent's until its channel per agent.
 5. Done: Slack mirroring (item 32). Every Slack thread is the default agent's until Slack's channel per agent (agents step 3), which will give other agents' threads the same.
-6. Done: the switch (item 33). moiraine's `pnpm ship` deploys it ([Deploying](deploy.md#the-app)).
+6. Done: the switch (item 33). moiraine's `pnpm ship` deploys it.
 
 Each step ends with `pnpm check` passing in each repository it touches and is a commit of its own there.

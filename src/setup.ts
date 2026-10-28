@@ -234,7 +234,7 @@ async function api(settings: Section, w: Wizard): Promise<Section> {
 		check: (a) => (/^https?:\/\/[^/]+\/?$/.test(a) ? undefined : "An address like https://gaidin.example.ts.net, with no path."),
 	});
 	const port = numberOf(web, "port") ?? 8410;
-	w.say(`Tailscale serve has to proxy to port ${port}: sudo tailscale serve --bg --yes ${port}. On the VM, setup.sh does it.`);
+	w.say(`Tailscale serve has to proxy to port ${port}: sudo tailscale serve --bg --yes ${port}. On the VM, install.sh does it.`);
 	return put(settings, new Map([["web", put(web, new Map([["user", login], ["url", address?.replace(/\/$/, "")]]))]]));
 }
 

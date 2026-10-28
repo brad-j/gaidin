@@ -1,7 +1,7 @@
 #!/bin/sh
 # Adds or updates a workspace on the gaidin VM and restarts gaidin. Run as root:
 #   sh /var/lib/gaidin/app/deploy/vm/add-workspace.sh NAME USER@HOST
-# The machine needs deploy/workspace/install.sh run first, with the key setup.sh made
+# The machine needs deploy/workspace/install.sh run first, with the key deploy/install.sh made
 # (/var/lib/gaidin/keys/workspace.pub). Compare the fingerprint this prints with the machine's own:
 #   ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 set -eu

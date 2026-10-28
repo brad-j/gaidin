@@ -4,7 +4,7 @@
 // least recently used idle one closing to make room (docs/plan.md has the memory measured on the VM).
 //
 // Chromium keeps its own sandbox: it's launched with `chromiumSandbox`, never --no-sandbox. On Ubuntu 24.04 that needs
-// the AppArmor profile deploy/vm/setup.sh installs.
+// the AppArmor profile deploy/install.sh installs.
 //
 // Every request a page makes is routed through `#route`:
 // - Any request to a private, LAN, tailnet or loopback address is refused, as fetch_url refuses them, so a page can't

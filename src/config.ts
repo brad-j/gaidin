@@ -76,7 +76,7 @@ function onNtfySh(url: string): boolean {
 	return URL.canParse(url) && new URL(url).hostname === "ntfy.sh";
 }
 
-/** Where the settings live on a server (deploy/vm/setup.sh). Commands can't see it, so a copy or backup left there stays hidden. */
+/** Where the settings live on a server (deploy/install.sh). Commands can't see it, so a copy or backup left there stays hidden. */
 export const SETTINGS_DIR = "/etc/gaidin";
 
 /** The settings file to use: `explicit`, GAIDIN_CONFIG, or the first default location that exists. */

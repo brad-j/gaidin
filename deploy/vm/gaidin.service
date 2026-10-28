@@ -1,4 +1,4 @@
-# System unit for the gaidin VM. Installed by deploy/vm/setup.sh.
+# System unit for the gaidin VM. Installed by deploy/install.sh.
 [Unit]
 Description=gaidin personal agent
 After=network-online.target
@@ -10,9 +10,10 @@ User=gaidin
 Group=gaidin
 WorkingDirectory=/var/lib/gaidin/app
 Environment=GAIDIN_CONFIG=/etc/gaidin/config.json
-# The browser's Chromium, which setup.sh installs when the settings give it profiles.
+# The browser's Chromium, which install.sh installs when the settings give it profiles.
 Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/gaidin/browsers
-ExecStart=/usr/local/bin/node --no-warnings src/main.ts serve
+# The Node install.sh pins.
+ExecStart=/opt/gaidin/node/bin/node --no-warnings src/main.ts serve
 Restart=on-failure
 RestartSec=5
 UMask=0077

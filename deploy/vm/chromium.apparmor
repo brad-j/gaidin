@@ -1,7 +1,7 @@
 # Lets the browser's Chromium (src/browser/) create the user namespaces its own sandbox needs, as bwrap.apparmor does for
-# bubblewrap; without it Ubuntu 24.04 confines them and Chromium won't start with its sandbox. setup.sh installs Chromium
+# bubblewrap; without it Ubuntu 24.04 confines them and Chromium won't start with its sandbox. install.sh installs Chromium
 # under /opt/gaidin/browsers, which only root can change: the profile is unconfined, so the service mustn't be able to
-# put another program at this path. Installed as /etc/apparmor.d/gaidin-chromium by setup.sh.
+# put another program at this path. Installed as /etc/apparmor.d/gaidin-chromium by deploy/install.sh.
 abi <abi/4.0>,
 include <tunables/global>
 
