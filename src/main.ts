@@ -27,6 +27,9 @@ const USAGE = `usage: gaidin [--config FILE] COMMAND
                [--can-message ID,ID] [--workspaces NAME,NAME] [--profiles NAME,NAME]
                [--connectors NAME,NAME] [--shared-notes on|off]
                             change an agent; an empty list clears it
+  agent archive ID          pause its jobs, cancel its reminders and stop it being talked to;
+                            its conversations, notes and sandbox stay
+  agent restore ID          bring it back, its jobs still paused
   connector list            list the connectors (MCP servers)
   connector show NAME       a connector's tools and how each is set
   connector add NAME URL [--token]
@@ -125,7 +128,10 @@ switch (command) {
 		const [action = "list", id] = rest;
 		const list = (text: string | undefined) => (text === undefined ? undefined : text.split(",").map((s) => s.trim()).filter((s) => s !== ""));
 		if (action === "list") process.exit(await agents(loaded.config, { type: "agent", action: "list" }));
-		if (id === undefined || (action !== "add" && action !== "set")) fail(["usage: gaidin agent list | add ID --name NAME [--job TEXT] | set ID [options]", "", USAGE]);
+		if (id === undefined || (action !== "add" && action !== "set" && action !== "archive" && action !== "restore")) {
+			fail(["usage: gaidin agent list | add ID --name NAME [--job TEXT] | set ID [options] | archive ID | restore ID", "", USAGE]);
+		}
+		if (action === "archive" || action === "restore") process.exit(await agents(loaded.config, { type: "agent", action, id: id! }));
 		if (action === "add") {
 			if (values.name === undefined) fail(["usage: gaidin agent add ID --name NAME [--job TEXT]"]);
 			process.exit(await agents(loaded.config, { type: "agent", action: "add", id: id!, name: values.name!, job: values.job ?? "" }));

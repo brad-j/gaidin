@@ -3,7 +3,7 @@
 // and with `web` the app (src/web.ts).
 //
 // client → server: {"type":"ask","content":"...","requestId":"...","agent":"..."}, {"type":"watch","agent":"..."},
-//                  {"type":"agent","action":"list"|"add"|"set",...} to see and change the roster (agents.ts), or
+//                  {"type":"agent","action":"list"|"add"|"set"|"archive"|"restore",...} to see and change the roster (agents.ts), or
 //                  {"type":"connector","action":"list"|"show"|"add"|"refresh"|"tool"|"token"|"remove",...} for connectors/, or
 //                  {"type":"rule","action":"list"|"add"|"remove",...} for the owner's rules (rules.ts)
 // server → client: {"type":"line","text":"..."} and, after an ask settles or an agent command ends, {"type":"done","status":"..."}
@@ -36,6 +36,7 @@ export type ClientMessage =
 	| { type: "agent"; action: "list" }
 	| { type: "agent"; action: "add"; id: string; name: string; job: string }
 	| { type: "agent"; action: "set"; id: string; change: AgentChange }
+	| { type: "agent"; action: "archive" | "restore"; id: string }
 	| { type: "connector"; action: "list" }
 	| { type: "connector"; action: "show" | "refresh" | "remove"; name: string }
 	| { type: "connector"; action: "add"; name: string; url: string; token?: string }
@@ -54,7 +55,7 @@ const clientMessage = object({
 	content: optional(string),
 	requestId: optional(string),
 	agent: optional(string),
-	action: optional(literal("list", "add", "set", "show", "refresh", "tool", "token", "remove", "connect", "client-document")),
+	action: optional(literal("list", "add", "set", "archive", "restore", "show", "refresh", "tool", "token", "remove", "connect", "client-document")),
 	clientId: optional(string),
 	rule: optional(newRule),
 	url: optional(string),
@@ -114,9 +115,11 @@ export function parseClientMessage(line: string): ClientMessage {
 	}
 	if (message.type === "agent") {
 		if (message.action === "list" || message.action === undefined) return { type: "agent", action: "list" };
-		if (message.action !== "add" && message.action !== "set") throw new ParseError(`agents have no ${message.action}`);
-		if (message.id === undefined) throw new ParseError(`an agent ${message.action} needs an id`);
-		if (message.action === "set") return { type: "agent", action: "set", id: message.id, change: message.change ?? {} };
+		const { action } = message;
+		if (action !== "add" && action !== "set" && action !== "archive" && action !== "restore") throw new ParseError(`agents have no ${action}`);
+		if (message.id === undefined) throw new ParseError(`an agent ${action} needs an id`);
+		if (action === "set") return { type: "agent", action: "set", id: message.id, change: message.change ?? {} };
+		if (action === "archive" || action === "restore") return { type: "agent", action, id: message.id };
 		if (message.name === undefined) throw new ParseError("a new agent needs a name");
 		return { type: "agent", action: "add", id: message.id, name: message.name, job: message.job ?? "" };
 	}
@@ -152,17 +155,21 @@ export function describeTool(tool: ConnectorTool): string {
 
 /** One line about an agent, for `gaidin agent list`. */
 export function describeAgent(agent: AgentEntry): string {
-	const parts = [
-		agent.job || "no job given",
-		agent.channel === undefined ? undefined : `Slack ${agent.channel}`,
-		`may message: ${agent.canMessage.join(", ") || "none"}`,
-		`workspaces: ${agent.workspaces === undefined ? "all" : agent.workspaces.join(", ") || "none"}`,
-		agent.profiles === undefined ? undefined : `browser profiles: ${agent.profiles.join(", ")}`,
-		agent.connectors === undefined ? undefined : `connectors: ${agent.connectors.join(", ")}`,
-		agent.sharedNotes === false ? "shared notes: off" : undefined,
-		agent.archived === undefined ? undefined : "archived",
+	const fields: [string, string | undefined][] = [
+		["slack", agent.channel],
+		["may message", agent.canMessage.join(", ") || "none"],
+		["workspaces", agent.workspaces === undefined ? "all" : agent.workspaces.join(", ") || "none"],
+		["browser", agent.profiles?.join(", ")],
+		["connectors", agent.connectors?.join(", ")],
+		["shared notes", agent.sharedNotes === false ? "off" : undefined],
 	];
-	return `${agent.id} (${agent.name}): ${parts.filter((p) => p !== undefined).join(" · ")}`;
+	const shown = fields.filter((field): field is [string, string] => field[1] !== undefined);
+	const width = Math.max(...shown.map(([label]) => label.length));
+	return [
+		`${agent.id} (${agent.name})${agent.archived === undefined ? "" : ", archived"}`,
+		`  ${agent.job || "no job given"}`,
+		...shown.map(([label, value]) => `  ${label.padEnd(width)}  ${value}`),
+	].join("\n");
 }
 
 export function parseServerMessage(line: string): ServerMessage {
@@ -247,12 +254,18 @@ export async function serve(config: Config) {
 		return { events, shown };
 	}
 
-	/** Lists, adds or changes an agent, and says what it did. */
+	/** Lists, adds, changes, archives or restores an agent, and says what it did. */
 	async function manage(socket: Socket, request: Extract<ClientMessage, { type: "agent" }>) {
 		if (request.action === "list") {
-			for (const agent of await host.agents.list()) send(socket, { type: "line", text: describeAgent(agent) });
+			const text = (await host.agents.list()).map(describeAgent).join("\n\n");
+			send(socket, { type: "line", text });
 		} else {
-			const agent = request.action === "add" ? await host.agents.add(request) : await host.agents.update(request.id, request.change);
+			const agent =
+				request.action === "add"
+					? await host.agents.add(request)
+					: request.action === "set"
+						? await host.agents.update(request.id, request.change)
+						: await host.agents.archive(request.id, request.action === "archive");
 			send(socket, { type: "line", text: describeAgent(agent) });
 		}
 		send(socket, { type: "done", status: "done" });

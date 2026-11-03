@@ -45,7 +45,7 @@ They share the skills, the self-written tools you switch on for them, and the sp
 
 Each agent can have a Slack channel of its own, where a top-level message starts a thread with it and it posts what it tells you under its name ([Surfaces](surfaces.md#slack)); the [API](surfaces.md#the-api) reaches every agent. An agent's id is fixed once made; its name, job and grants can change.
 
-Archiving an agent, from the API, pauses its jobs and cancels its reminders, and it can't be talked to; its conversations, notes and sandbox stay. Restoring it leaves its jobs paused, for you to resume. The default agent can't be archived.
+Archiving an agent, with `gaidin agent archive` or from the API, pauses its jobs and cancels its reminders, and it can't be talked to; its conversations, notes and sandbox stay. Restoring it leaves its jobs paused, for you to resume. The default agent can't be archived.
 
 ## Time
 

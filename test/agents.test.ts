@@ -363,11 +363,15 @@ test("the CLI's agent commands read right", () => {
 	assert.deepEqual(parseClientMessage('{"type":"ask","content":"hi","agent":"scout"}'), { type: "ask", content: "hi", agent: "scout" });
 	assert.deepEqual(parseClientMessage('{"type":"watch"}'), { type: "watch" });
 	assert.throws(() => parseClientMessage('{"type":"agent","action":"add","id":"scout"}'), /needs a name/);
-	assert.equal(describeAgent({ ...defaultEntry(), channel: "C1", canMessage: ["scout"] }), "gaidin (gaidin): no job given · Slack C1 · may message: scout · workspaces: all");
-	assert.equal(describeAgent({ ...defaultEntry(), profiles: ["personal"] }), "gaidin (gaidin): no job given · may message: none · workspaces: all · browser profiles: personal");
+	assert.deepEqual(parseClientMessage('{"type":"agent","action":"archive","id":"scout"}'), { type: "agent", action: "archive", id: "scout" });
+	assert.deepEqual(parseClientMessage('{"type":"agent","action":"restore","id":"scout"}'), { type: "agent", action: "restore", id: "scout" });
+	assert.throws(() => parseClientMessage('{"type":"agent","action":"archive"}'), /needs an id/);
+	assert.throws(() => parseClientMessage('{"type":"agent","action":"remove","id":"scout"}'), /agents have no remove/);
+	assert.equal(describeAgent({ ...defaultEntry(), channel: "C1", canMessage: ["scout"] }), "gaidin (gaidin)\n  no job given\n  slack        C1\n  may message  scout\n  workspaces   all");
+	assert.equal(describeAgent({ ...defaultEntry(), profiles: ["personal"], archived: 1 }), "gaidin (gaidin), archived\n  no job given\n  may message  none\n  workspaces   all\n  browser      personal");
 	assert.deepEqual(parseClientMessage('{"type":"agent","action":"set","id":"scout","change":{"profiles":["personal"]}}'), { type: "agent", action: "set", id: "scout", change: { profiles: ["personal"] } });
 	assert.deepEqual(parseClientMessage('{"type":"agent","action":"set","id":"scout","change":{"sharedNotes":false}}'), { type: "agent", action: "set", id: "scout", change: { sharedNotes: false } });
-	assert.equal(describeAgent({ ...defaultEntry(), id: "scout", name: "Scout", sharedNotes: false }), "scout (Scout): no job given · may message: none · workspaces: all · shared notes: off");
+	assert.equal(describeAgent({ ...defaultEntry(), id: "scout", name: "Scout", sharedNotes: false }), "scout (Scout)\n  no job given\n  may message   none\n  workspaces    all\n  shared notes  off");
 });
 
 test("a new agent's settings start from the default agent's, without its instructions or self-written tools", async (t) => {

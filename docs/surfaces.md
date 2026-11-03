@@ -26,7 +26,11 @@ gaidin agent set scout --connectors mail            # the connectors whose tools
 gaidin agent set gaidin --can-message scout         # the agents it may message and hand work to
 gaidin agent set scout --shared-notes off           # keep the shared notes out of its prompt and tools
 gaidin agent set scout --name Seeker --job "..."    # an id can't change; an empty list clears one
+gaidin agent archive scout                          # pause its jobs, cancel its reminders, stop answering it
+gaidin agent restore scout                          # bring it back; its jobs stay paused
 ```
+
+There's no command to delete an agent. An archived one keeps its conversations and notes in the SQLite file and its sandbox in `<data>/agents/ID/sandbox`, which you can remove yourself.
 
 `gaidin rule` lists, adds and removes your [rules](security.md#your-rules) about what asks:
 

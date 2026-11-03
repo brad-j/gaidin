@@ -31,7 +31,7 @@ export function rules(config: Config, request: Extract<ClientMessage, { type: "r
 	return talk(config, request, true);
 }
 
-/** Lists, adds or changes an agent. */
+/** Lists, adds, changes, archives or restores an agent. */
 export function agents(config: Config, request: Extract<ClientMessage, { type: "agent" }>): Promise<number> {
 	return talk(config, request, true);
 }

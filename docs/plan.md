@@ -67,6 +67,7 @@
 52. No web app: gaidin no longer serves moiraine's build. `web.app`, the shell and its per-build Content-Security-Policy, and the redirects from `/app/` are gone, so every path that isn't the API is a 404, and every response's policy is `default-src 'none'`. A `web.app` left in the settings is a warning. A connector's sign-in ends on a plain-text page instead of the Connectors page, Slack's hand-over has no Take over link, its connector notice names `gaidin connector connect`, and an ntfy reminder opens nothing when tapped. The routes, their shapes and `PROTOCOL` are unchanged, and `e2e/server.ts` still runs the API on a scripted model for a client's tests ([Surfaces](surfaces.md#the-api)).
 
 53. `gaidin setup`: writes the settings file a section at a time (you, the model and spend limits, the API from `tailscale status`, ntfy with a topic it names, Tavily search), each skippable and checked as it's entered with `gaidin doctor`'s checks. Run again, it shows each section with secrets shortened and changes only what's chosen, keeping the rest of the file, and it ends with `gaidin doctor`. Step 2 of the release design, with Slack to come ([Deploying](deploy.md#the-gaidin-command)).
+54. Archiving from the CLI: `gaidin agent archive ID` and `gaidin agent restore ID` call the roster's archive over the socket, since with the web app gone `/api/agents/archive` was the only way to it. There's still no delete; an archived agent's sandbox is the owner's to remove ([Surfaces](surfaces.md#command-line)).
 
 ## Next
 
